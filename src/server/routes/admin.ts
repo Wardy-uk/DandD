@@ -91,5 +91,17 @@ export function createAdminRoutes(db: Database): Router {
     res.json({ ok: true, data: { message: 'User deleted' } });
   });
 
+  // Bootstrap: if no admins exist, promote the requesting user
+  router.post('/bootstrap', requireAuth, (req: any, res) => {
+    const adminCount = get(db, 'SELECT COUNT(*) as c FROM players WHERE role = "admin"') as any;
+    if (adminCount && adminCount.c > 0) {
+      res.json({ ok: false, error: 'Admin already exists' });
+      return;
+    }
+
+    run(db, 'UPDATE players SET role = "admin" WHERE id = ?', [req.player.id]);
+    res.json({ ok: true, data: { message: 'You are now admin. Log out and back in.' } });
+  });
+
   return router;
 }
