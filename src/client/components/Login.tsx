@@ -12,6 +12,7 @@ export default function Login({ apiUrl, onLogin }: Props) {
   const [displayName, setDisplayName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -115,13 +116,22 @@ export default function Login({ apiUrl, onLogin }: Props) {
               <label className="block text-xs font-heading font-semibold text-ink-faint uppercase tracking-wider mb-1">
                 Password
               </label>
-              <input
-                type="password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                required
-                className="w-full px-4 py-2.5 rounded-lg border border-leather/20 bg-parchment font-body text-sm text-ink focus:outline-none focus:border-leather/50 focus:ring-1 focus:ring-leather/20"
-              />
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  required
+                  className="w-full px-4 py-2.5 pr-16 rounded-lg border border-leather/20 bg-parchment font-body text-sm text-ink focus:outline-none focus:border-leather/50 focus:ring-1 focus:ring-leather/20"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-leather/60 hover:text-leather font-body transition-colors"
+                >
+                  {showPassword ? 'Hide' : 'Show'}
+                </button>
+              </div>
             </div>
 
             {error && (
