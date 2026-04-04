@@ -22,9 +22,10 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [showJoin, setShowJoin] = useState(false);
+  const [browseCampaigns, setBrowseCampaigns] = useState<Campaign[]>([]);
+  const [browseLoading, setBrowseLoading] = useState(false);
   const [newName, setNewName] = useState('');
   const [newSetting, setNewSetting] = useState('');
-  const [joinId, setJoinId] = useState('');
 
   const headers = { Authorization: `Bearer ${player.token}`, 'Content-Type': 'application/json' };
 
@@ -65,17 +66,29 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
     }
   };
 
-  const joinCampaign = async () => {
-    if (!joinId.trim()) return;
+  const fetchBrowseCampaigns = async () => {
+    setBrowseLoading(true);
     try {
-      const res = await fetch(`${apiUrl}/api/campaigns/${joinId}/join`, {
+      const res = await fetch(`${apiUrl}/api/campaigns/browse`, { headers });
+      const data = await res.json();
+      if (data.ok) setBrowseCampaigns(data.data);
+    } catch (err) {
+      console.error('Failed to browse campaigns', err);
+    } finally {
+      setBrowseLoading(false);
+    }
+  };
+
+  const joinCampaign = async (campaignId: string) => {
+    try {
+      const res = await fetch(`${apiUrl}/api/campaigns/${campaignId}/join`, {
         method: 'POST',
         headers,
       });
       const data = await res.json();
       if (data.ok) {
         setShowJoin(false);
-        setJoinId('');
+        setBrowseCampaigns([]);
         fetchCampaigns();
       }
     } catch (err) {
@@ -107,7 +120,7 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
         </h2>
         <div className="flex gap-2">
           <button
-            onClick={() => setShowJoin(true)}
+            onClick={() => { setShowJoin(true); fetchBrowseCampaigns(); }}
             className="px-4 py-2 rounded-lg border border-leather/20 text-sm font-heading font-semibold text-leather hover:bg-leather/5 transition-colors"
           >
             Join Campaign
@@ -209,27 +222,44 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
       {showJoin && (
         <div className="fixed inset-0 bg-ink/40 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="bg-parchment border border-leather/20 rounded-lg p-8 w-full max-w-md shadow-xl">
-            <h3 className="text-xl font-heading font-bold text-leather-dark mb-4">Join Campaign</h3>
-            <div>
-              <label className="block text-xs font-heading font-semibold text-ink-faint uppercase tracking-wider mb-1">
-                Campaign ID
-              </label>
-              <input
-                type="text"
-                value={joinId}
-                onChange={e => setJoinId(e.target.value)}
-                placeholder="Paste the campaign ID"
-                className="w-full px-4 py-2.5 rounded-lg border border-leather/20 bg-parchment-light font-body text-sm focus:outline-none focus:border-leather/50"
-              />
-            </div>
-            <div className="flex gap-3 mt-6">
-              <button onClick={() => setShowJoin(false)} className="flex-1 py-2.5 rounded-lg border border-leather/20 text-sm font-heading text-ink-faint hover:bg-parchment-dark/30">
-                Cancel
-              </button>
-              <button onClick={joinCampaign} className="flex-1 py-2.5 rounded-lg bg-leather text-parchment-light text-sm font-heading font-semibold hover:bg-leather-dark">
-                Join
-              </button>
-            </div>
+            <h3 className="text-xl font-heading font-bold text-leather-dark mb-4">Join a Campaign</h3>
+
+            {browseLoading ? (
+              <p className="text-ink-faint font-body italic text-center py-8">Searching for adventures...</p>
+            ) : browseCampaigns.length === 0 ? (
+              <p className="text-ink-faint font-body italic text-center py-8">No campaigns available to join right now.</p>
+            ) : (
+              <div className="space-y-2 max-h-80 overflow-y-auto">
+                {browseCampaigns.map(c => (
+                  <div key={c.id} className="border border-leather/15 rounded-lg p-4 bg-parchment-light/40">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1 min-w-0">
+                        <h4 className="font-heading font-bold text-leather-dark truncate">{c.name}</h4>
+                        {c.setting && (
+                          <p className="text-xs text-ink-faint font-body mt-0.5 italic line-clamp-2">{c.setting}</p>
+                        )}
+                        <p className="text-xs text-ink-faint font-body mt-1">
+                          {c.player_count} player{c.player_count !== 1 ? 's' : ''} &middot; {c.character_count} character{c.character_count !== 1 ? 's' : ''}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => joinCampaign(c.id)}
+                        className="ml-3 px-4 py-2 rounded-lg bg-leather text-parchment-light text-xs font-heading font-semibold hover:bg-leather-dark transition-colors flex-shrink-0"
+                      >
+                        Join
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <button
+              onClick={() => { setShowJoin(false); setBrowseCampaigns([]); }}
+              className="w-full mt-4 py-2.5 rounded-lg border border-leather/20 text-sm font-heading text-ink-faint hover:bg-parchment-dark/30"
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}
