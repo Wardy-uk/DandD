@@ -28,6 +28,21 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
     res.json({ ok: true, data: campaigns });
   });
 
+  // Browse available campaigns (ones the player is NOT already in)
+  router.get('/browse', requireAuth, (req: any, res) => {
+    const campaigns = all(db, `
+      SELECT c.id, c.name, c.setting, c.status, c.created_at,
+        (SELECT COUNT(*) FROM campaign_players WHERE campaign_id = c.id) as player_count,
+        (SELECT COUNT(*) FROM characters WHERE campaign_id = c.id) as character_count
+      FROM campaigns c
+      WHERE c.status = 'active'
+        AND c.id NOT IN (SELECT campaign_id FROM campaign_players WHERE player_id = ?)
+      ORDER BY c.created_at DESC
+    `, [req.player.id]);
+
+    res.json({ ok: true, data: campaigns });
+  });
+
   // Get single campaign with full state
   router.get('/:id', requireAuth, (req: any, res) => {
     const campaign = get(db, 'SELECT * FROM campaigns WHERE id = ?', [req.params.id]) as any;
@@ -113,21 +128,6 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
       [startSceneId, id, 'Starting Location', 'The adventure begins here. The DM will describe this location.']);
 
     res.json({ ok: true, data: { id, name } });
-  });
-
-  // Browse available campaigns (ones the player is NOT already in)
-  router.get('/browse', requireAuth, (req: any, res) => {
-    const campaigns = all(db, `
-      SELECT c.id, c.name, c.setting, c.status, c.created_at,
-        (SELECT COUNT(*) FROM campaign_players WHERE campaign_id = c.id) as player_count,
-        (SELECT COUNT(*) FROM characters WHERE campaign_id = c.id) as character_count
-      FROM campaigns c
-      WHERE c.status = 'active'
-        AND c.id NOT IN (SELECT campaign_id FROM campaign_players WHERE player_id = ?)
-      ORDER BY c.created_at DESC
-    `, [req.player.id]);
-
-    res.json({ ok: true, data: campaigns });
   });
 
   // Join campaign (by invite code / ID)
