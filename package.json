@@ -7,7 +7,9 @@
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "tsx watch src/server/index.ts",
     "dev:client": "vite",
-    "build": "vite build && tsc -p tsconfig.server.json",
+    "build": "vite build",
+    "build:server": "tsc -p tsconfig.server.json",
+    "build:all": "vite build && tsc -p tsconfig.server.json",
     "start": "node dist/server/index.js",
     "db:reset": "rm -f quest.db && npm run dev:server"
   },
