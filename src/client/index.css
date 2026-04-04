@@ -1,0 +1,84 @@
+@import "tailwindcss";
+
+@theme {
+  --color-parchment: #f4e8d1;
+  --color-parchment-light: #faf3e6;
+  --color-parchment-dark: #e8d5b4;
+  --color-ink: #2a1f14;
+  --color-ink-light: #3a2f24;
+  --color-ink-faint: #6b5d4f;
+  --color-leather: #6b4423;
+  --color-leather-light: #8b6843;
+  --color-leather-dark: #4a2e15;
+  --color-blood: #8b1a1a;
+  --color-blood-light: #a83232;
+  --color-heal: #2d5a1e;
+  --color-heal-light: #3d7a2e;
+  --color-gold: #c49a2a;
+  --color-gold-light: #dab440;
+  --color-silver: #8a8a8a;
+  --color-magic: #4a3080;
+  --color-magic-light: #6b48b8;
+  --font-heading: 'Cinzel', 'Times New Roman', serif;
+  --font-body: 'Crimson Text', 'Georgia', serif;
+  --font-mono: 'Courier Prime', 'Courier New', monospace;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-leather) transparent;
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--color-parchment);
+  color: var(--color-ink);
+  min-height: 100vh;
+}
+
+/* Parchment texture overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='noise'%3E%3CfeTurbulence baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 0;
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+/* Dice roll animation */
+@keyframes diceRoll {
+  0% { transform: rotate(0deg) scale(1); }
+  25% { transform: rotate(90deg) scale(1.1); }
+  50% { transform: rotate(180deg) scale(1); }
+  75% { transform: rotate(270deg) scale(1.1); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes quillWrite {
+  from { width: 0; }
+  to { width: 100%; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.5s ease-out forwards;
+}
+
+.animate-dice {
+  animation: diceRoll 0.6s ease-out;
+}
+
+.dm-text-reveal {
+  overflow: hidden;
+  animation: quillWrite 2s ease-out forwards;
+}
