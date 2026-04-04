@@ -6,7 +6,7 @@ import CharacterCreate from './components/CharacterCreate.js';
 import GameView from './components/GameView.js';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || (API_URL || window.location.origin);
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'https://pi5.tailecb90f.ts.net';
 
 interface Player {
   id: string;
@@ -56,6 +56,7 @@ export default function App() {
 
     const s = io(SOCKET_URL, {
       transports: ['websocket', 'polling'],
+      path: '/quest/socket.io',
     });
 
     s.on('connect', () => console.log('[Socket] Connected'));

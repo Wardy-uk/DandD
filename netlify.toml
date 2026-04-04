@@ -7,7 +7,7 @@
 
 [[redirects]]
   from = "/api/*"
-  to = ":VITE_API_URL/api/:splat"
+  to = "https://pi5.tailecb90f.ts.net/quest/api/:splat"
   status = 200
   force = true
 

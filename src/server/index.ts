@@ -26,11 +26,18 @@ const PORT = parseInt(process.env.PORT || '3002');
 const app = express();
 const httpServer = createServer(app);
 
+const ALLOWED_ORIGINS = [
+  process.env.FRONTEND_URL || 'http://localhost:5174',
+  'https://dandd.nickward.co.uk',
+  'https://quest-dandd.netlify.app',
+];
+
 const io = new SocketServer<ClientToServerEvents, ServerToClientEvents>(httpServer, {
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:5174',
+    origin: ALLOWED_ORIGINS,
     methods: ['GET', 'POST'],
   },
+  path: '/quest/socket.io',
 });
 
 // ─── Middleware ──────────────────────────────────────────────────────────────
