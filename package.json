@@ -15,16 +15,17 @@
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
-    "sql.js": "^1.11.0",
     "cors": "^2.8.5",
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
+    "sql.js": "^1.11.0",
     "uuid": "^11.1.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.2.2",
     "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.2",
