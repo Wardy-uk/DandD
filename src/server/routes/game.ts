@@ -409,5 +409,37 @@ export function createGameRoutes(db: Database, io: SocketServer): Router {
     res.json({ ok: true, data: result });
   });
 
+  // ─── Admin: Seed scenes & NPCs ─────────────────────────────────────
+
+  router.post('/seed', requireAuth, (req: any, res) => {
+    const { campaignId, scenes, npcs } = req.body;
+    if (!campaignId) { res.json({ ok: false, error: 'campaignId required' }); return; }
+
+    const created = { scenes: 0, npcs: 0 };
+
+    if (scenes) {
+      for (const s of scenes) {
+        run(db, `INSERT OR REPLACE INTO scenes (id, campaign_id, name, brief, light_level, terrain_type, connections, visited)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [s.id || uuid(), campaignId, s.name, s.brief || '', s.lightLevel || 'normal',
+           s.terrainType || 'indoor', JSON.stringify(s.connections || []), 0]);
+        created.scenes++;
+      }
+    }
+
+    if (npcs) {
+      for (const n of npcs) {
+        run(db, `INSERT OR REPLACE INTO npcs (id, campaign_id, name, race, char_class, level, personality, appearance, voice_notes, disposition, location_scene_id, stats, inventory, memory)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [n.id || uuid(), campaignId, n.name, n.race || 'human', n.charClass || '', n.level || 1,
+           n.personality || '', n.appearance || '', n.voiceNotes || '', n.disposition || 'neutral',
+           n.locationSceneId || null, JSON.stringify(n.stats || {}), JSON.stringify(n.inventory || []), '[]']);
+        created.npcs++;
+      }
+    }
+
+    res.json({ ok: true, data: created });
+  });
+
   return router;
 }
