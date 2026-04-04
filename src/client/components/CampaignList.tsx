@@ -89,7 +89,8 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
       if (data.ok) {
         setShowJoin(false);
         setBrowseCampaigns([]);
-        fetchCampaigns();
+        // Go straight into the campaign — no character yet, so null
+        onJoinCampaign(campaignId, null);
       }
     } catch (err) {
       console.error('Failed to join campaign', err);
