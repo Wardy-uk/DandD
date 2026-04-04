@@ -35,8 +35,8 @@ export function createAuthRoutes(db: Database): Router {
         'INSERT INTO players (id, username, password_hash, display_name) VALUES (?, ?, ?, ?)',
         [id, username, passwordHash, displayName || username]);
 
-      const token = jwt.sign({ id, username }, JWT_SECRET, { expiresIn: '30d' });
-      res.json({ ok: true, data: { id, username, displayName: displayName || username, token } });
+      const token = jwt.sign({ id, username, role: 'player' }, JWT_SECRET, { expiresIn: '30d' });
+      res.json({ ok: true, data: { id, username, displayName: displayName || username, role: 'player', token } });
     } catch (err) {
       res.json({ ok: false, error: 'Registration failed' });
     }
@@ -65,13 +65,15 @@ export function createAuthRoutes(db: Database): Router {
 
       run(db, 'UPDATE players SET last_seen = datetime("now") WHERE id = ?', [player.id]);
 
-      const token = jwt.sign({ id: player.id, username: player.username }, JWT_SECRET, { expiresIn: '30d' });
+      const role = player.role || 'player';
+      const token = jwt.sign({ id: player.id, username: player.username, role }, JWT_SECRET, { expiresIn: '30d' });
       res.json({
         ok: true,
         data: {
           id: player.id,
           username: player.username,
           displayName: player.display_name || player.username,
+          role,
           token,
         },
       });
@@ -90,7 +92,7 @@ export function createAuthRoutes(db: Database): Router {
 
     try {
       const decoded = jwt.verify(auth.slice(7), JWT_SECRET) as { id: string; username: string };
-      const player = get(db, 'SELECT id, username, display_name FROM players WHERE id = ?', [decoded.id]) as any;
+      const player = get(db, 'SELECT id, username, display_name, role FROM players WHERE id = ?', [decoded.id]) as any;
       if (!player) {
         res.json({ ok: false, error: 'Player not found' });
         return;
@@ -98,7 +100,7 @@ export function createAuthRoutes(db: Database): Router {
 
       res.json({
         ok: true,
-        data: { id: player.id, username: player.username, displayName: player.display_name },
+        data: { id: player.id, username: player.username, displayName: player.display_name, role: player.role || 'player' },
       });
     } catch {
       res.json({ ok: false, error: 'Invalid token' });

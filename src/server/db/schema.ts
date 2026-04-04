@@ -69,6 +69,9 @@ function runMigrations() {
     )
   `);
 
+  // Migration: add role column
+  try { db.run('ALTER TABLE players ADD COLUMN role TEXT DEFAULT "player"'); } catch {}
+
   db.run(`
     CREATE TABLE IF NOT EXISTS campaigns (
       id TEXT PRIMARY KEY,

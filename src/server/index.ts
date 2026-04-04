@@ -16,6 +16,7 @@ import { createCampaignRoutes } from './routes/campaign.js';
 import { createCharacterRoutes } from './routes/character.js';
 import { createGameRoutes } from './routes/game.js';
 import { createAiRoutes } from './routes/ai.js';
+import { createAdminRoutes } from './routes/admin.js';
 import { setupSocketHandlers } from './socket.js';
 import { healthCheck as ollamaHealthCheck } from './ai/ollama.js';
 import type { ServerToClientEvents, ClientToServerEvents } from '../shared/types.js';
@@ -60,6 +61,7 @@ async function start() {
   app.use('/api/characters', createCharacterRoutes(db));
   app.use('/api/game', createGameRoutes(db, io));
   app.use('/api/ai', createAiRoutes());
+  app.use('/api/admin', createAdminRoutes(db));
 
   // ─── Health ─────────────────────────────────────────────────────────────────
 

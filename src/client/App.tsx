@@ -4,6 +4,7 @@ import Login from './components/Login.js';
 import CampaignList from './components/CampaignList.js';
 import CharacterCreate from './components/CharacterCreate.js';
 import GameView from './components/GameView.js';
+import AdminPanel from './components/AdminPanel.js';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'https://pi5.tailecb90f.ts.net';
@@ -12,10 +13,11 @@ interface Player {
   id: string;
   username: string;
   displayName: string;
+  role: string;
   token: string;
 }
 
-type View = 'login' | 'campaigns' | 'create-character' | 'game';
+type View = 'login' | 'campaigns' | 'create-character' | 'game' | 'admin';
 
 export default function App() {
   const [player, setPlayer] = useState<Player | null>(null);
@@ -122,6 +124,14 @@ export default function App() {
               <span className="text-sm text-ink-faint font-body">
                 {player.displayName}
               </span>
+              {player.role === 'admin' && (
+                <button
+                  onClick={() => setView(view === 'admin' ? 'campaigns' : 'admin')}
+                  className={`text-xs font-body transition-colors ${view === 'admin' ? 'text-leather-dark font-semibold' : 'text-leather hover:text-leather-dark'}`}
+                >
+                  {view === 'admin' ? 'Campaigns' : 'Admin'}
+                </button>
+              )}
               <button
                 onClick={handleLogout}
                 className="text-xs text-leather hover:text-blood transition-colors font-body"
@@ -163,6 +173,9 @@ export default function App() {
             socket={socket}
             onBack={handleBackToCampaigns}
           />
+        )}
+        {view === 'admin' && player && player.role === 'admin' && (
+          <AdminPanel apiUrl={API_URL} player={player} />
         )}
       </main>
     </div>
