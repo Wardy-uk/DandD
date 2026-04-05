@@ -38,7 +38,7 @@ const io = new SocketServer<ClientToServerEvents, ServerToClientEvents>(httpServ
     origin: ALLOWED_ORIGINS,
     methods: ['GET', 'POST'],
   },
-  path: '/quest/socket.io',
+  path: '/socket.io',
 });
 
 // ─── Middleware ──────────────────────────────────────────────────────────────
