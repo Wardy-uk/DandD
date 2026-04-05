@@ -50,7 +50,7 @@ export async function generate(params: {
     format,
     options: {
       temperature: temperature ?? 0.8,
-      num_predict: maxTokens ?? 1024,
+      num_predict: maxTokens ?? 256,
     },
   };
 
@@ -85,7 +85,7 @@ export async function chat(params: {
     format,
     options: {
       temperature: temperature ?? 0.8,
-      num_predict: maxTokens ?? 1024,
+      num_predict: maxTokens ?? 256,
     },
   };
 

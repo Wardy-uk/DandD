@@ -164,16 +164,6 @@ export function setupSocketHandlers(
             content: result,
             actor: 'DM',
           });
-
-          io.to(`campaign:${campaignId}`).emit('game:log_entry', {
-            id: dmLogId,
-            campaignId,
-            sessionNumber: 1,
-            timestamp: new Date().toISOString(),
-            type: 'dm_response',
-            actor: 'DM',
-            content: result,
-          });
         },
       });
     });
