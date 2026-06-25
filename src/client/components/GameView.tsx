@@ -1112,6 +1112,9 @@ function CompanionCard({ companion, quickAction }: { companion: Companion; quick
             </div>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+            {companion.relationship.lastBeat && (
+              <span title="Overnight development" className="text-xs text-amber-600 font-heading font-bold">●</span>
+            )}
             <span className={`text-xs font-heading font-bold ${companion.hp <= companion.maxHp * 0.25 ? 'text-blood' : 'text-ink-faint'}`}>
               {companion.hp}/{companion.maxHp}
             </span>
@@ -1144,7 +1147,9 @@ function CompanionCard({ companion, quickAction }: { companion: Companion; quick
             </div>
           )}
           {companion.relationship.lastBeat && (
-            <p className="text-xs font-body text-ink-faint italic">{companion.relationship.lastBeat}</p>
+            <div className="rounded border border-amber-600/20 bg-amber-50/30 px-2 py-1">
+              <p className="text-xs font-body text-ink-faint italic">{companion.relationship.lastBeat}</p>
+            </div>
           )}
           <div className="flex flex-wrap gap-1.5">
             <button type="button" onClick={() => quickAction(`Put ${companion.name} first in the marching order`)}

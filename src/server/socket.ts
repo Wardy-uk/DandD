@@ -20,6 +20,7 @@ import {
   seedRivalPartyIfNeeded,
   tickRivals,
 } from './game/rivals.js';
+import { popDawnSummary, popPendingWorldEvents, surfaceRumours } from './game/nightlyGrowth.js';
 import {
   checkCompanionRefusals,
   checkJealousyTriggers,
@@ -166,6 +167,17 @@ export function setupSocketHandlers(
             turnOrder: JSON.parse(encounter.turn_order || '[]'),
           });
         }
+
+        // ── Dawn summary — surface overnight world changes ────────────
+        try {
+          const dawnSummary = popDawnSummary(db, campaignId);
+          if (dawnSummary) {
+            run(db,
+              'INSERT INTO game_log (id, campaign_id, type, actor, content) VALUES (?, ?, ?, ?, ?)',
+              [crypto.randomUUID(), campaignId, 'narration', 'DM', dawnSummary]);
+            socket.emit('game:narration', { actor: 'DM', content: dawnSummary });
+          }
+        } catch {}
       }
 
       console.log(`[Socket] ${player.display_name || player.username} joined campaign ${campaignId}`);
@@ -541,6 +553,16 @@ export function setupSocketHandlers(
           type: 'companions_update',
           payload: getPartyCompanions(db, campaignId),
         });
+
+        // ── World events: inject one pending event as ambient narration ──
+        try {
+          const worldEventTexts = popPendingWorldEvents(db, campaignId);
+          for (const eventText of worldEventTexts) {
+            run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+              [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', eventText]);
+            io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: eventText });
+          }
+        } catch {}
         io.to(`campaign:${campaignId}`).emit('game:state_update', {
           type: 'scene_npcs_update',
           payload: getSceneNpcRoster(db, campaignId, nextScene.id),
@@ -631,6 +653,30 @@ export function setupSocketHandlers(
           leaderName: character.name,
         });
         delveNotes.push(...campNotes);
+
+        // Surface a rumour at camp — something the company picks up while resting
+        try {
+          const rumours = surfaceRumours(db, campaignId, 1);
+          for (const rumour of rumours) {
+            const rumourNarration = `Word around the camp: ${rumour}`;
+            run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+              [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', rumourNarration]);
+            io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: rumourNarration });
+          }
+        } catch {}
+      }
+
+      // Surface a rumour when asking around (NPC talk, crowd, market)
+      if (/ask around|ask about|what.*heard|any news|rumour|rumor|what.*say|talk.*town|talk.*tavern|ask.*locals|ask.*people/.test(action.toLowerCase())) {
+        try {
+          const askRumours = surfaceRumours(db, campaignId, 1);
+          for (const rumourText of askRumours) {
+            const rumourNarration = `You hear it mentioned: ${rumourText}`;
+            run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+              [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', rumourNarration]);
+            io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: rumourNarration });
+          }
+        } catch {}
       }
 
       // Apply any accumulated attrition to the character HP
