@@ -20,6 +20,7 @@ import {
   isCampaignStartMode,
 } from '../../shared/campaignModes.js';
 import { buildCampaignMapIntel } from '../game/mapIntel.js';
+import { getChronicle } from '../game/chronicle.js';
 
 export function createCampaignRoutes(db: Database, io: SocketServer): Router {
   const router = Router();
@@ -219,6 +220,28 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
       [campaignId, req.player.id]);
 
     res.json({ ok: true, data: { message: 'Joined campaign' } });
+  });
+
+  // Get campaign chronicle
+  router.get('/:id/chronicle', requireAuth, (req: any, res) => {
+    const campaign = get(db, 'SELECT id FROM campaigns WHERE id = ?', [req.params.id]) as any;
+    if (!campaign) {
+      res.json({ ok: false, error: 'Campaign not found' });
+      return;
+    }
+    const membership = get(db,
+      'SELECT * FROM campaign_players WHERE campaign_id = ? AND player_id = ?',
+      [req.params.id, req.player.id]);
+    if (!membership) {
+      res.json({ ok: false, error: 'Not a member of this campaign' });
+      return;
+    }
+    try {
+      const chronicle = getChronicle(db, req.params.id);
+      res.json({ ok: true, data: chronicle });
+    } catch (err) {
+      res.json({ ok: false, error: 'Failed to build chronicle' });
+    }
   });
 
   // Get game log
