@@ -316,6 +316,15 @@ export function resolveRichExploration(params: {
       lines.push(`You also recover ${blueprint.salvage}, enough to matter on a hard road.`);
     }
 
+    // Lore fragment — ~1-in-3 chance per search, never repeats, room-type aware
+    if (d6() <= 2) {
+      const fragment = getLoreFragment(blueprint.roomType, state.loreFragmentsFound);
+      if (fragment) {
+        state.loreFragmentsFound.push(fragment);
+        lines.push(fragment);
+      }
+    }
+
     if (!state.trapTriggered && !state.trapDisarmed && searchScore <= 8) {
       state.trapTriggered = true;
       state.knownHazard = true;
@@ -897,8 +906,8 @@ export function resolveRichExploration(params: {
       lines.push(`Your torch is low. The far end of the room is guesswork.`);
     }
 
-    // Lead with ambience
-    lines.push(blueprint.ambience);
+    // Lead with room-type ambience (blends room character + dungeon theme)
+    lines.push(blueprint.roomAmbience);
 
     // Atmospheric details — pick by perception roll, not everything at once
     const atmosphericDetails: string[] = [];
@@ -908,8 +917,8 @@ export function resolveRichExploration(params: {
     if (blueprint.tracks) {
       atmosphericDetails.push(`The floor: ${blueprint.tracks}.`);
     }
-    if (!state.knownHazard && blueprint.pressure) {
-      atmosphericDetails.push(blueprint.pressure);
+    if (!state.knownHazard && blueprint.themePressure) {
+      atmosphericDetails.push(blueprint.themePressure);
     }
 
     const perceptionRoll = d20() + Math.floor((character.wis - 10) / 2) + companionMods.watchBonus;
@@ -918,6 +927,15 @@ export function resolveRichExploration(params: {
                       : 0;
     for (let i = 0; i < detailCount; i++) {
       lines.push(atmosphericDetails[i]);
+    }
+
+    // Lore fragment — ~1-in-3 chance, room-type specific, never repeats
+    if (d6() <= 2) {
+      const fragment = getLoreFragment(blueprint.roomType, state.loreFragmentsFound);
+      if (fragment) {
+        state.loreFragmentsFound.push(fragment);
+        lines.push(fragment);
+      }
     }
 
     // Exits — blunt
@@ -929,6 +947,17 @@ export function resolveRichExploration(params: {
     } else {
       const dirs = visibleConnections.map((c: any) => c.direction || 'a passage').join(', ');
       lines.push(`${visibleConnections.length} ways forward: ${dirs}.`);
+    }
+
+    // Signpost — "further in" signal when perception is sharp and exits exist
+    if (perceptionRoll >= 15 && visibleConnections.length > 0) {
+      lines.push(blueprint.signpostDetail);
+    }
+
+    // Cleared room — this place has given what it had
+    if (state.stashFound && state.scavengedParts && state.clueFound) {
+      const noteIdx = Math.abs(scene.id.split('').reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7)) % CLEARED_ROOM_NOTES.length;
+      lines.push(CLEARED_ROOM_NOTES[noteIdx]);
     }
 
     // NPCs
