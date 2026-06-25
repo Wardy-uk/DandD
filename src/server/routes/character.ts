@@ -8,7 +8,7 @@ import type { Database } from 'sql.js';
 import { get, all, run } from '../db/helpers.js';
 import { authMiddleware, requireAuth } from './auth.js';
 import {
-  generateAbilities3d6, generateAbilities4d6,
+  generateAbilities3d6, generateAbilities4d6, generateAbilitiesForClass,
   getEligibleClasses, getEligibleMultiClasses,
   getValidAlignments, assembleCharacter, applyRacialAdjustments,
   getAvailableClasses, meetsClassRequirements, getMissingClassRequirements,
@@ -23,7 +23,11 @@ export function createCharacterRoutes(db: Database): Router {
   // Roll ability scores
   router.post('/roll-abilities', requireAuth, (req: any, res) => {
     const method = req.body.method === '3d6' ? '3d6' : '4d6kh3';
-    const result = method === '3d6' ? generateAbilities3d6() : generateAbilities4d6();
+    const chosenClass = String(req.body.chosenClass || '').toLowerCase();
+    const validClasses = ['fighter', 'paladin', 'ranger', 'cleric', 'druid', 'thief', 'bard', 'mage'];
+    const result = validClasses.includes(chosenClass)
+      ? generateAbilitiesForClass(method, chosenClass as CharClass)
+      : (method === '3d6' ? generateAbilities3d6() : generateAbilities4d6());
     res.json({ ok: true, data: result });
   });
 

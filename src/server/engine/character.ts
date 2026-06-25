@@ -148,6 +148,49 @@ export function generateAbilities4d6(): AbilityRolls {
   return { method: '4d6kh3', rolls, scores };
 }
 
+const CLASS_BUILD_PRIORITY: Record<CharClass, Array<keyof AbilityScores>> = {
+  fighter: ['str', 'con', 'dex', 'wis', 'cha', 'int'],
+  paladin: ['cha', 'wis', 'str', 'con', 'dex', 'int'],
+  ranger: ['wis', 'con', 'dex', 'str', 'int', 'cha'],
+  cleric: ['wis', 'str', 'con', 'cha', 'dex', 'int'],
+  druid: ['wis', 'cha', 'con', 'dex', 'int', 'str'],
+  thief: ['dex', 'int', 'cha', 'con', 'wis', 'str'],
+  bard: ['cha', 'dex', 'int', 'con', 'wis', 'str'],
+  mage: ['int', 'dex', 'con', 'wis', 'cha', 'str'],
+};
+
+export function arrangeScoresForClass(rolls: AbilityRolls['rolls'], charClass: CharClass): AbilityScores {
+  const totals = rolls.map((roll) => roll.result.total).sort((a, b) => b - a);
+  const priority = CLASS_BUILD_PRIORITY[charClass] || ['str', 'dex', 'con', 'int', 'wis', 'cha'];
+  const assigned: AbilityScores = {
+    str: 0,
+    dex: 0,
+    con: 0,
+    int: 0,
+    wis: 0,
+    cha: 0,
+  };
+
+  priority.forEach((ability, index) => {
+    assigned[ability] = totals[index] ?? 0;
+  });
+
+  return assigned;
+}
+
+export function generateAbilitiesForClass(method: '3d6' | '4d6kh3', charClass: CharClass, maxAttempts = 400) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const rolled = method === '3d6' ? generateAbilities3d6() : generateAbilities4d6();
+    const arranged = arrangeScoresForClass(rolled.rolls, charClass);
+    if (meetsClassRequirements(arranged, charClass)) {
+      return { ...rolled, arrangedScores: arranged };
+    }
+  }
+
+  const fallback = method === '3d6' ? generateAbilities3d6() : generateAbilities4d6();
+  return { ...fallback, arrangedScores: arrangeScoresForClass(fallback.rolls, charClass) };
+}
+
 // ─── Race & Class Validation ────────────────────────────────────────────────
 
 /** Apply racial ability adjustments */

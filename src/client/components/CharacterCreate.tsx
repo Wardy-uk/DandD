@@ -155,12 +155,12 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
     setError('');
     try {
       const res = await fetch(`${apiUrl}/api/characters/roll-abilities`, {
-        method: 'POST', headers, body: JSON.stringify({ method }),
+        method: 'POST', headers, body: JSON.stringify({ method, chosenClass: chosenPath }),
       });
       const data = await res.json();
       if (data.ok) {
         setAbilityRolls(data.data.rolls);
-        setScores(arrangeScoresForClass(data.data.rolls, chosenPath));
+        setScores(data.data.arrangedScores || arrangeScoresForClass(data.data.rolls, chosenPath));
       }
     } catch {
       setError('Failed to roll abilities');
@@ -406,11 +406,11 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
       {step === 3 && (
         <div className="border border-leather/15 rounded-lg p-6 bg-parchment-light/40">
           <h3 className="font-heading font-bold text-leather text-sm uppercase tracking-wider mb-3">
-            III. Choose Class
+            III. Adjust Your Calling
           </h3>
           <p className="text-sm text-ink-light font-body mb-2 leading-relaxed">
-            Your class is your profession &mdash; how you fight, what you can do, and how you grow.
-            Every class open to a {RACE_LABELS[race]} is shown below. Some are ready now, and some require more heroic rolls.
+            Your planned {CLASS_LABELS[chosenPath]} did not survive this race choice cleanly, so this is a recovery step rather than a reset.
+            You can pick another class that fits these adjusted scores, or go back and change race or rolls.
           </p>
           {charClass === chosenPath && (
             <p className="text-xs text-green-700 font-body italic mb-3">
