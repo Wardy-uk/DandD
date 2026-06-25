@@ -115,6 +115,15 @@ interface InventoryEntry {
   equipped: boolean;
 }
 
+const COMPANION_DUTIES = [
+  { key: 'scout', label: 'Scout', command: 'to scout ahead' },
+  { key: 'vanguard', label: 'Vanguard', command: 'to take point' },
+  { key: 'warden', label: 'Warden', command: 'to tend wounds' },
+  { key: 'envoy', label: 'Envoy', command: 'to handle the talking' },
+  { key: 'watch', label: 'Watch', command: 'to keep watch' },
+  { key: 'torch', label: 'Torch', command: 'to carry the torch' },
+] as const;
+
 interface Props {
   apiUrl: string;
   player: { id: string; token: string; displayName: string };
@@ -608,6 +617,22 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                   <div className="mt-1 text-[11px] font-body text-ink-light">
                     Duty: {companion.duty || 'unset'}
                   </div>
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {COMPANION_DUTIES.map((duty) => (
+                      <button
+                        key={duty.key}
+                        type="button"
+                        onClick={() => quickAction(`Tell ${companion.name} ${duty.command}`)}
+                        className={`rounded-full border px-2 py-1 text-[10px] font-heading transition-colors ${
+                          companion.duty === duty.key
+                            ? 'border-leather bg-leather/10 text-leather-dark'
+                            : 'border-leather/15 text-leather hover:bg-leather/5'
+                        }`}
+                      >
+                        {duty.label}
+                      </button>
+                    ))}
+                  </div>
                   <div className="mt-1 text-[11px] font-body text-ink-faint">
                     Wants: {companion.aspiration}
                   </div>
@@ -625,6 +650,36 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                       {companion.relationship.lastBeat}
                     </p>
                   )}
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    <button
+                      type="button"
+                      onClick={() => quickAction(`Comfort ${companion.name}`)}
+                      className="rounded-full border border-leather/15 px-2 py-1 text-[10px] font-heading text-leather hover:bg-leather/5"
+                    >
+                      Comfort
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => quickAction(`Share food with ${companion.name}`)}
+                      className="rounded-full border border-leather/15 px-2 py-1 text-[10px] font-heading text-leather hover:bg-leather/5"
+                    >
+                      Share Food
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => quickAction(`Share 10 gp with ${companion.name}`)}
+                      className="rounded-full border border-leather/15 px-2 py-1 text-[10px] font-heading text-leather hover:bg-leather/5"
+                    >
+                      Gift Coin
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => quickAction(`Dismiss ${companion.name} from the company`)}
+                      className="rounded-full border border-blood/20 px-2 py-1 text-[10px] font-heading text-blood hover:bg-blood/5"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -660,6 +715,31 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                   <div className="mt-1 text-[11px] font-body text-ink-light">
                     {npc.relationshipLabel} • {npc.recruitHint}
                   </div>
+                  {!npc.joinedParty && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      <button
+                        type="button"
+                        onClick={() => quickAction(`Ask ${npc.name} to join us`)}
+                        className="rounded-full border border-leather/15 px-2 py-1 text-[10px] font-heading text-leather hover:bg-leather/5"
+                      >
+                        Recruit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => quickAction(`Talk to ${npc.name}`)}
+                        className="rounded-full border border-leather/15 px-2 py-1 text-[10px] font-heading text-leather hover:bg-leather/5"
+                      >
+                        Talk
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => quickAction(`Read ${npc.name}'s intent`)}
+                        className="rounded-full border border-leather/15 px-2 py-1 text-[10px] font-heading text-leather hover:bg-leather/5"
+                      >
+                        Read Intent
+                      </button>
+                    </div>
+                  )}
                   {npc.joinedParty && (
                     <>
                       <div className="mt-1 text-[11px] font-body text-ink-faint">
