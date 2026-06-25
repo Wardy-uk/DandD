@@ -6,6 +6,7 @@ import CharacterCreate from './components/CharacterCreate.js';
 import GameView from './components/GameView.js';
 import AdminPanel from './components/AdminPanel.js';
 import PwaPrompt from './components/PwaPrompt.js';
+import VolumeControl from './components/VolumeControl.js';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'https://pi5.tailecb90f.ts.net';
@@ -120,27 +121,30 @@ export default function App() {
               AI Dungeon Master &mdash; AD&D 2nd Edition
             </span>
           </div>
-          {player && (
-            <div className="flex items-center gap-3 text-sm">
-              <span className="hidden sm:inline max-w-[12rem] truncate text-sm text-ink-faint font-body">
-                {player.displayName}
-              </span>
-              {player.role === 'admin' && (
+          <div className="flex items-center gap-3">
+            <VolumeControl />
+            {player && (
+              <div className="flex items-center gap-3 text-sm">
+                <span className="hidden sm:inline max-w-[12rem] truncate text-sm text-ink-faint font-body">
+                  {player.displayName}
+                </span>
+                {player.role === 'admin' && (
+                  <button
+                    onClick={() => setView(view === 'admin' ? 'campaigns' : 'admin')}
+                    className={`text-xs font-body transition-colors ${view === 'admin' ? 'text-leather-dark font-semibold' : 'text-leather hover:text-leather-dark'}`}
+                  >
+                    {view === 'admin' ? 'Campaigns' : 'Admin'}
+                  </button>
+                )}
                 <button
-                  onClick={() => setView(view === 'admin' ? 'campaigns' : 'admin')}
-                  className={`text-xs font-body transition-colors ${view === 'admin' ? 'text-leather-dark font-semibold' : 'text-leather hover:text-leather-dark'}`}
+                  onClick={handleLogout}
+                  className="text-xs text-leather hover:text-blood transition-colors font-body"
                 >
-                  {view === 'admin' ? 'Campaigns' : 'Admin'}
+                  Sign Out
                 </button>
-              )}
-              <button
-                onClick={handleLogout}
-                className="text-xs text-leather hover:text-blood transition-colors font-body"
-              >
-                Sign Out
-              </button>
-            </div>
-          )}
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
