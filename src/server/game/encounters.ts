@@ -11,7 +11,7 @@ import {
   rollSurpriseCheck,
   type Combatant,
 } from '../engine/combat.js';
-import type { ProceduralEnemy } from './adventure.js';
+import { buildSceneBlueprint, type ProceduralEnemy } from './adventure.js';
 
 interface StartedEncounter {
   encounter: {
@@ -45,6 +45,25 @@ interface EncounterActionResolution {
   updatedCharacterIds: string[];
 }
 
+interface BattlefieldProfile {
+  visibility: 'clear' | 'murky' | 'dark';
+  cover: boolean;
+  chokepoint: boolean;
+  hazard: string | null;
+  footing: 'stable' | 'uneven' | 'treacherous';
+  pressure: string;
+}
+
+interface TacticalIntent {
+  ranged: boolean;
+  defensive: boolean;
+  flanking: boolean;
+  usingCover: boolean;
+  forcingHazard: boolean;
+  steadyingShot: boolean;
+  chokeControl: boolean;
+}
+
 export function createEncounterRecord(params: {
   db: Database;
   campaignId: string;
@@ -54,6 +73,8 @@ export function createEncounterRecord(params: {
 }): StartedEncounter {
   const { db, campaignId, sceneId, enemies, initiativeType } = params;
   const encounterId = uuid();
+  const scene = get(db, 'SELECT * FROM scenes WHERE id = ?', [sceneId]) as any;
+  const battlefield = buildBattlefieldProfile(scene);
 
   const partyChars = all(db,
     'SELECT * FROM characters WHERE campaign_id = ? AND status = "active"',
@@ -152,7 +173,7 @@ export function createEncounterRecord(params: {
       ? `The enemy is surprised for ${surprise.surpriseSegments || 1} segment${surprise.surpriseSegments === 1 ? '' : 's'}.`
       : 'Neither side is caught fully off guard.';
 
-  return { encounter, initiative, surpriseSummary };
+  return { encounter, initiative, surpriseSummary: `${surpriseSummary} ${describeBattlefieldOpening(battlefield)}` };
 }
 
 export function emitEncounterStart(
@@ -184,12 +205,14 @@ export function resolveEncounterAction(params: {
   action: string;
   actingCharacterId?: string | null;
 }): EncounterActionResolution {
-  const { db, campaignId, encounterId, action, actingCharacterId } = params;
+  const { db, encounterId, action, actingCharacterId } = params;
   const encounter = get(db, 'SELECT * FROM encounters WHERE id = ?', [encounterId]) as any;
   if (!encounter || encounter.status !== 'active') {
     return { ok: false, error: 'No active encounter.', narration: [], combatResults: [], updatedCharacterIds: [] };
   }
 
+  const scene = get(db, 'SELECT * FROM scenes WHERE id = ?', [encounter.scene_id]) as any;
+  const battlefield = buildBattlefieldProfile(scene);
   const combatants = getEncounterCombatants(db, encounterId);
   const current = getCurrentTurnCombatant(encounter, combatants);
   if (!current) {
@@ -230,22 +253,20 @@ export function resolveEncounterAction(params: {
     };
   }
 
-  const playerStrike = resolveAttackExchange(db, encounter.id, current, target, lowered);
+  const playerStrike = resolveAttackExchange(db, encounter.id, current, target, lowered, battlefield);
   combatResults.push(playerStrike.result);
   narration.push({
     actor: 'DM',
-    content: describeRolePressure(target, false),
+    content: `${describeRolePressure(target, false)} ${describeBattlefieldPressure(battlefield, lowered, false)}`,
   });
   if (current.character_id) updatedCharacterIds.add(current.character_id);
   if (target.character_id) updatedCharacterIds.add(target.character_id);
-
   if (playerStrike.killReward) {
     narration.push({ actor: 'DM', content: playerStrike.killReward });
   }
 
-  const enemyState = evaluateEnemyState(db, encounter, combatants, target, current);
+  const enemyState = evaluateEnemyState(db, encounter, target, current);
   narration.push(...enemyState.narration);
-
   if (enemyState.ended) {
     return finishResolution(db, encounter.id, narration, combatResults, updatedCharacterIds);
   }
@@ -254,22 +275,24 @@ export function resolveEncounterAction(params: {
   let loopGuard = 0;
   while (advanced.prompt && advanced.current?.side === 'enemy' && loopGuard < 8) {
     const enemyActor = advanced.current;
-    const partyTarget = chooseEnemyTarget(combatants);
-    if (!partyTarget) {
-      break;
-    }
-    const enemyStrike = resolveAttackExchange(db, encounter.id, enemyActor, partyTarget, inferEnemyAction(enemyActor));
+    const refreshedCombatants = getEncounterCombatants(db, encounter.id);
+    const partyTarget = chooseEnemyTarget(refreshedCombatants);
+    if (!partyTarget) break;
+    const enemyAction = inferEnemyAction(enemyActor, battlefield);
+    const enemyStrike = resolveAttackExchange(db, encounter.id, enemyActor, partyTarget, enemyAction, battlefield);
     combatResults.push(enemyStrike.result);
     narration.push({
       actor: 'DM',
-      content: `${describeRolePressure(enemyActor, true)} ${enemyStrike.result.description}`,
+      content: `${describeRolePressure(enemyActor, true)} ${describeBattlefieldPressure(battlefield, enemyAction, true)} ${enemyStrike.result.description}`,
     });
     if (partyTarget.character_id) updatedCharacterIds.add(partyTarget.character_id);
-    const partyState = evaluatePartyState(db, encounter, combatants, partyTarget);
+
+    const partyState = evaluatePartyState(db, encounter, partyTarget, enemyActor);
     narration.push(...partyState.narration);
     if (partyState.ended) {
       return finishResolution(db, encounter.id, narration, combatResults, updatedCharacterIds);
     }
+
     advanced = advanceEncounterTurn(db, encounter.id);
     loopGuard += 1;
   }
@@ -309,7 +332,7 @@ function getCurrentTurnCombatant(encounter: any, combatants: any[]) {
 function chooseTargetFromAction(action: string, combatants: any[], side: 'enemy' | 'party') {
   const living = combatants.filter((c) => c.side === side && c.current_hp > 0);
   if (!living.length) return null;
-  const exact = living.find((c) => action.includes(c.name.toLowerCase()));
+  const exact = living.find((c) => action.includes(String(c.name || '').toLowerCase()));
   return exact || living[0];
 }
 
@@ -320,23 +343,43 @@ function chooseEnemyTarget(combatants: any[]) {
   return party[0] || null;
 }
 
-function resolveAttackExchange(db: Database, encounterId: string, attacker: any, defender: any, action: string) {
-  const ranged = /shoot|fire|arrow|bolt|throw/.test(action);
-  const attackerCombatant = buildCombatantProfile(db, attacker);
-  const defenderCombatant = buildCombatantProfile(db, defender);
-  const result = ranged
-    ? resolveMissileAttack(attackerCombatant, defenderCombatant, 'short')
-    : resolveAttack(attackerCombatant, defenderCombatant);
+function resolveAttackExchange(
+  db: Database,
+  encounterId: string,
+  attacker: any,
+  defender: any,
+  action: string,
+  battlefield: BattlefieldProfile,
+) {
+  const intent = parseTacticalIntent(action, battlefield);
+  const attackerProfile = applyAttackAdjustments(buildCombatantProfile(db, attacker), attacker, defender, battlefield, intent);
+  const defenderProfile = applyDefenseAdjustments(buildCombatantProfile(db, defender), defender, battlefield);
+  const result = intent.ranged
+    ? resolveMissileAttack(attackerProfile, defenderProfile, 'short')
+    : resolveAttack(attackerProfile, defenderProfile);
 
+  let remainingHp = defender.current_hp;
+  let nextConditions = safeConditions(defender.conditions);
   if (result.hit && result.defenderHpAfter !== undefined) {
-    const remaining = Math.max(0, result.defenderHpAfter);
+    remainingHp = Math.max(0, result.defenderHpAfter);
+    nextConditions = appendConditionList(nextConditions, [remainingHp <= 0 ? 'down' : 'wounded']);
+    if (intent.forcingHazard && battlefield.hazard && remainingHp > 0) {
+      const hazardDamage = rollHazardDamage(battlefield);
+      remainingHp = Math.max(0, remainingHp - hazardDamage);
+      nextConditions = appendConditionList(nextConditions, ['off_balance', `hazard:${slugify(battlefield.hazard)}`]);
+      result.description += ` The position collapses into ${battlefield.hazard}, adding ${hazardDamage} more damage.`;
+      result.defenderHpAfter = remainingHp;
+      result.defenderKilled = remainingHp <= 0;
+    }
     run(db, 'UPDATE combatants SET current_hp = ?, conditions = ? WHERE id = ?',
-      [remaining, JSON.stringify(updateConditions(defender.conditions, remaining <= 0 ? 'down' : 'wounded')), defender.id]);
+      [remainingHp, JSON.stringify(nextConditions), defender.id]);
     if (defender.character_id) {
       run(db, 'UPDATE characters SET hp = ?, status = ? WHERE id = ?',
-        [remaining, remaining <= 0 ? 'dead' : 'active', defender.character_id]);
+        [remainingHp, remainingHp <= 0 ? 'dead' : 'active', defender.character_id]);
     }
   }
+
+  applyActorStance(db, attacker, intent);
 
   let killReward: string | undefined;
   if (result.defenderKilled && attacker.character_id && defender.side === 'enemy') {
@@ -366,9 +409,80 @@ function buildCombatantProfile(db: Database, row: any): Combatant {
     weaponDamageSm: inferWeaponDamage(row),
     weaponDamageLg: inferWeaponDamage(row),
     isLargeTarget: false,
-    conditions: JSON.parse(row.conditions || '[]'),
+    conditions: safeConditions(row.conditions),
     side: row.side,
   };
+}
+
+function applyAttackAdjustments(
+  profile: Combatant,
+  attacker: any,
+  defender: any,
+  battlefield: BattlefieldProfile,
+  intent: TacticalIntent,
+): Combatant {
+  const adjusted = { ...profile };
+  let shift = 0;
+
+  if (intent.flanking && !battlefield.chokepoint) shift -= 2;
+  if (intent.steadyingShot && battlefield.visibility !== 'clear') shift -= 1;
+  if (intent.chokeControl && battlefield.chokepoint) shift -= 1;
+  if (intent.defensive) shift += 1;
+  if (battlefield.visibility === 'dark') shift += 2;
+  else if (battlefield.visibility === 'murky') shift += 1;
+  if (battlefield.footing === 'treacherous') shift += 1;
+  if (battlefield.footing === 'uneven' && intent.ranged) shift += 1;
+  if (battlefield.cover && intent.ranged && !intent.steadyingShot) shift += 1;
+
+  const attackerConditions = safeConditions(attacker.conditions);
+  const defenderConditions = safeConditions(defender.conditions);
+  if (attackerConditions.includes('off_balance')) shift += 1;
+  if (defenderConditions.includes('off_balance')) shift -= 1;
+  if (defenderConditions.includes('wounded')) shift -= 1;
+
+  adjusted.thac0 += shift;
+  return adjusted;
+}
+
+function applyDefenseAdjustments(
+  profile: Combatant,
+  defender: any,
+  battlefield: BattlefieldProfile,
+): Combatant {
+  const adjusted = { ...profile };
+  const conditions = safeConditions(defender.conditions);
+  if (battlefield.cover && conditions.includes('in_cover')) adjusted.ac -= 2;
+  if (battlefield.chokepoint && conditions.includes('holding_choke')) adjusted.ac -= 1;
+  if (conditions.includes('braced')) adjusted.ac -= 1;
+  if (conditions.includes('off_balance')) adjusted.ac += 2;
+  if (battlefield.footing === 'treacherous') adjusted.ac += 1;
+  return adjusted;
+}
+
+function applyActorStance(db: Database, attacker: any, intent: TacticalIntent) {
+  let next = safeConditions(attacker.conditions)
+    .filter((condition) => !['in_cover', 'braced', 'holding_choke'].includes(condition));
+  if (intent.usingCover) next = appendConditionList(next, ['in_cover']);
+  if (intent.defensive) next = appendConditionList(next, ['braced']);
+  if (intent.chokeControl) next = appendConditionList(next, ['holding_choke']);
+  run(db, 'UPDATE combatants SET conditions = ? WHERE id = ?', [JSON.stringify(next), attacker.id]);
+}
+
+function appendConditionList(current: string[], extras: string[]) {
+  const merged = [...current];
+  for (const extra of extras) {
+    if (!merged.includes(extra)) merged.push(extra);
+  }
+  return merged;
+}
+
+function safeConditions(raw: any) {
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw || '[]') : raw;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 function inferWeaponDamage(row: any) {
@@ -379,14 +493,7 @@ function inferWeaponDamage(row: any) {
   return '1d6';
 }
 
-function updateConditions(raw: string, next: string) {
-  let conditions: string[] = [];
-  try { conditions = JSON.parse(raw || '[]'); } catch {}
-  if (!conditions.includes(next)) conditions.push(next);
-  return conditions;
-}
-
-function evaluateEnemyState(db: Database, encounter: any, combatants: any[], defender: any, attacker: any) {
+function evaluateEnemyState(db: Database, encounter: any, defender: any, attacker: any) {
   const narration: { actor: string; content: string }[] = [];
   const refreshed = getEncounterCombatants(db, encounter.id);
   const enemies = refreshed.filter((c) => c.side === 'enemy');
@@ -399,7 +506,9 @@ function evaluateEnemyState(db: Database, encounter: any, combatants: any[], def
     return { ended: true, narration };
   }
 
-  const leaderDropped = defender.side === 'enemy' && defender.current_hp > 0 && refreshed.find((c) => c.id === defender.id)?.current_hp <= 0 && /guard|handler|wight|acolyte/i.test(defender.name);
+  const leaderDropped = defender.side === 'enemy'
+    && refreshed.find((c) => c.id === defender.id)?.current_hp <= 0
+    && /guard|handler|wight|acolyte/i.test(defender.name);
   const shouldTestMorale = fallenEnemies >= Math.ceil(enemies.length / 2) || leaderDropped;
   if (shouldTestMorale) {
     const moraleBase = averageEnemyMorale(enemies);
@@ -480,6 +589,7 @@ function advanceEncounterTurn(db: Database, encounterId: string) {
     if (!aliveIds.has(nextId)) continue;
     const current = combatants.find((c) => c.id === nextId);
     if (!current) continue;
+    clearTransientConditions(db, current);
     run(db, 'UPDATE encounters SET current_turn_index = ?, round = ? WHERE id = ?', [index, round, encounterId]);
     return {
       current,
@@ -487,6 +597,14 @@ function advanceEncounterTurn(db: Database, encounterId: string) {
     };
   }
   return { prompt: undefined, current: undefined };
+}
+
+function clearTransientConditions(db: Database, combatant: any) {
+  const current = safeConditions(combatant.conditions);
+  const kept = current.filter((condition) => !['in_cover', 'braced', 'holding_choke', 'off_balance'].includes(condition));
+  if (kept.length !== current.length) {
+    run(db, 'UPDATE combatants SET conditions = ? WHERE id = ?', [JSON.stringify(kept), combatant.id]);
+  }
 }
 
 function hydrateEncounter(encounter: any) {
@@ -525,8 +643,11 @@ function inferLoot(defender: any) {
 
 function attemptRetreat(db: Database, encounter: any, combatants: any[], current: any) {
   const enemies = combatants.filter((c) => c.side === 'enemy' && c.current_hp > 0);
+  const scene = get(db, 'SELECT * FROM scenes WHERE id = ?', [encounter.scene_id]) as any;
+  const battlefield = buildBattlefieldProfile(scene);
   const enemyPressure = enemies.length + averageEnemyMorale(enemies);
-  const partyPressure = combatants.filter((c) => c.side === 'party' && c.current_hp > 0).length + Math.max(0, current.current_hp);
+  const terrainTax = battlefield.chokepoint ? 1 : battlefield.footing === 'treacherous' ? 2 : 0;
+  const partyPressure = combatants.filter((c) => c.side === 'party' && c.current_hp > 0).length + Math.max(0, current.current_hp) - terrainTax;
   if (partyPressure >= enemyPressure - 1) {
     concludeEncounter(db, encounter.id, 'fled');
     return { narration: [{ actor: 'DM', content: 'The party disengages in rough order, giving ground but keeping most of its shape intact.' }] };
@@ -566,8 +687,114 @@ function describeRolePressure(combatant: any, attacking: boolean) {
     : `${combatant.name} adds weight to the room simply by being willing to close.`;
 }
 
-function inferEnemyAction(enemy: any) {
+function inferEnemyAction(enemy: any, battlefield: BattlefieldProfile) {
   const name = String(enemy.name || '').toLowerCase();
-  if (/scout|skirmisher|crossbow/.test(name)) return 'shoot';
-  return 'attack';
+  if (/scout|skirmisher|crossbow/.test(name)) {
+    if (battlefield.cover) return 'steadying shot from cover';
+    if (!battlefield.chokepoint) return 'flank and shoot';
+    return 'shoot';
+  }
+  if (/guard|hunter|handler/.test(name)) {
+    return battlefield.chokepoint ? 'hold doorway and attack' : 'press attack';
+  }
+  if (/acolyte|fanatic|wight/.test(name)) {
+    return battlefield.hazard ? 'drive them into hazard' : 'relentless attack';
+  }
+  return battlefield.chokepoint ? 'brace and attack' : 'attack';
+}
+
+function buildBattlefieldProfile(scene: any): BattlefieldProfile {
+  const loweredBrief = String(scene?.brief || '').toLowerCase();
+  const terrain = String(scene?.terrain_type || 'indoor').toLowerCase();
+  const light = String(scene?.light_level || 'normal').toLowerCase();
+  const blueprint = scene ? buildSceneBlueprint(scene) : null;
+
+  const visibility = light === 'dark' ? 'dark' : light === 'dim' ? 'murky' : 'clear';
+  const cover = /pillar|rubble|crate|altar|stalag|wagon|statue|barricade/.test(loweredBrief)
+    || terrain === 'ruins'
+    || terrain === 'town';
+  const chokepoint = /narrow|crawlspace|bridge|hatch|door|portcullis|hallway|passage/.test(loweredBrief)
+    || Boolean(blueprint?.obstacle && /portcullis|crawlspace|hatch/.test(blueprint.obstacle));
+  const footing = terrain === 'cave' || /slope|slick|dust|broken|loose|debris/.test(loweredBrief)
+    ? 'uneven'
+    : terrain === 'ruins' || /spike|ledge|pit|fractured/.test(loweredBrief)
+      ? 'treacherous'
+      : 'stable';
+  const hazard = /pit|brazi|fire|ledge|acid|spike/.test(loweredBrief)
+    ? extractHazard(loweredBrief)
+    : blueprint?.trap?.kind || null;
+
+  return {
+    visibility,
+    cover,
+    chokepoint,
+    hazard,
+    footing,
+    pressure: blueprint?.pressure || 'The space itself keeps pushing decisions toward risk.',
+  };
+}
+
+function describeBattlefieldOpening(battlefield: BattlefieldProfile) {
+  const parts = [battlefield.pressure];
+  if (battlefield.chokepoint) parts.push('The ground favors whoever controls the narrow line.');
+  if (battlefield.cover) parts.push('There is enough cover here for ranged pressure and cautious movement to matter.');
+  if (battlefield.hazard) parts.push(`A nearby environmental threat matters here: ${battlefield.hazard}.`);
+  if (battlefield.visibility !== 'clear') parts.push('Sightlines are imperfect, so certainty comes at a cost.');
+  return parts.join(' ');
+}
+
+function describeBattlefieldPressure(battlefield: BattlefieldProfile, action: string, attacking: boolean) {
+  if (/flank/.test(action) && !battlefield.chokepoint) {
+    return attacking
+      ? 'They use the room to widen the angle and threaten a flank.'
+      : 'The space leaves enough room for flanking pressure if you let them spread out.';
+  }
+  if (/cover/.test(action) && battlefield.cover) {
+    return attacking
+      ? 'They keep part of their body hidden behind the room itself while they work.'
+      : 'The battlefield offers cover worth fighting over.';
+  }
+  if (/hazard|push|shove|drive/.test(action) && battlefield.hazard) {
+    return `The fight keeps threatening to spill into ${battlefield.hazard}.`;
+  }
+  if (battlefield.chokepoint) {
+    return 'Control of the narrow ground matters almost as much as the swing itself.';
+  }
+  if (battlefield.visibility !== 'clear') {
+    return 'Poor sight and broken lines keep everyone half a step less certain.';
+  }
+  return battlefield.pressure;
+}
+
+function parseTacticalIntent(action: string, battlefield: BattlefieldProfile): TacticalIntent {
+  return {
+    ranged: /shoot|fire|arrow|bolt|throw/.test(action),
+    defensive: /defend|brace|guard|hold/.test(action),
+    flanking: /flank|circle|side|around/.test(action),
+    usingCover: battlefield.cover && /cover|behind|pillar|rubble|duck/.test(action),
+    forcingHazard: Boolean(battlefield.hazard) && /shove|push|drive|hazard|pit|fire|ledge|spike/.test(action),
+    steadyingShot: /aim|steady|careful shot/.test(action),
+    chokeControl: battlefield.chokepoint && /door|gate|hall|bridge|hold line|doorway/.test(action),
+  };
+}
+
+function rollHazardDamage(battlefield: BattlefieldProfile) {
+  if (!battlefield.hazard) return 0;
+  if (/spike|pit/.test(battlefield.hazard)) return 4;
+  if (/fire|brazi/.test(battlefield.hazard)) return 3;
+  if (/ledge|drop/.test(battlefield.hazard)) return 5;
+  return 2;
+}
+
+function extractHazard(brief: string) {
+  if (/pit/.test(brief)) return 'an open pit';
+  if (/fire|brazi/.test(brief)) return 'open flame and hot iron';
+  if (/ledge|drop/.test(brief)) return 'a dangerous drop';
+  if (/spike/.test(brief)) return 'exposed spikes';
+  if (/acid/.test(brief)) return 'corrosive runoff';
+  return 'bad footing and sharp ruin';
+}
+
+function slugify(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
