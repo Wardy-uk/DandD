@@ -5,6 +5,7 @@ import CampaignList from './components/CampaignList.js';
 import CharacterCreate from './components/CharacterCreate.js';
 import GameView from './components/GameView.js';
 import AdminPanel from './components/AdminPanel.js';
+import PwaPrompt from './components/PwaPrompt.js';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'https://pi5.tailecb90f.ts.net';
@@ -145,6 +146,7 @@ export default function App() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-6 py-6">
+        <PwaPrompt />
         {view === 'login' && (
           <Login apiUrl={API_URL} onLogin={handleLogin} />
         )}
