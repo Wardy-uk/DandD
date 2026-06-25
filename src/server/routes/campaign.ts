@@ -9,6 +9,11 @@ import type { Server as SocketServer } from 'socket.io';
 import { get, all, run } from '../db/helpers.js';
 import { authMiddleware, requireAuth } from './auth.js';
 import { getAppSettings } from '../db/settings.js';
+import {
+  CAMPAIGN_SETTING_OPTIONS,
+  DEFAULT_CAMPAIGN_SETTING_ID,
+  findCampaignSettingOption,
+} from '../../shared/campaignSettings.js';
 
 export function createCampaignRoutes(db: Database, io: SocketServer): Router {
   const router = Router();
@@ -42,6 +47,16 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
     `, [req.player.id]);
 
     res.json({ ok: true, data: campaigns });
+  });
+
+  router.get('/settings', requireAuth, (_req: any, res) => {
+    res.json({
+      ok: true,
+      data: {
+        options: CAMPAIGN_SETTING_OPTIONS,
+        defaultSettingId: DEFAULT_CAMPAIGN_SETTING_ID,
+      },
+    });
   });
 
   // Get single campaign with full state
@@ -111,9 +126,14 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
       return;
     }
 
-    const { name, setting } = req.body;
+    const { name, settingId } = req.body;
     if (!name) {
       res.json({ ok: false, error: 'Campaign name required' });
+      return;
+    }
+    const selectedSetting = findCampaignSettingOption(settingId || DEFAULT_CAMPAIGN_SETTING_ID);
+    if (!selectedSetting) {
+      res.json({ ok: false, error: 'Please choose one of the available settings' });
       return;
     }
 
@@ -128,7 +148,7 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
       [
         id,
         name,
-        setting || '',
+        selectedSetting.name,
         startSceneId,
         req.player.id,
         settings.defaultAiGrowthEnabled ? 1 : 0,
@@ -146,7 +166,7 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
       'INSERT INTO scenes (id, campaign_id, name, brief) VALUES (?, ?, ?, ?)',
       [startSceneId, id, 'Starting Location', 'The adventure begins here. The DM will describe this location.']);
 
-    res.json({ ok: true, data: { id, name } });
+    res.json({ ok: true, data: { id, name, setting: selectedSetting.name, settingId: selectedSetting.id } });
   });
 
   // Join campaign (by invite code / ID)

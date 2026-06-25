@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import type { CampaignSettingOption } from '../../shared/campaignSettings.js';
 
 interface Campaign {
   id: string;
@@ -19,18 +20,21 @@ interface Props {
 
 export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [settingOptions, setSettingOptions] = useState<CampaignSettingOption[]>([]);
+  const [defaultSettingId, setDefaultSettingId] = useState('');
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [showJoin, setShowJoin] = useState(false);
   const [browseCampaigns, setBrowseCampaigns] = useState<Campaign[]>([]);
   const [browseLoading, setBrowseLoading] = useState(false);
   const [newName, setNewName] = useState('');
-  const [newSetting, setNewSetting] = useState('');
+  const [newSettingId, setNewSettingId] = useState('');
 
   const headers = { Authorization: `Bearer ${player.token}`, 'Content-Type': 'application/json' };
 
   useEffect(() => {
     fetchCampaigns();
+    fetchSettingOptions();
   }, []);
 
   const fetchCampaigns = async () => {
@@ -46,25 +50,41 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
     }
   };
 
+  const fetchSettingOptions = async () => {
+    try {
+      const res = await fetch(`${apiUrl}/api/campaigns/settings`, { headers });
+      const data = await res.json();
+      if (data.ok) {
+        setSettingOptions(data.data.options || []);
+        setDefaultSettingId(data.data.defaultSettingId || '');
+        setNewSettingId((current: string) => current || data.data.defaultSettingId || '');
+      }
+    } catch (err) {
+      console.error('Failed to fetch campaign settings', err);
+    }
+  };
+
   const createCampaign = async () => {
-    if (!newName.trim()) return;
+    if (!newName.trim() || !newSettingId.trim()) return;
     try {
       const res = await fetch(`${apiUrl}/api/campaigns`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ name: newName, setting: newSetting }),
+        body: JSON.stringify({ name: newName, settingId: newSettingId }),
       });
       const data = await res.json();
       if (data.ok) {
         setShowCreate(false);
         setNewName('');
-        setNewSetting('');
+        setNewSettingId(defaultSettingId || settingOptions[0]?.id || '');
         fetchCampaigns();
       }
     } catch (err) {
       console.error('Failed to create campaign', err);
     }
   };
+
+  const selectedSetting = settingOptions.find((option) => option.id === newSettingId) || null;
 
   const fetchBrowseCampaigns = async () => {
     setBrowseLoading(true);
@@ -198,13 +218,28 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
                 <label className="block text-xs font-heading font-semibold text-ink-faint uppercase tracking-wider mb-1">
                   Setting
                 </label>
-                <textarea
-                  value={newSetting}
-                  onChange={e => setNewSetting(e.target.value)}
-                  placeholder="Describe the world, era, and tone..."
-                  rows={3}
-                  className="w-full px-4 py-2.5 rounded-lg border border-leather/20 bg-parchment-light font-body text-sm focus:outline-none focus:border-leather/50 resize-none"
-                />
+                <div className="space-y-2 max-h-72 overflow-y-auto rounded-lg border border-leather/15 bg-parchment-light/50 p-2">
+                  {settingOptions.map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => setNewSettingId(option.id)}
+                      className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${
+                        newSettingId === option.id
+                          ? 'border-leather bg-leather/10'
+                          : 'border-leather/10 bg-parchment hover:border-leather/30 hover:bg-parchment-light'
+                      }`}
+                    >
+                      <div className="font-heading font-semibold text-sm text-leather-dark">{option.name}</div>
+                      <div className="mt-1 text-xs font-body italic text-ink-faint">{option.summary}</div>
+                    </button>
+                  ))}
+                </div>
+                {selectedSetting && (
+                  <p className="mt-2 text-xs font-body text-ink-faint">
+                    {selectedSetting.tone}
+                  </p>
+                )}
               </div>
             </div>
             <div className="flex gap-3 mt-6">
