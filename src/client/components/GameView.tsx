@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import type { Socket } from 'socket.io-client';
 import CharacterSheet from './CharacterSheet.js';
 import CampaignMap from './CampaignMap.js';
+import TownView from './TownView.js';
 
 interface LogEntry {
   id: string;
@@ -166,6 +167,8 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
   const [campaignState, setCampaignState] = useState<CampaignStateView | null>(null);
   const [openPanel, setOpenPanel] = useState<MobilePanel>(null);
   const [showDeathModal, setShowDeathModal] = useState(false);
+  const [campaignPhase, setCampaignPhase] = useState<'dungeon' | 'town'>('dungeon');
+  const [townName, setTownName] = useState<string>('');
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const headers = { Authorization: `Bearer ${player.token}`, 'Content-Type': 'application/json' };
@@ -235,6 +238,12 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
         setSceneNpcs(data.payload || []);
       } else if (data.type === 'campaign_state') {
         setCampaignState(data.payload || null);
+      } else if (data.type === 'phase_change') {
+        setCampaignPhase(data.payload?.phase || 'dungeon');
+        if (data.payload?.townName) setTownName(data.payload.townName);
+      } else if (data.type === 'campaign') {
+        if (data.payload?.campaign_phase) setCampaignPhase(data.payload.campaign_phase);
+        if (data.payload?.town_name) setTownName(data.payload.town_name);
       }
     };
     const onPlayerJoined = (data: { playerId: string; playerName: string }) => {
@@ -454,6 +463,20 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
       <div ref={logEndRef} />
     </>
   );
+
+  // ── Town phase: hand off to TownView ────────────────────────────────────
+  if (campaignPhase === 'town') {
+    return (
+      <TownView
+        apiUrl={apiUrl}
+        player={player}
+        campaignId={campaignId}
+        socket={socket}
+        onBack={onBack}
+        onLeave={() => setCampaignPhase('dungeon')}
+      />
+    );
+  }
 
   return (
     <div className="relative">
