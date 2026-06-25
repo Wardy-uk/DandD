@@ -37,6 +37,12 @@ interface MapNode {
     obstacleCleared: boolean;
     lockOpened: boolean;
     stashFound: boolean;
+    secured: boolean;
+    fallbackPoint: boolean;
+    safeCamp: boolean;
+    cleared: boolean;
+    knownHazard: boolean;
+    knownTreasure: boolean;
   };
 }
 
@@ -183,5 +189,11 @@ function normalizeRoomState(raw: any) {
     obstacleCleared: Boolean(raw?.obstacleCleared),
     lockOpened: Boolean(raw?.lockOpened),
     stashFound: Boolean(raw?.stashFound),
+    secured: Boolean(raw?.secured),
+    fallbackPoint: Boolean(raw?.fallbackPoint),
+    safeCamp: Boolean(raw?.safeCamp),
+    cleared: Boolean(raw?.cleared),
+    knownHazard: Boolean(raw?.knownHazard),
+    knownTreasure: Boolean(raw?.knownTreasure),
   };
 }

@@ -26,6 +26,12 @@ interface MapNode {
     obstacleCleared: boolean;
     lockOpened: boolean;
     stashFound: boolean;
+    secured: boolean;
+    fallbackPoint: boolean;
+    safeCamp: boolean;
+    cleared: boolean;
+    knownHazard: boolean;
+    knownTreasure: boolean;
   };
 }
 
@@ -136,6 +142,16 @@ export default function CampaignMap({ mapData }: Props) {
               <div className="mt-1 text-[10px] font-body text-ink-faint">
                 {node.discovered ? `${node.terrainType || 'unknown'} • ${node.lightLevel || 'normal'}` : 'route not yet explored'}
               </div>
+              {node.discovered && (
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {node.roomState?.fallbackPoint && <Marker label="FB" tone="gold" />}
+                  {node.roomState?.safeCamp && <Marker label="Camp" tone="green" />}
+                  {node.roomState?.cleared && <Marker label="Clear" tone="green" />}
+                  {node.roomState?.knownTreasure && <Marker label="Loot" tone="gold" />}
+                  {node.roomState?.knownHazard && <Marker label="Haz" tone="red" />}
+                  {node.roomState?.hiddenExitFound && <Marker label="Secret" tone="ink" />}
+                </div>
+              )}
               {node.current && (
                 <div className="mt-1 text-[10px] font-heading uppercase tracking-wide text-gold">
                   Party Here
@@ -166,7 +182,31 @@ export default function CampaignMap({ mapData }: Props) {
             ))}
           </div>
         ) : null}
+        {focus.roomState && (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {focus.roomState.fallbackPoint && <Marker label="Fallback Point" tone="gold" />}
+            {focus.roomState.safeCamp && <Marker label="Camp Ready" tone="green" />}
+            {focus.roomState.cleared && <Marker label="Cleared" tone="green" />}
+            {focus.roomState.knownTreasure && <Marker label="Treasure Found" tone="gold" />}
+            {focus.roomState.knownHazard && <Marker label="Hazard Known" tone="red" />}
+            {focus.roomState.hiddenExitFound && <Marker label="Secret Route Found" tone="ink" />}
+          </div>
+        )}
       </div>
     </div>
+  );
+}
+
+function Marker({ label, tone }: { label: string; tone: 'gold' | 'green' | 'red' | 'ink' }) {
+  const tones: Record<string, string> = {
+    gold: 'border-gold/30 bg-gold/10 text-gold',
+    green: 'border-heal/30 bg-heal/10 text-heal',
+    red: 'border-blood/30 bg-blood/10 text-blood',
+    ink: 'border-leather/20 bg-parchment text-ink-faint',
+  };
+  return (
+    <span className={`rounded-full border px-1.5 py-0.5 text-[9px] font-heading uppercase tracking-wide ${tones[tone]}`}>
+      {label}
+    </span>
   );
 }

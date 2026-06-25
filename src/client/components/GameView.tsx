@@ -448,7 +448,9 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
               'Read the battlefield',
               encounterActive ? 'Hold the doorway' : 'Search for traps',
               encounterActive ? 'Take cover and aim' : 'Search for hidden doors',
-              encounterActive ? 'Drive them into the hazard' : 'Rest',
+              encounterActive ? 'Drive them into the hazard' : 'Secure this room',
+              encounterActive ? 'Fall back to cover' : 'Mark fallback point',
+              encounterActive ? 'Brace and hold' : 'Rest',
             ].map(action => (
               <button key={action} onClick={() => quickAction(action)}
                 className="text-xs px-3 py-1.5 rounded-full border border-leather/15 text-leather font-heading hover:bg-leather/5 transition-colors">

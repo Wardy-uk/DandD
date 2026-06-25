@@ -578,6 +578,16 @@ function inferMorale(enemy: any) {
 }
 
 function concludeEncounter(db: Database, encounterId: string, status: 'resolved' | 'fled') {
+  const encounter = get(db, 'SELECT scene_id FROM encounters WHERE id = ?', [encounterId]) as any;
+  if (encounter?.scene_id) {
+    const existing = get(db, 'SELECT state_json, campaign_id FROM scene_state WHERE scene_id = ?', [encounter.scene_id]) as any;
+    const state = safeJsonObject(existing?.state_json);
+    state.cleared = status === 'resolved';
+    state.secured = status === 'resolved' ? Boolean(state.secured) : false;
+    run(db,
+      'INSERT OR REPLACE INTO scene_state (scene_id, campaign_id, state_json, updated_at) VALUES (?, ?, ?, datetime(\"now\"))',
+      [encounter.scene_id, existing?.campaign_id || get(db, 'SELECT campaign_id FROM encounters WHERE id = ?', [encounterId])?.campaign_id || '', JSON.stringify(state)]);
+  }
   run(db, 'UPDATE encounters SET status = ? WHERE id = ?', [status, encounterId]);
 }
 
@@ -817,4 +827,13 @@ function extractHazard(brief: string) {
 
 function slugify(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+}
+
+function safeJsonObject(raw?: string) {
+  try {
+    const parsed = JSON.parse(raw || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
 }

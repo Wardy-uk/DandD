@@ -53,6 +53,12 @@ interface SceneState {
   lockOpened: boolean;
   trapDisarmed: boolean;
   scavengedParts: boolean;
+  secured: boolean;
+  fallbackPoint: boolean;
+  safeCamp: boolean;
+  cleared: boolean;
+  knownHazard: boolean;
+  knownTreasure: boolean;
   restCount: number;
 }
 
@@ -246,6 +252,7 @@ export function resolveRichExploration(params: {
 
     if (!state.stashFound && searchScore >= 15) {
       state.stashFound = true;
+      state.knownTreasure = true;
       awardGoldAndXp(db, character, blueprint.stash.gold, blueprint.stash.xp);
       lines.push(`Your careful search reveals ${blueprint.stash.item}, along with ${blueprint.stash.gold} gp in salvageable value.`);
     }
@@ -258,6 +265,7 @@ export function resolveRichExploration(params: {
 
     if (!state.trapTriggered && !state.trapDisarmed && searchScore <= 8) {
       state.trapTriggered = true;
+      state.knownHazard = true;
       const trap = triggerTrap(db, character, inventory, blueprint, campaignState);
       lines.push(trap.content);
       saveSceneState(db, campaignId, scene.id, state);
@@ -302,6 +310,7 @@ export function resolveRichExploration(params: {
     const pickScore = d20() + Math.floor((character.dex - 10) / 2) + thiefBonus(character, 'open_locks');
     if (pickScore >= blueprint.lock.dc) {
       state.lockOpened = true;
+      state.cleared = false;
       saveSceneState(db, campaignId, scene.id, state);
       awardXp(db, character, 25);
       shiftFactionStanding(campaignState, 'delvers', { reputation: 1 }, 'The party solved a lock cleanly instead of smashing it.');
@@ -334,6 +343,7 @@ export function resolveRichExploration(params: {
     const disarmScore = d20() + Math.floor((character.dex - 10) / 2) + thiefBonus(character, 'find_traps');
     if (disarmScore >= blueprint.trap.dc) {
       state.trapDisarmed = true;
+      state.knownHazard = true;
       saveSceneState(db, campaignId, scene.id, state);
       awardXp(db, character, 30);
       saveCampaignState(db, campaignId, campaignState);
@@ -345,6 +355,7 @@ export function resolveRichExploration(params: {
     }
 
     state.trapTriggered = true;
+    state.knownHazard = true;
     const trap = triggerTrap(db, character, inventory, blueprint, campaignState);
     saveSceneState(db, campaignId, scene.id, state);
     saveCampaignState(db, campaignId, campaignState);
@@ -400,6 +411,7 @@ export function resolveRichExploration(params: {
     const effort = d20() + strMods.hitAdj + Math.floor((character.level - 1) / 2);
     if (effort >= 13) {
       state.obstacleCleared = true;
+      state.secured = false;
       saveSceneState(db, campaignId, scene.id, state);
       awardXp(db, character, 20);
       shiftFactionStanding(campaignState, blueprint.faction, { heat: 2 }, 'The party is forcing their way through loudly.');
@@ -432,6 +444,9 @@ export function resolveRichExploration(params: {
         campaignState.supply.bandagesUsed += 1;
       }
     }
+    if (state.secured || state.obstacleCleared || state.trapDisarmed) {
+      state.safeCamp = true;
+    }
     saveSceneState(db, campaignId, scene.id, state);
     saveCampaignState(db, campaignId, campaignState);
     const riskText = d6() <= Math.min(5, turn.dangerLevel + state.restCount)
@@ -440,6 +455,46 @@ export function resolveRichExploration(params: {
     return finalizeOutcome(db, campaignId, {
       content: `${heal > 0 ? `You patch wounds and recover ${heal} hit point${heal === 1 ? '' : 's'}. ` : ''}${riskText}`,
       hpDelta: heal,
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
+  if (/secure|barricade|fortify|hold this room/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    state.secured = true;
+    state.cleared = true;
+    if (state.trapDisarmed || state.obstacleCleared) {
+      state.safeCamp = true;
+    }
+    campaignState.encounterPressure = Math.max(0, campaignState.encounterPressure - 1);
+    saveSceneState(db, campaignId, scene.id, state);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: 'You spend time making the room defensible, noting angles, choke points, and what would need to move fast if you had to fall back here.',
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
+  if (/fallback|rally point|mark this room|base camp/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    state.fallbackPoint = true;
+    if (state.secured) state.safeCamp = true;
+    saveSceneState(db, campaignId, scene.id, state);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: 'You mark this place in the party’s working memory as a fallback point: not safe exactly, but dependable enough to matter under pressure.',
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
+  if (/map the room|sketch the room|chart this place|make a map/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    state.searched = true;
+    saveSceneState(db, campaignId, scene.id, state);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: 'You take a few disciplined minutes to sketch routes, rough dimensions, and memorable hazards so the next decision can be made from something better than fear.',
+      xpDelta: 10,
       explorationTurnAdvanced: turn.turn,
     }, turn, campaignState, blueprint, action);
   }
@@ -752,6 +807,12 @@ function normalizeState(state: Partial<SceneState>): SceneState {
     lockOpened: Boolean((state as any).lockOpened),
     trapDisarmed: Boolean((state as any).trapDisarmed),
     scavengedParts: Boolean((state as any).scavengedParts),
+    secured: Boolean((state as any).secured),
+    fallbackPoint: Boolean((state as any).fallbackPoint),
+    safeCamp: Boolean((state as any).safeCamp),
+    cleared: Boolean((state as any).cleared),
+    knownHazard: Boolean((state as any).knownHazard),
+    knownTreasure: Boolean((state as any).knownTreasure),
     restCount: Number(state.restCount || 0),
   };
 }
