@@ -634,6 +634,122 @@ export function resolveRichExploration(params: {
     }, turn, campaignState, blueprint, action, true);
   }
 
+  if (/use bandage|bind.*wound|treat.*wound|dress.*wound/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    if (character.hp >= character.max_hp) {
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
+        content: 'You check the worst of the bruises and cuts, but nothing needs a fresh bandage right now.',
+        explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action);
+    }
+
+    if (!consumeItem(db, character.id, inventory, 'Bandage Roll', 1)) {
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
+        content: 'You reach for bandages and come up empty. The expedition is starting to feel that shortage.',
+        explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action);
+    }
+
+    const heal = Math.min(character.max_hp - character.hp, Math.max(1, Math.floor((character.level + 2) / 3)));
+    applyHp(db, character.id, character.hp + heal);
+    campaignState.supply.bandagesUsed += 1;
+    noteCampaignEvent(campaignState, `${character.name} used field bandages in ${scene.name}.`);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: `You take a disciplined minute to bind the worst of the damage and recover ${heal} hit point${heal === 1 ? '' : 's'}.`,
+      hpDelta: heal,
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
+  if (/light.*torch|raise.*torch|burn a torch|set a torch/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    if (!consumeItem(db, character.id, inventory, 'Torch', 1)) {
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
+        content: 'You go to raise more light and realise the company is out of spare torches.',
+        explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action);
+    }
+
+    campaignState.supply.torchesBurned += 1;
+    let reveal = 'The new flame pushes the room back into understandable shapes and gives everyone a cleaner read on the ground.';
+    if (!state.clueFound) {
+      state.clueFound = true;
+      reveal += ` In the steadier light, you catch something you had missed before: ${blueprint.clue}`;
+    } else if (!state.knownHazard) {
+      state.knownHazard = true;
+      reveal += ` The better light also makes the local danger easier to read, including signs of ${blueprint.trap.kind}.`;
+    }
+    saveSceneState(db, campaignId, scene.id, state);
+    noteCampaignEvent(campaignState, `${character.name} spent a torch to improve visibility in ${scene.name}.`);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: reveal,
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
+  if (/holy symbol|consecrate|ward this place|bless this room|present the symbol/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    const hasSymbol = inventory.some((item) => item.item === 'Holy Symbol' && item.quantity > 0);
+    if (!hasSymbol) {
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
+        content: 'You try to invoke a sacred ward, but without a holy symbol the gesture has little force behind it.',
+        explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action);
+    }
+
+    const divineAuthority = /paladin|cleric|druid/.test(character.char_class);
+    if (divineAuthority) {
+      campaignState.encounterPressure = Math.max(0, campaignState.encounterPressure - (/restless dead|cultists/.test(blueprint.encounterTheme) ? 2 : 1));
+      shiftFactionStanding(campaignState, 'watch', { reputation: 1 }, `${character.name} sanctified dangerous ground with clear purpose.`);
+    }
+    state.secured = true;
+    if (/restless dead|cultists/.test(blueprint.encounterTheme)) {
+      state.knownHazard = true;
+    }
+    saveSceneState(db, campaignId, scene.id, state);
+    noteCampaignEvent(campaignState, `${character.name} raised a holy ward in ${scene.name}.`);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: divineAuthority
+        ? `You raise the holy symbol and push a brief but forceful sense of order through the room. The place does not become safe, but it does become less eager to close its teeth around you.`
+        : 'You raise the symbol more in hope than authority, but even that small ritual steadies the room a little.',
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
+  if (/set.*rope|secure.*rope|rope the hazard|fix a rope/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    const hasRope = inventory.some((item) => item.item === 'Rope (50 ft)' && item.quantity > 0);
+    if (!hasRope) {
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
+        content: 'You would need rope for that, and the company has none ready to hand.',
+        explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action);
+    }
+
+    state.fallbackPoint = true;
+    state.knownHazard = true;
+    state.secured = true;
+    if (!state.obstacleCleared && /slab|hatch|portcullis|crawlspace/.test(blueprint.obstacle)) {
+      state.obstacleCleared = true;
+    }
+    saveSceneState(db, campaignId, scene.id, state);
+    noteCampaignEvent(campaignState, `${character.name} rigged rope lines in ${scene.name}.`);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: `You rig rope where it matters, turning dangerous ground into manageable ground and giving the party a safer way to retreat, climb, or cross in a hurry.`,
+      xpDelta: 10,
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
   return null;
 }
 

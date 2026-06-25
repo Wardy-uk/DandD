@@ -108,6 +108,13 @@ interface SceneNpc {
   recruitHint: string;
 }
 
+interface InventoryEntry {
+  item: string;
+  weight: number;
+  quantity: number;
+  equipped: boolean;
+}
+
 interface Props {
   apiUrl: string;
   player: { id: string; token: string; displayName: string };
@@ -311,6 +318,20 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
 
   const recruitableNpc = sceneNpcs.find((npc) => !npc.joinedParty);
   const leadCompanion = companions.find((companion) => companion.joinedParty);
+  const inventory: InventoryEntry[] = character?.inventory
+    ? (typeof character.inventory === 'string' ? JSON.parse(character.inventory) : character.inventory)
+    : [];
+  const getItemCount = (itemName: string) => inventory
+    .filter((item) => item.item === itemName)
+    .reduce((total, item) => total + Number(item.quantity || 0), 0);
+  const carriedSupplies = {
+    torches: getItemCount('Torch'),
+    rations: getItemCount('Ration'),
+    bandages: getItemCount('Bandage Roll'),
+    arrows: getItemCount('Arrow'),
+    rope: getItemCount('Rope (50 ft)'),
+    holySymbol: getItemCount('Holy Symbol'),
+  };
   const className = String(character?.char_class || '').toLowerCase();
   const classAction = encounterActive
     ? className === 'paladin'
@@ -370,6 +391,10 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
     recruitableNpc ? `Ask ${recruitableNpc.name} to join us` : (encounterActive ? 'Hold the doorway' : 'Search for traps'),
     encounterActive ? 'Drive them into the hazard' : 'Secure this room',
     encounterActive ? 'Fall back to cover' : 'Mark fallback point',
+    !encounterActive && carriedSupplies.bandages > 0 ? 'Use bandage' : null,
+    !encounterActive && carriedSupplies.torches > 0 ? 'Light a torch' : null,
+    !encounterActive && carriedSupplies.rope > 0 ? 'Set rope' : null,
+    !encounterActive && carriedSupplies.holySymbol > 0 ? 'Present holy symbol' : null,
     encounterActive ? 'Brace and hold' : 'Rest',
   ].filter(Boolean) as string[];
 
@@ -529,10 +554,14 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
               </div>
             </div>
             <div className="grid grid-cols-2 gap-1 text-[11px] font-body text-ink-faint">
-              <div>Torches: <span className="text-ink-light">{campaignState.supply.torchesBurned} burned</span></div>
-              <div>Rations: <span className="text-ink-light">{campaignState.supply.rationsSpent} spent</span></div>
-              <div>Arrows: <span className="text-ink-light">{campaignState.supply.arrowsSpent} spent</span></div>
-              <div>Bandages: <span className="text-ink-light">{campaignState.supply.bandagesUsed} used</span></div>
+              <div>Torches: <span className="text-ink-light">{carriedSupplies.torches} on hand</span></div>
+              <div>Rations: <span className="text-ink-light">{carriedSupplies.rations} on hand</span></div>
+              <div>Arrows: <span className="text-ink-light">{carriedSupplies.arrows} on hand</span></div>
+              <div>Bandages: <span className="text-ink-light">{carriedSupplies.bandages} on hand</span></div>
+              <div>Spent torches: <span className="text-ink-light">{campaignState.supply.torchesBurned}</span></div>
+              <div>Spent rations: <span className="text-ink-light">{campaignState.supply.rationsSpent}</span></div>
+              <div>Spent arrows: <span className="text-ink-light">{campaignState.supply.arrowsSpent}</span></div>
+              <div>Used bandages: <span className="text-ink-light">{campaignState.supply.bandagesUsed}</span></div>
             </div>
             <div className="mt-3 space-y-2">
               {campaignState.factions.slice(0, 4).map((faction) => (
