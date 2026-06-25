@@ -155,7 +155,101 @@ const COMPANION_DUTIES = [
   { key: 'torch', label: 'Torch', command: 'to carry the torch' },
 ] as const;
 
-type MobilePanel = null | 'character' | 'company' | 'scene' | 'expedition' | 'map';
+type MobilePanel = null | 'character' | 'spells' | 'company' | 'scene' | 'expedition' | 'map';
+
+// ─── Spell catalog (client-side lookup for display) ───────────────────────────
+
+const SPELL_CATALOG: Record<string, { level: number; school: string; desc: string }> = {
+  // Magic-User L1
+  'Magic Missile':          { level: 1, school: 'Evocation',    desc: '1d4+1/missile, auto-hits.' },
+  'Sleep':                  { level: 1, school: 'Enchantment',  desc: '2d4 HD sleep, no save. Not undead.' },
+  'Charm Person':           { level: 1, school: 'Enchantment',  desc: 'Target treats caster as friend. Save negates.' },
+  'Shield':                 { level: 1, school: 'Abjuration',   desc: 'AC 4 vs missiles, AC 2 vs melee.' },
+  'Detect Magic':           { level: 1, school: 'Divination',   desc: 'Detects magic in 10×60 ft path.' },
+  'Light':                  { level: 1, school: 'Alteration',   desc: 'Torchlight globe 20 ft. Can blind a target.' },
+  'Read Magic':             { level: 1, school: 'Divination',   desc: 'Read magical inscriptions and scrolls.' },
+  'Hold Portal':            { level: 1, school: 'Alteration',   desc: 'Holds door shut for 1 round/level.' },
+  // Magic-User L2
+  'Web':                    { level: 2, school: 'Evocation',    desc: 'Sticky webs entangle all within area.' },
+  'Invisibility':           { level: 2, school: 'Illusion',     desc: 'Invisible until attacking or casting.' },
+  'Mirror Image':           { level: 2, school: 'Illusion',     desc: '1d4+1 decoy images of caster.' },
+  'Knock':                  { level: 2, school: 'Alteration',   desc: 'Opens stuck or locked doors.' },
+  'Levitate':               { level: 2, school: 'Alteration',   desc: 'Vertical movement 20 ft/round.' },
+  'Detect Invisibility':    { level: 2, school: 'Divination',   desc: 'See invisible, hidden, ethereal creatures.' },
+  'ESP':                    { level: 2, school: 'Divination',   desc: 'Read surface thoughts within range.' },
+  // Magic-User L3
+  'Fireball':               { level: 3, school: 'Invocation',   desc: '1d6/level fire in 20 ft radius. Save halves.' },
+  'Lightning Bolt':         { level: 3, school: 'Invocation',   desc: '1d6/level lightning. Save halves.' },
+  'Fly':                    { level: 3, school: 'Alteration',   desc: 'Fly at speed 18.' },
+  'Haste':                  { level: 3, school: 'Alteration',   desc: 'Double speed and attacks. Ages 1 year.' },
+  'Hold Person':            { level: 3, school: 'Enchantment',  desc: 'Holds human/demi-human targets rigid. Save negates.' },
+  'Dispel Magic':           { level: 3, school: 'Abjuration',   desc: 'Cancels spells and effects in area.' },
+  'Slow':                   { level: 3, school: 'Alteration',   desc: 'Halves speed and attacks. Counters Haste.' },
+  // Magic-User L4
+  'Polymorph Other':        { level: 4, school: 'Alteration',   desc: 'Transforms target into another creature.' },
+  'Ice Storm':              { level: 4, school: 'Evocation',    desc: '3d10 bludgeoning/cold. No save.' },
+  'Confusion':              { level: 4, school: 'Enchantment',  desc: 'Targets act randomly each round.' },
+  'Dimension Door':         { level: 4, school: 'Alteration',   desc: 'Teleport up to 30 yards/level.' },
+  'Wall of Fire':           { level: 4, school: 'Evocation',    desc: '2d4+level damage to those passing through.' },
+  'Fear':                   { level: 4, school: 'Illusion',     desc: 'Cone — targets flee 1 round/level.' },
+  // Magic-User L5
+  'Cloudkill':              { level: 5, school: 'Evocation',    desc: 'Kills <4+1 HD; others save or die.' },
+  'Cone of Cold':           { level: 5, school: 'Evocation',    desc: '1d4+1/level cold in cone. Save halves.' },
+  'Teleport':               { level: 5, school: 'Alteration',   desc: 'Instant transport to known location.' },
+  'Hold Monster':           { level: 5, school: 'Enchantment',  desc: 'Holds 1-4 monsters rigid. Save negates.' },
+  'Animate Dead':           { level: 5, school: 'Necromancy',   desc: '1 HD/level skeletons or zombies.' },
+  'Feeblemind':             { level: 5, school: 'Enchantment',  desc: 'INT and WIS reduced to near zero.' },
+  // Cleric L1
+  'Cure Light Wounds':      { level: 1, school: 'Necromancy',   desc: 'Heals 1d8 HP.' },
+  'Bless':                  { level: 1, school: 'Conjuration',  desc: '+1 to hit and saves vs fear for allies.' },
+  'Command':                { level: 1, school: 'Enchantment',  desc: 'One-word command target must obey.' },
+  'Detect Evil':            { level: 1, school: 'Divination',   desc: 'Detects evil in 10×120 ft path.' },
+  'Protection from Evil':   { level: 1, school: 'Abjuration',   desc: '+2 AC and saves vs evil.' },
+  'Sanctuary':              { level: 1, school: 'Abjuration',   desc: 'Enemies save to attack you. Ends if you attack.' },
+  // Cleric L2
+  'Silence':                { level: 2, school: 'Alteration',   desc: 'No sound in area. Blocks verbal spells.' },
+  'Spiritual Hammer':       { level: 2, school: 'Invocation',   desc: 'Magic hammer attacks for 1 round/level.' },
+  'Find Traps':             { level: 2, school: 'Divination',   desc: 'Detects all traps — magical and mechanical.' },
+  'Slow Poison':            { level: 2, school: 'Necromancy',   desc: 'Delays poison effects. Buys time.' },
+  'Speak with Animals':     { level: 2, school: 'Alteration',   desc: 'Two-way communication with animals.' },
+  // Cleric L3
+  'Cure Disease':           { level: 3, school: 'Necromancy',   desc: 'Cures all diseases.' },
+  'Prayer':                 { level: 3, school: 'Conjuration',  desc: '+1 allies, −1 enemies to hit/damage/saves.' },
+  'Remove Curse':           { level: 3, school: 'Abjuration',   desc: 'Removes most curses.' },
+  'Continual Light':        { level: 3, school: 'Alteration',   desc: 'Permanent daylight 60 ft radius.' },
+  'Speak with Dead':        { level: 3, school: 'Necromancy',   desc: 'Ask 2+ questions of a corpse.' },
+  // Cleric L4
+  'Cure Serious Wounds':    { level: 4, school: 'Necromancy',   desc: 'Heals 2d8+1 HP.' },
+  'Neutralize Poison':      { level: 4, school: 'Necromancy',   desc: 'Completely neutralises poison.' },
+  "Protection from Evil 10' Radius": { level: 4, school: 'Abjuration', desc: '+2 AC/saves vs evil for all within 10 ft.' },
+  'Sticks to Snakes':       { level: 4, school: 'Alteration',   desc: '1d4+2/level sticks become snakes.' },
+  // Cleric L5
+  'Cure Critical Wounds':   { level: 5, school: 'Necromancy',   desc: 'Heals 3d8+3 HP.' },
+  'Flame Strike':           { level: 5, school: 'Invocation',   desc: '6d8 divine fire. Save halves.' },
+  'Raise Dead':             { level: 5, school: 'Necromancy',   desc: 'Restores life. Subject loses 1 CON.' },
+  'True Seeing':            { level: 5, school: 'Divination',   desc: 'See through illusions, invisibility, ethereal.' },
+  'Commune':                { level: 5, school: 'Divination',   desc: 'Ask deity yes/no questions.' },
+  // Druid L1
+  'Entangle':               { level: 1, school: 'Alteration',   desc: 'Plants hold creatures. Save at −2.' },
+  'Faerie Fire':            { level: 1, school: 'Evocation',    desc: 'Outlines targets. +2 attack rolls vs them.' },
+  'Purify Food & Drink':    { level: 1, school: 'Alteration',   desc: 'Makes spoiled or poisoned food safe.' },
+  // Druid L2
+  'Barkskin':               { level: 2, school: 'Alteration',   desc: 'Grants AC 6. Improves by 1 per 4 levels.' },
+  'Charm Person or Mammal': { level: 2, school: 'Enchantment',  desc: 'Mammal treats druid as friend. Save negates.' },
+  'Obscurement':            { level: 2, school: 'Alteration',   desc: 'Mist reduces visibility to 2d4 feet.' },
+  'Produce Flame':          { level: 2, school: 'Alteration',   desc: '1d4+1 fire, touchable or throwable.' },
+  // Druid L3
+  'Call Lightning':         { level: 3, school: 'Alteration',   desc: '2d8+1d8/level lightning per bolt. Outdoors only.' },
+  'Hold Animal':            { level: 3, school: 'Enchantment',  desc: 'Holds 1-4 animals immobile. Save negates.' },
+  'Plant Growth':           { level: 3, school: 'Alteration',   desc: 'Plants tangle area to near-impassable density.' },
+  'Summon Insects':         { level: 3, school: 'Conjuration',  desc: 'Swarm: 2 HP/round, −4 attacks, −2 saves.' },
+};
+
+// Overrides for spells that share a name across classes but differ in level
+const SPELL_OVERRIDES: Record<string, { level: number; school: string; desc: string }> = {
+  'Hold Person|cleric': { level: 2, school: 'Enchantment',  desc: 'Holds 1-3 humanoids rigid. Save negates.' },
+  'Speak with Animals|druid': { level: 1, school: 'Alteration', desc: 'Two-way communication with natural animals.' },
+};
 
 interface Props {
   apiUrl: string;
@@ -445,6 +539,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
   const joinedCompanions = companions.filter(c => c.joinedParty);
   const mobilePanels: Array<{ key: NonNullable<MobilePanel>; label: string; icon: string; show: boolean; badge: number }> = [
     { key: 'character', label: 'Char',  icon: '⚔',  show: !!character,                                  badge: 0 },
+    { key: 'spells',    label: 'Spells',icon: '✦',  show: !!character?.spellSlots || !!character?.spell_slots, badge: 0 },
     { key: 'company',   label: 'Party', icon: '⛨',  show: joinedCompanions.length > 0,                  badge: joinedCompanions.length },
     { key: 'scene',     label: 'Scene', icon: '◈',  show: sceneNpcs.length > 0 || !!battlefield,         badge: sceneNpcs.length },
     { key: 'expedition',label: 'Delve', icon: '⚖',  show: !!campaignState,                              badge: 0 },
@@ -452,6 +547,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
   ].filter(p => p.show) as Array<{ key: NonNullable<MobilePanel>; label: string; icon: string; show: boolean; badge: number }>;
 
   const panelTitle = openPanel === 'character' ? (character?.name || 'Character')
+    : openPanel === 'spells' ? 'Spells'
     : openPanel === 'company' ? 'Company'
     : openPanel === 'scene' ? 'In This Scene'
     : openPanel === 'expedition' ? 'Expedition'
@@ -942,6 +1038,13 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                   onOpenSheet={() => { setOpenPanel(null); setShowSheet(true); }}
                 />
               )}
+              {openPanel === 'spells' && character && (
+                <SpellsPanel
+                  character={character}
+                  charClass={className}
+                  quickAction={(a) => { quickAction(a); setOpenPanel(null); }}
+                />
+              )}
               {openPanel === 'company' && (
                 <div className="p-4 space-y-3">
                   {joinedCompanions.length === 0 ? (
@@ -1329,6 +1432,104 @@ function SceneNpcCard({ npc, quickAction }: { npc: SceneNpc; quickAction: (a: st
           Quest: {npc.personalQuestTitle} {npc.personalQuestResolved ? '(resolved)' : `(${Math.min(npc.personalQuestProgress, 3)}/3)`}
         </p>
       )}
+    </div>
+  );
+}
+
+// ─── Spell lookup ─────────────────────────────────────────────────────────────
+
+function lookupSpell(name: string, charClass: string) {
+  return SPELL_OVERRIDES[`${name}|${charClass}`] || SPELL_CATALOG[name] || null;
+}
+
+// ─── Spells Panel ─────────────────────────────────────────────────────────────
+
+function SpellsPanel({ character, charClass, quickAction }: {
+  character: any;
+  charClass: string;
+  quickAction: (a: string) => void;
+}) {
+  // Handle both parsed (spellSlots) and raw DB (spell_slots) formats
+  const rawSlots = character.spellSlots ?? (() => {
+    try { return character.spell_slots ? JSON.parse(character.spell_slots) : null; } catch { return null; }
+  })();
+  const memorisedSpells: string[] = (() => {
+    if (Array.isArray(character.memorisedSpells)) return character.memorisedSpells;
+    try { return character.memorised_spells ? JSON.parse(character.memorised_spells) : []; } catch { return []; }
+  })();
+
+  if (!rawSlots) {
+    return (
+      <div className="p-4">
+        <p className="text-sm font-body text-ink-faint italic">You have no spells prepared.</p>
+      </div>
+    );
+  }
+
+  const slotEntries = Object.entries(rawSlots as Record<string, any>)
+    .sort(([a], [b]) => Number(a) - Number(b));
+
+  return (
+    <div className="p-4 space-y-4">
+
+      {/* Slot summary */}
+      <div>
+        <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">Spell Slots</div>
+        <div className="grid grid-cols-3 gap-2">
+          {slotEntries.map(([lvl, entry]) => {
+            const isRich = typeof entry === 'object' && entry !== null;
+            const max: number  = isRich ? entry.max  : entry;
+            const used: number = isRich ? entry.used : 0;
+            const remaining = max - used;
+            return (
+              <div key={lvl} className="rounded-lg border border-leather/10 bg-parchment/60 px-2 py-2 text-center">
+                <div className="text-[10px] font-heading text-ink-faint uppercase tracking-wide">Level {lvl}</div>
+                <div className={`text-base font-heading font-bold mt-0.5 ${remaining === 0 ? 'text-blood' : 'text-ink'}`}>
+                  {remaining}/{max}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Prepared spells */}
+      <div>
+        <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">Prepared Spells</div>
+        {memorisedSpells.length === 0 ? (
+          <p className="text-sm font-body text-ink-faint italic">No spells prepared.</p>
+        ) : (
+          <div className="space-y-2">
+            {memorisedSpells.map((spellName, i) => {
+              const info = lookupSpell(spellName, charClass);
+              return (
+                <div key={i} className="rounded-lg border border-leather/10 bg-parchment/60 p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="font-heading text-sm font-bold text-leather-dark">{spellName}</div>
+                      {info && (
+                        <div className="text-[10px] font-heading text-ink-faint uppercase tracking-wide mt-0.5">
+                          L{info.level} · {info.school}
+                        </div>
+                      )}
+                      {info && (
+                        <p className="text-xs font-body text-ink-faint mt-0.5 leading-relaxed">{info.desc}</p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => quickAction(`cast ${spellName}`)}
+                      className="flex-shrink-0 rounded-full border border-leather/25 bg-leather/5 px-3 py-1.5 text-xs font-heading text-leather hover:bg-leather/15 active:bg-leather/20 touch-manipulation"
+                    >
+                      Cast
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

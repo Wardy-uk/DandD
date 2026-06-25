@@ -113,6 +113,12 @@ interface AvailableClassOption {
   missingRequirements: string[];
 }
 
+const CASTER_SLOT_NOTE: Record<string, string> = {
+  mage:   '1 level-1 spell slot',
+  cleric: '1 level-1 spell slot (+ WIS bonus)',
+  druid:  '1 level-1 spell slot (+ WIS bonus)',
+};
+
 const CLASS_BUILD_PRIORITY: Record<string, string[]> = {
   fighter: ['str', 'con', 'dex', 'wis', 'cha', 'int'],
   paladin: ['cha', 'wis', 'str', 'con', 'dex', 'int'],
@@ -283,6 +289,9 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
                     </div>
                     <p className="text-xs text-ink-faint font-body mt-0.5">{CLASS_HELP[c]?.desc}</p>
                     <p className="text-xs text-ink-light font-body mt-1 italic">{CLASS_HELP[c]?.role}</p>
+                    {CASTER_SLOT_NOTE[c] && (
+                      <p className="text-xs font-heading text-leather mt-1">✦ {CASTER_SLOT_NOTE[c]}</p>
+                    )}
                   </button>
                 ))}
               </div>
