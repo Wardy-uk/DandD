@@ -10,6 +10,7 @@ import type { ServerToClientEvents, ClientToServerEvents } from '../shared/types
 import { get, all, run } from './db/helpers.js';
 import { describeScene, findMovementTarget } from './game/deterministic.js';
 import { resolveRichExploration } from './game/adventure.js';
+import { createEncounterRecord, emitEncounterStart, getActiveEncounter } from './game/encounters.js';
 
 interface ConnectedPlayer {
   socketId: string;
@@ -100,9 +101,7 @@ export function setupSocketHandlers(
         }
 
         // If there's an active encounter, send it
-        const encounter = get(db,
-          'SELECT * FROM encounters WHERE campaign_id = ? AND status = "active"',
-          [campaignId]) as any;
+        const encounter = getActiveEncounter(db, campaignId);
         if (encounter) {
           socket.emit('game:encounter_start', {
             ...encounter,
@@ -238,6 +237,28 @@ export function setupSocketHandlers(
         content: outcome.content,
         actor: outcome.actor || 'DM',
       });
+
+      if (outcome.encounter) {
+        const activeEncounter = getActiveEncounter(db, campaignId);
+        if (!activeEncounter) {
+          const started = createEncounterRecord({
+            db,
+            campaignId,
+            sceneId: scene.id,
+            enemies: outcome.encounter.enemies,
+            initiativeType: outcome.encounter.initiativeType,
+          });
+          run(db,
+            'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+            [crypto.randomUUID(), campaignId, 1, 'narration', 'DM',
+              `${outcome.encounter.description} ${started.surpriseSummary}`]);
+          io.to(`campaign:${campaignId}`).emit('game:narration', {
+            actor: 'DM',
+            content: `${outcome.encounter.description} ${started.surpriseSummary}`,
+          });
+          emitEncounterStart(io, campaignId, started);
+        }
+      }
     });
 
     // ─── Combat Action ────────────────────────────────────────────────

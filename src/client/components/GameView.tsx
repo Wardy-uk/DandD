@@ -114,6 +114,14 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
       addLogEntry('combat', data.result.attacker, data.result.description);
     };
 
+    const onEncounterStart = (data: { round: number }) => {
+      addLogEntry('system', '', `Encounter joined. Round ${data.round} begins.`);
+    };
+
+    const onTurnPrompt = (data: { name: string; round: number }) => {
+      addLogEntry('system', '', `${data.name} has the initiative in round ${data.round}.`);
+    };
+
     socket.on('game:narration', onNarration);
     socket.on('game:scene_enter', onSceneEnter);
     socket.on('game:player_action', onPlayerAction);
@@ -123,6 +131,8 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
     socket.on('game:player_joined', onPlayerJoined);
     socket.on('game:player_left', onPlayerLeft);
     socket.on('game:combat_result', onCombatResult);
+    socket.on('game:encounter_start', onEncounterStart);
+    socket.on('game:turn_prompt', onTurnPrompt);
 
     return () => {
       socket.off('game:narration', onNarration);
@@ -134,6 +144,8 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
       socket.off('game:player_joined', onPlayerJoined);
       socket.off('game:player_left', onPlayerLeft);
       socket.off('game:combat_result', onCombatResult);
+      socket.off('game:encounter_start', onEncounterStart);
+      socket.off('game:turn_prompt', onTurnPrompt);
     };
   }, [socket]);
 

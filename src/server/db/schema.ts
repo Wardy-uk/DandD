@@ -313,6 +313,14 @@ function runMigrations() {
   `);
 
   db.run(`
+    CREATE TABLE IF NOT EXISTS campaign_state (
+      campaign_id TEXT PRIMARY KEY,
+      state_json TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.run(`
     CREATE TABLE IF NOT EXISTS app_settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL

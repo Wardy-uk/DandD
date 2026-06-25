@@ -360,6 +360,66 @@ export function rollStartingGold(charClass: CharClass): number {
   }
 }
 
+function getStartingInventory(charClass: CharClass) {
+  const common = [
+    { item: 'Torch', weight: 1, quantity: 6, equipped: false },
+    { item: 'Ration', weight: 1, quantity: 3, equipped: false },
+    { item: 'Waterskin', weight: 4, quantity: 1, equipped: false },
+    { item: 'Rope (50 ft)', weight: 10, quantity: 1, equipped: false },
+    { item: 'Bandage Roll', weight: 0.2, quantity: 2, equipped: false },
+  ];
+
+  const byClass: Record<string, { item: string; weight: number; quantity: number; equipped: boolean }[]> = {
+    fighter: [
+      { item: 'Long Sword', weight: 4, quantity: 1, equipped: true },
+      { item: 'Shield', weight: 10, quantity: 1, equipped: true },
+      { item: 'Chain Mail', weight: 40, quantity: 1, equipped: true },
+    ],
+    paladin: [
+      { item: 'Long Sword', weight: 4, quantity: 1, equipped: true },
+      { item: 'Shield', weight: 10, quantity: 1, equipped: true },
+      { item: 'Chain Mail', weight: 40, quantity: 1, equipped: true },
+      { item: 'Holy Symbol', weight: 1, quantity: 1, equipped: true },
+    ],
+    ranger: [
+      { item: 'Long Bow', weight: 3, quantity: 1, equipped: true },
+      { item: 'Arrow', weight: 0.1, quantity: 20, equipped: false },
+      { item: 'Short Sword', weight: 3, quantity: 2, equipped: true },
+      { item: 'Studded Leather', weight: 25, quantity: 1, equipped: true },
+    ],
+    cleric: [
+      { item: 'Mace', weight: 10, quantity: 1, equipped: true },
+      { item: 'Shield', weight: 10, quantity: 1, equipped: true },
+      { item: 'Scale Mail', weight: 40, quantity: 1, equipped: true },
+      { item: 'Holy Symbol', weight: 1, quantity: 1, equipped: true },
+    ],
+    druid: [
+      { item: 'Spear', weight: 5, quantity: 1, equipped: true },
+      { item: 'Leather', weight: 15, quantity: 1, equipped: true },
+      { item: 'Herb Pouch', weight: 1, quantity: 1, equipped: false },
+    ],
+    thief: [
+      { item: 'Short Sword', weight: 3, quantity: 1, equipped: true },
+      { item: 'Dagger', weight: 1, quantity: 2, equipped: false },
+      { item: 'Leather', weight: 15, quantity: 1, equipped: true },
+      { item: 'Lockpick Set', weight: 0.5, quantity: 1, equipped: false },
+    ],
+    bard: [
+      { item: 'Short Sword', weight: 3, quantity: 1, equipped: true },
+      { item: 'Dagger', weight: 1, quantity: 2, equipped: false },
+      { item: 'Leather', weight: 15, quantity: 1, equipped: true },
+      { item: 'Lute', weight: 3, quantity: 1, equipped: false },
+    ],
+    mage: [
+      { item: 'Quarterstaff', weight: 4, quantity: 1, equipped: true },
+      { item: 'Spellbook', weight: 3, quantity: 1, equipped: true },
+      { item: 'Ink & Quills', weight: 1, quantity: 1, equipped: false },
+    ],
+  };
+
+  return [...common, ...(byClass[charClass] || [])];
+}
+
 // ─── Character Assembly ─────────────────────────────────────────────────────
 
 /** Build a complete character from creation choices */
@@ -455,7 +515,7 @@ export function assembleCharacter(params: {
     spellbook,
     priestSpheres,
     thiefSkills,
-    inventory: [],
+    inventory: getStartingInventory(charClass),
     gold,
     silver: 0,
     copper: 0,

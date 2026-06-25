@@ -2,6 +2,7 @@ import type { Database } from 'sql.js';
 import { get, run } from '../db/helpers.js';
 import { d6, d20, roll, roll2d6 } from '../engine/dice.js';
 import { getCharismaReactionAdj, getReactionResult, getStrengthMods, THIEF_SKILLS_BASE } from '../engine/tables.js';
+import { getCampaignState, noteCampaignEvent, saveCampaignState, shiftFactionStanding, type CampaignSimulationState } from './campaignState.js';
 
 interface SceneRecord {
   id: string;
@@ -9,6 +10,8 @@ interface SceneRecord {
   name: string;
   brief?: string;
   connections?: string;
+  light_level?: string;
+  terrain_type?: string;
 }
 
 interface CharacterRecord {
@@ -28,12 +31,14 @@ interface CharacterRecord {
   xp: number;
   status?: string;
   thief_skills?: string | null;
+  inventory?: string | null;
 }
 
 interface NpcRecord {
   id: string;
   name: string;
   disposition?: string;
+  personality?: string;
 }
 
 interface SceneState {
@@ -45,6 +50,9 @@ interface SceneState {
   clueFound: boolean;
   obstacleCleared: boolean;
   tracksFound: boolean;
+  lockOpened: boolean;
+  trapDisarmed: boolean;
+  scavengedParts: boolean;
   restCount: number;
 }
 
@@ -52,12 +60,36 @@ interface SceneBlueprint {
   ambience: string;
   clue: string;
   stash: { item: string; gold: number; xp: number };
-  trap: { kind: string; damage: string; save: 'breath' | 'spell' | 'petrify'; dc: number };
+  trap: { kind: string; damage: string; dc: number };
   tracks: string;
   obstacle: string;
   hiddenExitDirection: string;
   hiddenExitDescription: string;
   pressure: string;
+  lock: { kind: string; dc: number };
+  faction: string;
+  encounterTheme: string;
+  salvage: string;
+}
+
+interface InventoryItem {
+  item: string;
+  weight: number;
+  quantity: number;
+  equipped: boolean;
+}
+
+export interface ProceduralEnemy {
+  name: string;
+  level: number;
+  thac0: number;
+  ac: number;
+  hp: number;
+  damage: string;
+  weaponSpeed: number;
+  size?: 'S' | 'M' | 'L';
+  morale?: number;
+  faction?: string;
 }
 
 export interface AdventureActionOutcome {
@@ -70,69 +102,77 @@ export interface AdventureActionOutcome {
   hpDelta?: number;
   explorationTurnAdvanced?: number;
   extraLogs?: string[];
+  encounter?: {
+    enemies: ProceduralEnemy[];
+    initiativeType: 'group' | 'individual';
+    description: string;
+    surprise: string;
+  };
 }
 
 const directions = ['north', 'south', 'east', 'west', 'down', 'up', 'behind the collapsed masonry'];
-
 const ambienceTable = [
   'A faint metallic tang hangs in the air, as though old violence stained the stone.',
   'Every scrape seems to echo too far, suggesting the dungeon carries sound into unseen reaches.',
   'Dust lies thick enough to preserve old movement, but not so thick that you trust it.',
   'The place feels used in irregular bursts, not abandoned.',
 ];
-
 const clueTable = [
   'Someone was moving supplies through here in a hurry, and left their route imperfectly concealed.',
   'This chamber once mattered to the complex above it; the workmanship says it guarded something worth keeping.',
   'The signs here point to a safer route and a deadlier one, though telling them apart takes care.',
   'There is evidence of scavengers working around a greater threat they do not want to wake.',
 ];
-
 const stashItems = [
   'a leather satchel of old silvered spikes',
   'a wrapped bundle of lamp oil and wax tapers',
   'a velvet purse holding mixed coin and a signet',
   'a bone tube containing a sketched route fragment',
 ];
-
 const trapKinds = [
   'a sprung dart slit hidden in the wall',
   'a treacherous loose flagstone that drops weight into spikes',
   'a choking burst of dust and lime from the ceiling',
   'a concealed snare that yanks the unwary off balance',
 ];
-
 const tracksTable = [
   'small clawed tracks leading toward deeper dark',
   'hobnailed boot marks over older, softer footprints',
   'drag marks where something heavy was hauled recently',
   'the shuffle and scrape of nervous sentries changing post',
 ];
-
 const obstacleTable = [
   'a swollen oak door that must be forced',
   'a jammed portcullis mechanism gritted with rust',
   'a fallen slab leaving only a narrow crawlspace to clear',
   'a chained iron-bound hatch with a stubborn locking bar',
 ];
-
 const pressureTable = [
   'You get the sense that staying loud here will bring trouble.',
   'Whatever lives nearby is not far enough away to ignore repeated disturbances.',
   'This area feels close to a patrol route, even if the patrol is currently elsewhere.',
   'The longer you work here, the more likely you are to be noticed.',
 ];
+const lockTable = [
+  'a tricky warded chest-hasp',
+  'a corroded iron door lock',
+  'a stiff chain-and-hasp mechanism',
+  'a hidden latch requiring patient fingers',
+];
+const factionKeys = ['locals', 'delvers', 'watch', 'shadows'] as const;
+const encounterThemes = ['vermin', 'cultists', 'rival delvers', 'restless dead', 'hungry scouts'];
+const salvageTable = [
+  'usable iron spikes and chain links',
+  'scraps of oilcloth and lamp fittings',
+  'repairable buckles, hooks, and cord',
+  'old alchemical jars and corks worth reusing',
+];
 
 export function ensureSceneState(db: Database, campaignId: string, sceneId: string): SceneState {
   const existing = get(db, 'SELECT state_json FROM scene_state WHERE scene_id = ?', [sceneId]) as any;
-  if (existing?.state_json) {
-    return normalizeState(parseJson(existing.state_json));
-  }
-
+  if (existing?.state_json) return normalizeState(parseJson(existing.state_json));
   const initial = normalizeState({});
-  run(db,
-    'INSERT OR REPLACE INTO scene_state (scene_id, campaign_id, state_json, updated_at) VALUES (?, ?, ?, datetime("now"))',
-    [sceneId, campaignId, JSON.stringify(initial)]);
+  saveSceneState(db, campaignId, sceneId, initial);
   return initial;
 }
 
@@ -155,7 +195,6 @@ export function buildSceneBlueprint(scene: SceneRecord): SceneBlueprint {
     trap: {
       kind: trapKinds[(seed >> 6) % trapKinds.length],
       damage: ['1d4', '1d6', '1d6+1', '2d4'][(seed >> 8) % 4],
-      save: (['breath', 'spell', 'petrify'] as const)[(seed >> 10) % 3],
       dc: 11 + (seed % 5),
     },
     tracks: tracksTable[(seed >> 12) % tracksTable.length],
@@ -163,33 +202,19 @@ export function buildSceneBlueprint(scene: SceneRecord): SceneBlueprint {
     hiddenExitDirection: directions[(seed >> 16) % directions.length],
     hiddenExitDescription: 'revealed by a draft and a faint seam in the stonework',
     pressure: pressureTable[(seed >> 18) % pressureTable.length],
+    lock: {
+      kind: lockTable[(seed >> 20) % lockTable.length],
+      dc: 12 + ((seed >> 22) % 5),
+    },
+    faction: factionKeys[(seed >> 24) % factionKeys.length],
+    encounterTheme: encounterThemes[(seed >> 26) % encounterThemes.length],
+    salvage: salvageTable[(seed >> 28) % salvageTable.length],
   };
 }
 
 export function describeSceneDepth(scene: SceneRecord): string {
   const blueprint = buildSceneBlueprint(scene);
   return `${blueprint.ambience} ${blueprint.pressure}`;
-}
-
-export function advanceExplorationTurn(db: Database, campaignId: string): { turn: number; dangerLevel: number; pulse?: string } {
-  const campaign = get(db, 'SELECT exploration_turn, danger_level FROM campaigns WHERE id = ?', [campaignId]) as any;
-  const turn = Number(campaign?.exploration_turn || 0) + 1;
-  const dangerLevel = Number(campaign?.danger_level || 2);
-  run(db, 'UPDATE campaigns SET exploration_turn = ? WHERE id = ?', [turn, campaignId]);
-
-  let pulse: string | undefined;
-  if (turn % 3 === 0) {
-    const rollResult = d6();
-    if (rollResult <= Math.min(5, dangerLevel + 1)) {
-      pulse = [
-        'You hear movement in the deeper passages: whatever roams here is drawing nearer.',
-        'A distant clang and answering hush suggest the dungeon has noticed your presence.',
-        'The silence tightens. Somewhere beyond sight, something repositions itself.',
-      ][turn % 3];
-    }
-  }
-
-  return { turn, dangerLevel, pulse };
 }
 
 export function resolveRichExploration(params: {
@@ -201,19 +226,22 @@ export function resolveRichExploration(params: {
   action: string;
   connections: any[];
 }): AdventureActionOutcome | null {
-  const { db, campaignId, scene, character, npcs, action } = params;
+  const { db, campaignId, scene, character, npcs, action, connections } = params;
   const lowered = action.trim().toLowerCase();
   const state = ensureSceneState(db, campaignId, scene.id);
   const blueprint = buildSceneBlueprint(scene);
+  const campaignState = getCampaignState(db, campaignId);
+  const inventory = getInventory(character);
 
   if (/search(?!.*hidden)|inspect|examine room|check the room|scavenge/.test(lowered)) {
-    const turn = advanceExplorationTurn(db, campaignId);
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
     const searchScore = d20() + Math.floor((character.int - 10) / 2) + thiefBonus(character, 'find_traps');
-    const lines = [];
+    const lines: string[] = [];
 
     if (!state.clueFound && searchScore >= 12) {
       state.clueFound = true;
       lines.push(`You uncover a useful read of the room: ${blueprint.clue}`);
+      shiftFactionStanding(campaignState, blueprint.faction, { heat: 1 }, `The party has been probing ${blueprint.faction} territory.`);
     }
 
     if (!state.stashFound && searchScore >= 15) {
@@ -222,52 +250,120 @@ export function resolveRichExploration(params: {
       lines.push(`Your careful search reveals ${blueprint.stash.item}, along with ${blueprint.stash.gold} gp in salvageable value.`);
     }
 
-    if (!state.trapTriggered && searchScore <= 8) {
+    if (!state.scavengedParts && searchScore >= 14) {
+      state.scavengedParts = true;
+      addInventoryItem(db, character.id, inventory, { item: `Salvage: ${blueprint.salvage}`, weight: 2, quantity: 1, equipped: false });
+      lines.push(`You also recover ${blueprint.salvage}, enough to matter on a hard road.`);
+    }
+
+    if (!state.trapTriggered && !state.trapDisarmed && searchScore <= 8) {
       state.trapTriggered = true;
-      const trap = triggerTrap(db, character, blueprint);
+      const trap = triggerTrap(db, character, inventory, blueprint, campaignState);
       lines.push(trap.content);
       saveSceneState(db, campaignId, scene.id, state);
-      return withPulse({ content: lines.join(' '), hpDelta: trap.hpDelta, xpDelta: trap.xpDelta, goldDelta: trap.goldDelta }, turn.pulse);
+      saveCampaignState(db, campaignId, campaignState);
+      return withPulse({ ...trap, content: lines.join(' ') }, turn.pulse);
     }
 
     if (lines.length === 0) {
-      lines.push('You spend several focused minutes working the edges of the chamber, and while nothing immediately rewarding turns up, you leave with a clearer sense of its rhythms.');
+      lines.push('You spend several focused minutes working the edges of the chamber. Nothing immediate turns up, but you leave with a clearer sense of how this place is being used.');
     }
 
     saveSceneState(db, campaignId, scene.id, state);
-    return withPulse({ content: lines.join(' '), explorationTurnAdvanced: turn.turn }, turn.pulse);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, { content: lines.join(' '), explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action);
   }
 
   if (/listen|press.*ear|hold still/.test(lowered)) {
-    const turn = advanceExplorationTurn(db, campaignId);
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
     state.listened = true;
+    state.tracksFound = true;
     saveSceneState(db, campaignId, scene.id, state);
     const listenScore = d20() + Math.floor((character.wis - 10) / 2) + thiefBonus(character, 'detect_noise');
     const detail = listenScore >= 13 ? blueprint.tracks : blueprint.pressure;
-    return withPulse({
+    noteCampaignEvent(campaignState, `${character.name} listened in ${scene.name} and heard ${detail}.`);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
       content: `You draw the group into stillness and listen. After the room settles, you pick out ${detail}.`,
       explorationTurnAdvanced: turn.turn,
-    }, turn.pulse);
+    }, turn, campaignState, blueprint, action);
+  }
+
+  if (/pick lock|pick the lock|unlock|work the lock/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    if (state.lockOpened) {
+      return finalizeOutcome(db, campaignId, { content: 'The lock here has already been worked open.', explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action);
+    }
+    const tools = inventory.find((item) => item.item === 'Lockpick Set');
+    if (!tools || tools.quantity <= 0) {
+      return finalizeOutcome(db, campaignId, { content: `You study ${blueprint.lock.kind}, but without proper picks you can only guess at its weaknesses.`, explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action);
+    }
+
+    const pickScore = d20() + Math.floor((character.dex - 10) / 2) + thiefBonus(character, 'open_locks');
+    if (pickScore >= blueprint.lock.dc) {
+      state.lockOpened = true;
+      saveSceneState(db, campaignId, scene.id, state);
+      awardXp(db, character, 25);
+      shiftFactionStanding(campaignState, 'delvers', { reputation: 1 }, 'The party solved a lock cleanly instead of smashing it.');
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
+        content: `With a patient touch, you defeat ${blueprint.lock.kind}. The mechanism yields with a quiet, deeply satisfying click.`,
+        xpDelta: 25,
+        explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action);
+    }
+
+    if (d6() <= 2) {
+      decrementInventory(db, character.id, inventory, 'Lockpick Set', 1);
+      campaignState.supply.lockpicksBroken += 1;
+      noteCampaignEvent(campaignState, `${character.name} broke a lockpick set in ${scene.name}.`);
+    }
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: `You work at ${blueprint.lock.kind}, but it resists you. The failure costs time and may have cost you a useful pick.`,
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
+  if (/disarm trap|disable trap|jam the trap/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    if (state.trapDisarmed) {
+      return finalizeOutcome(db, campaignId, { content: 'Whatever trap was here has already been neutralised.', explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action);
+    }
+
+    const disarmScore = d20() + Math.floor((character.dex - 10) / 2) + thiefBonus(character, 'find_traps');
+    if (disarmScore >= blueprint.trap.dc) {
+      state.trapDisarmed = true;
+      saveSceneState(db, campaignId, scene.id, state);
+      awardXp(db, character, 30);
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
+        content: `You identify the working heart of ${blueprint.trap.kind} and disable it before it can punish the party.`,
+        xpDelta: 30,
+        explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action);
+    }
+
+    state.trapTriggered = true;
+    const trap = triggerTrap(db, character, inventory, blueprint, campaignState);
+    saveSceneState(db, campaignId, scene.id, state);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, { ...trap, explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action);
   }
 
   if (/search.*hidden|hidden.*door|secret/.test(lowered)) {
-    const hasHiddenConnections = params.connections.some((entry: any) => entry.hidden);
-    const turn = advanceExplorationTurn(db, campaignId);
+    const hasHiddenConnections = connections.some((entry: any) => entry.hidden);
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
     if (state.hiddenExitFound && hasHiddenConnections) {
-      return withPulse({
-        content: `The concealed way ${blueprint.hiddenExitDirection} is already exposed.`,
-        explorationTurnAdvanced: turn.turn,
-      }, turn.pulse);
+      return finalizeOutcome(db, campaignId, { content: `The concealed way ${blueprint.hiddenExitDirection} is already exposed.`, explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action);
     }
 
     const searchRoll = d6();
     const skillEdge = thiefBonus(character, 'find_traps') > 0 || character.dex >= 15 || character.wis >= 14;
     const success = searchRoll <= (skillEdge ? 3 : 2);
     if (!success) {
-      return withPulse({
-        content: 'You trace mortar lines and test the stonework, but the walls keep their secrets for now.',
-        explorationTurnAdvanced: turn.turn,
-      }, turn.pulse);
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, { content: 'You trace mortar lines and test the stonework, but the walls keep their secrets for now.', explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action);
     }
 
     state.hiddenExitFound = true;
@@ -275,80 +371,85 @@ export function resolveRichExploration(params: {
       state.clueFound = true;
       saveSceneState(db, campaignId, scene.id, state);
       awardXp(db, character, 15);
-      return withPulse({
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
         content: `Your search uncovers no literal secret door, but it does expose a subtle truth about the area: ${blueprint.clue}`,
         xpDelta: 15,
         explorationTurnAdvanced: turn.turn,
-      }, turn.pulse);
+      }, turn, campaignState, blueprint, action);
     }
 
-    const updatedConnections = revealHiddenConnection(params.connections);
+    const updatedConnections = revealHiddenConnection(connections);
     saveSceneState(db, campaignId, scene.id, state);
     run(db, 'UPDATE scenes SET connections = ? WHERE id = ?', [JSON.stringify(updatedConnections), scene.id]);
-    return withPulse({
+    shiftFactionStanding(campaignState, 'shadows', { heat: 1 }, 'The party keeps unmasking hidden routes.');
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
       content: `Your patience pays off. A concealed route ${blueprint.hiddenExitDirection} reveals itself, ${blueprint.hiddenExitDescription}.`,
       sceneConnections: updatedConnections.filter((entry: any) => !entry.hidden),
       explorationTurnAdvanced: turn.turn,
-    }, turn.pulse);
+    }, turn, campaignState, blueprint, action);
   }
 
   if (/force|bash|shoulder|open.*door|lift.*gate|clear.*slab/.test(lowered)) {
-    const turn = advanceExplorationTurn(db, campaignId);
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
     if (state.obstacleCleared) {
-      return withPulse({
-        content: 'The way is already clear enough to pass.',
-        explorationTurnAdvanced: turn.turn,
-      }, turn.pulse);
+      return finalizeOutcome(db, campaignId, { content: 'The way is already clear enough to pass.', explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action);
     }
-
     const strMods = getStrengthMods(character.str, character.str_percentile);
     const effort = d20() + strMods.hitAdj + Math.floor((character.level - 1) / 2);
     if (effort >= 13) {
       state.obstacleCleared = true;
       saveSceneState(db, campaignId, scene.id, state);
       awardXp(db, character, 20);
-      return withPulse({
+      shiftFactionStanding(campaignState, blueprint.faction, { heat: 2 }, 'The party is forcing their way through loudly.');
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
         content: `With a committed effort, you overcome ${blueprint.obstacle}. The noise is terrible, but the path yields.`,
         xpDelta: 20,
         explorationTurnAdvanced: turn.turn,
-      }, turn.pulse);
+      }, turn, campaignState, blueprint, action, true);
     }
-
     const bruise = Math.min(2, Math.max(1, roll(1, 3).total - 1));
     applyHp(db, character.id, character.hp - bruise);
+    shiftFactionStanding(campaignState, blueprint.faction, { heat: 1 });
     saveSceneState(db, campaignId, scene.id, state);
-    return withPulse({
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
       content: `You throw your weight against ${blueprint.obstacle}, but it holds. The failed effort leaves you sore and noisy.`,
       hpDelta: -bruise,
       explorationTurnAdvanced: turn.turn,
-    }, turn.pulse);
+    }, turn, campaignState, blueprint, action, true);
   }
 
   if (/rest|bind wounds|catch our breath|take a breather|camp/.test(lowered)) {
-    const turn = advanceExplorationTurn(db, campaignId);
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
     const heal = state.restCount === 0 ? Math.min(character.max_hp - character.hp, 1 + Math.floor((character.level + 1) / 3)) : 0;
     state.restCount += 1;
-    saveSceneState(db, campaignId, scene.id, state);
-
     if (heal > 0) {
       applyHp(db, character.id, character.hp + heal);
+      if (consumeItem(db, character.id, inventory, 'Bandage Roll', 1)) {
+        campaignState.supply.bandagesUsed += 1;
+      }
     }
-
-    const riskRoll = d6();
-    const danger = turn.dangerLevel + state.restCount;
-    const riskText = riskRoll <= Math.min(5, danger)
+    saveSceneState(db, campaignId, scene.id, state);
+    saveCampaignState(db, campaignId, campaignState);
+    const riskText = d6() <= Math.min(5, turn.dangerLevel + state.restCount)
       ? 'Your pause buys recovery, but it also gives nearby threats time to adjust around you.'
       : 'You manage a brief, disciplined pause without giving too much away.';
-    return withPulse({
+    return finalizeOutcome(db, campaignId, {
       content: `${heal > 0 ? `You patch wounds and recover ${heal} hit point${heal === 1 ? '' : 's'}. ` : ''}${riskText}`,
       hpDelta: heal,
       explorationTurnAdvanced: turn.turn,
-    }, turn.pulse);
+    }, turn, campaignState, blueprint, action);
   }
 
-  if ((/talk|parley|hail|negotiate/.test(lowered) || npcs.length > 0) && npcs.length > 0) {
-    const turn = advanceExplorationTurn(db, campaignId);
-    const reactionRoll = roll2d6().total + Math.max(-2, Math.min(2, Math.floor(getCharismaReactionAdj(character.cha) / 2)));
+  if ((/talk|parley|hail|negotiate|bargain/.test(lowered) || npcs.length > 0) && npcs.length > 0) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    const factionStanding = campaignState.factions[blueprint.faction];
+    const reactionRoll = roll2d6().total
+      + Math.max(-2, Math.min(2, Math.floor(getCharismaReactionAdj(character.cha) / 2)))
+      + Math.max(-2, Math.min(2, Math.floor((factionStanding?.reputation || 0) / 3)));
     const reaction = getReactionResult(reactionRoll);
     const npcName = npcs[0].name;
     const responseMap: Record<string, string> = {
@@ -360,43 +461,205 @@ export function resolveRichExploration(params: {
     };
     const xp = reaction === 'friendly' || reaction === 'enthusiastic' ? 15 : 0;
     if (xp > 0) awardXp(db, character, xp);
-    return withPulse({
-      content: `${responseMap[reaction]} (Reaction ${reactionRoll}: ${reaction}.)`,
+    shiftFactionStanding(campaignState, blueprint.faction, {
+      reputation: reaction === 'friendly' ? 1 : reaction === 'enthusiastic' ? 2 : reaction === 'hostile' ? -2 : reaction === 'unfriendly' ? -1 : 0,
+      heat: reaction === 'hostile' ? 2 : 0,
+    }, `${character.name} parleyed in ${scene.name}.`);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: `${responseMap[reaction]} ${describeFactionResult(campaignState, blueprint.faction)} (Reaction ${reactionRoll}: ${reaction}.)`,
       xpDelta: xp,
       explorationTurnAdvanced: turn.turn,
-    }, turn.pulse);
+    }, turn, campaignState, blueprint, action, reaction === 'hostile');
   }
 
   if (/sneak|hide|creep|move silently/.test(lowered)) {
-    const turn = advanceExplorationTurn(db, campaignId);
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
     const stealth = d20() + Math.floor((character.dex - 10) / 2) + thiefBonus(character, 'move_silently');
-    const text = stealth >= 13
-      ? 'You manage a careful, controlled advance, shifting the party’s presence from obvious intrusion to measured threat.'
-      : 'You try to move like a rumor, but the place answers with enough scrape and clatter to remind you that stealth here is earned.';
-    return withPulse({ content: text, explorationTurnAdvanced: turn.turn }, turn.pulse);
+    const good = stealth >= 13;
+    if (good) {
+      campaignState.encounterPressure = Math.max(0, campaignState.encounterPressure - 1);
+    } else {
+      shiftFactionStanding(campaignState, blueprint.faction, { heat: 1 });
+    }
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: good
+        ? 'You manage a careful, controlled advance, shifting the party’s presence from obvious intrusion to measured threat.'
+        : 'You try to move like a rumor, but the place answers with enough scrape and clatter to remind you that stealth here is earned.',
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action, !good);
+  }
+
+  if (/shoot|fire|loose an arrow|throw dagger/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    const spentArrow = consumeItem(db, character.id, inventory, 'Arrow', 1);
+    if (spentArrow) {
+      campaignState.supply.arrowsSpent += 1;
+    }
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: spentArrow
+        ? 'You ready missile fire and spend ammunition in the process, a small cost that starts to matter over a long delve.'
+        : 'You go to ready missile fire and realise your ammunition is running thin enough to matter.',
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action, true);
   }
 
   return null;
 }
 
-function triggerTrap(db: Database, character: CharacterRecord, blueprint: SceneBlueprint): AdventureActionOutcome {
+export function describeFactionSummary(db: Database, campaignId: string): string[] {
+  const state = getCampaignState(db, campaignId);
+  return Object.values(state.factions).map((faction) => describeFactionResult(state, findFactionKey(state, faction.name)));
+}
+
+function advanceExplorationTurn(
+  db: Database,
+  campaignId: string,
+  campaignState: CampaignSimulationState,
+  inventory: InventoryItem[],
+  characterId: string,
+): { turn: number; dangerLevel: number; pulse?: string } {
+  const campaign = get(db, 'SELECT exploration_turn, danger_level FROM campaigns WHERE id = ?', [campaignId]) as any;
+  const turn = Number(campaign?.exploration_turn || 0) + 1;
+  const dangerLevel = Number(campaign?.danger_level || 2);
+  run(db, 'UPDATE campaigns SET exploration_turn = ? WHERE id = ?', [turn, campaignId]);
+
+  if (turn % 2 === 0 && consumeItem(db, characterId, inventory, 'Torch', 1)) {
+    campaignState.supply.torchesBurned += 1;
+    noteCampaignEvent(campaignState, 'A torch burned down during exploration.');
+  }
+  if (turn % 6 === 0 && consumeItem(db, characterId, inventory, 'Ration', 1)) {
+    campaignState.supply.rationsSpent += 1;
+    noteCampaignEvent(campaignState, 'Supplies are being eaten away by the delve.');
+  }
+
+  campaignState.encounterPressure = Math.min(10, campaignState.encounterPressure + 1);
+
+  let pulse: string | undefined;
+  if (turn % 3 === 0) {
+    const rollResult = d6();
+    if (rollResult <= Math.min(5, dangerLevel + Math.floor(campaignState.encounterPressure / 2))) {
+      pulse = [
+        'You hear movement in the deeper passages: whatever roams here is drawing nearer.',
+        'A distant clang and answering hush suggest the dungeon has noticed your presence.',
+        'The silence tightens. Somewhere beyond sight, something repositions itself.',
+      ][turn % 3];
+    }
+  }
+
+  return { turn, dangerLevel, pulse };
+}
+
+function triggerTrap(
+  db: Database,
+  character: CharacterRecord,
+  inventory: InventoryItem[],
+  blueprint: SceneBlueprint,
+  campaignState: CampaignSimulationState,
+): AdventureActionOutcome {
   const saveRoll = d20() + Math.floor((character.dex - 10) / 2);
   const half = saveRoll >= blueprint.trap.dc;
   const damage = rollDamage(blueprint.trap.damage);
   const finalDamage = half ? Math.max(1, Math.floor(damage / 2)) : damage;
   applyHp(db, character.id, character.hp - finalDamage);
-
+  if (consumeItem(db, character.id, inventory, 'Bandage Roll', 1)) {
+    campaignState.supply.bandagesUsed += 1;
+  }
+  shiftFactionStanding(campaignState, blueprint.faction, { heat: 2 });
+  noteCampaignEvent(campaignState, `${character.name} triggered ${blueprint.trap.kind}.`);
   return {
     content: `Your probing search wakes ${blueprint.trap.kind}. ${character.name} ${half ? 'partly avoids the worst of it' : 'takes the full force'} and suffers ${finalDamage} damage.`,
     hpDelta: -finalDamage,
   };
 }
 
-function revealHiddenConnection(connections: any[]) {
-  if (!connections.some((entry) => entry.hidden)) {
-    return connections;
+function finalizeOutcome(
+  db: Database,
+  campaignId: string,
+  base: AdventureActionOutcome,
+  turn: { turn: number; dangerLevel: number; pulse?: string },
+  campaignState: CampaignSimulationState,
+  blueprint: SceneBlueprint,
+  action: string,
+  noisy = false,
+): AdventureActionOutcome {
+  let outcome = withPulse(base, turn.pulse);
+
+  const canEncounter = turn.turn - campaignState.lastEncounterTurn >= 2;
+  const heat = campaignState.factions[blueprint.faction]?.heat || 0;
+  const encounterChance = Math.min(5, 1 + Math.floor(campaignState.encounterPressure / 2) + Math.floor(heat / 3) + (noisy ? 1 : 0));
+  if (canEncounter && d6() <= encounterChance) {
+    const encounter = generateProceduralEncounter(blueprint, turn.turn, campaignState.encounterPressure, action);
+    if (!encounter) {
+      saveCampaignState(db, campaignId, campaignState);
+      return outcome;
+    }
+    campaignState.lastEncounterTurn = turn.turn;
+    campaignState.encounterPressure = Math.max(1, campaignState.encounterPressure - 2);
+    noteCampaignEvent(campaignState, `Hostile contact: ${encounter.description}`);
+    saveCampaignState(db, campaignId, campaignState);
+    outcome = {
+      ...outcome,
+      content: `${outcome.content} ${encounter.surprise}`,
+      encounter,
+    };
+  } else {
+    saveCampaignState(db, campaignId, campaignState);
   }
 
+  return outcome;
+}
+
+function generateProceduralEncounter(
+  blueprint: SceneBlueprint,
+  turn: number,
+  pressure: number,
+  action: string,
+): AdventureActionOutcome['encounter'] {
+  const baseLevel = 1 + Math.min(4, Math.floor((pressure + turn % 5) / 2));
+  const faction = blueprint.faction;
+  const themed: Record<string, ProceduralEnemy[]> = {
+    vermin: [
+      { name: 'Tunnel Rat Swarm', level: baseLevel, thac0: 20 - baseLevel, ac: 8, hp: 4 + baseLevel * 2, damage: '1d4', weaponSpeed: 4, size: 'S', faction },
+      { name: 'Cave Lizard', level: baseLevel, thac0: 19 - baseLevel, ac: 7, hp: 6 + baseLevel * 2, damage: '1d6', weaponSpeed: 5, size: 'M', faction },
+    ],
+    cultists: [
+      { name: 'Cloaked Acolyte', level: baseLevel, thac0: 20 - baseLevel, ac: 7, hp: 5 + baseLevel * 3, damage: '1d6', weaponSpeed: 5, faction },
+      { name: 'Fanatic Guard', level: baseLevel + 1, thac0: 19 - baseLevel, ac: 6, hp: 8 + baseLevel * 3, damage: '1d8', weaponSpeed: 6, faction },
+    ],
+    'rival delvers': [
+      { name: 'Treasure Hunter', level: baseLevel, thac0: 20 - baseLevel, ac: 6, hp: 7 + baseLevel * 3, damage: '1d6+1', weaponSpeed: 5, faction },
+      { name: 'Crossbow Skirmisher', level: baseLevel, thac0: 20 - baseLevel, ac: 7, hp: 6 + baseLevel * 2, damage: '1d6', weaponSpeed: 7, faction },
+    ],
+    'restless dead': [
+      { name: 'Restless Skeleton', level: baseLevel, thac0: 20 - baseLevel, ac: 7, hp: 5 + baseLevel * 2, damage: '1d6', weaponSpeed: 5, faction },
+      { name: 'Barrow Wight', level: baseLevel + 1, thac0: 18 - baseLevel, ac: 5, hp: 10 + baseLevel * 3, damage: '1d8', weaponSpeed: 6, size: 'M', faction },
+    ],
+    'hungry scouts': [
+      { name: 'Goblin Scout', level: baseLevel, thac0: 20 - baseLevel, ac: 7, hp: 5 + baseLevel * 2, damage: '1d6', weaponSpeed: 4, faction },
+      { name: 'Wolf Handler', level: baseLevel + 1, thac0: 19 - baseLevel, ac: 6, hp: 8 + baseLevel * 2, damage: '1d8', weaponSpeed: 5, faction },
+    ],
+  };
+  const roster = themed[blueprint.encounterTheme] || themed.vermin;
+  const enemyCount = Math.min(3, 1 + Math.floor(pressure / 3));
+  const enemies = Array.from({ length: enemyCount }, (_, index) => ({ ...roster[index % roster.length], name: enemyCount > 1 ? `${roster[index % roster.length].name} ${index + 1}` : roster[index % roster.length].name }));
+  const initiativeType = pressure >= 5 ? 'individual' : 'group';
+  const surprise = pressure >= 5 || /force|bash|shoot|charge/.test(action)
+    ? 'The contact comes on hard and fast before the party can fully control the terms.'
+    : 'You have just enough warning to realise this danger has been stalking the same dark as you.';
+
+  return {
+    enemies,
+    initiativeType,
+    description: `${enemies.map((enemy) => enemy.name).join(', ')} emerge from the dark under the banner of ${faction}.`,
+    surprise,
+  };
+}
+
+function revealHiddenConnection(connections: any[]) {
+  if (!connections.some((entry) => entry.hidden)) return connections;
   return connections.map((entry) => entry.hidden ? { ...entry, hidden: false } : entry);
 }
 
@@ -406,13 +669,50 @@ function thiefBonus(character: CharacterRecord, skill: string): number {
     const value = parsed?.[skill];
     if (typeof value === 'number') return Math.floor(value / 20);
   } catch {}
-
   if (character.char_class === 'thief' || character.char_class === 'bard') {
     const table = THIEF_SKILLS_BASE[skill];
     if (table) return Math.floor((table[Math.min(20, character.level)] || 0) / 25);
   }
-
   return 0;
+}
+
+function getInventory(character: CharacterRecord): InventoryItem[] {
+  try {
+    const parsed = character.inventory ? JSON.parse(character.inventory) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveInventory(db: Database, characterId: string, inventory: InventoryItem[]) {
+  run(db, 'UPDATE characters SET inventory = ? WHERE id = ?', [JSON.stringify(inventory), characterId]);
+}
+
+function consumeItem(db: Database, characterId: string, inventory: InventoryItem[], itemName: string, quantity: number): boolean {
+  const item = inventory.find((entry) => entry.item === itemName);
+  if (!item || item.quantity < quantity) return false;
+  item.quantity -= quantity;
+  if (item.quantity <= 0) {
+    const idx = inventory.indexOf(item);
+    if (idx >= 0) inventory.splice(idx, 1);
+  }
+  saveInventory(db, characterId, inventory);
+  return true;
+}
+
+function decrementInventory(db: Database, characterId: string, inventory: InventoryItem[], itemName: string, quantity: number) {
+  consumeItem(db, characterId, inventory, itemName, quantity);
+}
+
+function addInventoryItem(db: Database, characterId: string, inventory: InventoryItem[], newItem: InventoryItem) {
+  const existing = inventory.find((entry) => entry.item === newItem.item && entry.equipped === newItem.equipped);
+  if (existing) {
+    existing.quantity += newItem.quantity;
+  } else {
+    inventory.push(newItem);
+  }
+  saveInventory(db, characterId, inventory);
 }
 
 function awardGoldAndXp(db: Database, character: CharacterRecord, goldDelta: number, xpDelta: number) {
@@ -428,24 +728,15 @@ function applyHp(db: Database, characterId: string, hp: number) {
 }
 
 function rollDamage(notation: string): number {
-  return notation.includes('d') ? rollNotationLocal(notation) : Number(notation);
-}
-
-function rollNotationLocal(notation: string): number {
+  if (!notation.includes('d')) return Number(notation);
   const match = notation.match(/^(\d+)d(\d+)([+-]\d+)?$/);
   if (!match) return 0;
   const numDice = Number(match[1]);
   const sides = Number(match[2]);
   const modifier = Number(match[3] || 0);
   let total = modifier;
-  for (let i = 0; i < numDice; i++) {
-    total += rollDieFromSides(sides);
-  }
+  for (let i = 0; i < numDice; i++) total += roll(1, sides).rolls[0] || 1;
   return total;
-}
-
-function rollDieFromSides(sides: number): number {
-  return roll(1, sides).rolls[0] || 1;
 }
 
 function normalizeState(state: Partial<SceneState>): SceneState {
@@ -458,24 +749,37 @@ function normalizeState(state: Partial<SceneState>): SceneState {
     clueFound: Boolean(state.clueFound),
     obstacleCleared: Boolean(state.obstacleCleared),
     tracksFound: Boolean(state.tracksFound),
+    lockOpened: Boolean((state as any).lockOpened),
+    trapDisarmed: Boolean((state as any).trapDisarmed),
+    scavengedParts: Boolean((state as any).scavengedParts),
     restCount: Number(state.restCount || 0),
   };
 }
 
 function parseJson(raw: string) {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
+  try { return JSON.parse(raw); } catch { return {}; }
 }
 
 function withPulse(outcome: AdventureActionOutcome, pulse?: string): AdventureActionOutcome {
   if (!pulse) return outcome;
-  return {
-    ...outcome,
-    content: `${outcome.content} ${pulse}`,
-  };
+  return { ...outcome, content: `${outcome.content} ${pulse}` };
+}
+
+function describeFactionResult(state: CampaignSimulationState, factionKey: string): string {
+  const faction = state.factions[factionKey];
+  if (!faction) return '';
+  if (faction.reputation >= 4) return `${faction.name} are starting to treat the party as allies.`;
+  if (faction.reputation >= 1) return `${faction.name} have taken the party's measure and lean favorable.`;
+  if (faction.reputation <= -4) return `${faction.name} now have every reason to move against the party.`;
+  if (faction.reputation <= -1) return `${faction.name} are growing wary and resentful.`;
+  return `${faction.name} remain watchful and undecided.`;
+}
+
+function findFactionKey(state: CampaignSimulationState, name: string): string {
+  for (const [key, faction] of Object.entries(state.factions)) {
+    if (faction.name === name) return key;
+  }
+  return name;
 }
 
 function hash(value: string): number {

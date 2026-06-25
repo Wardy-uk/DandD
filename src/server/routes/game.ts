@@ -10,13 +10,14 @@ import type { Server as SocketServer } from 'socket.io';
 import { get, all, run } from '../db/helpers.js';
 import { authMiddleware, requireAuth } from './auth.js';
 import {
-  resolveAttack, resolveMissileAttack, rollGroupInitiative, rollIndividualInitiative,
-  makeSavingThrow, checkMorale, turnUndead, rollSurpriseCheck,
+  resolveAttack, resolveMissileAttack,
+  makeSavingThrow, checkMorale, turnUndead,
   type Combatant,
 } from '../engine/combat.js';
 import { roll, rollNotation, d20, d100, roll2d6 } from '../engine/dice.js';
 import type { SavingThrows } from '../engine/tables.js';
 import { describeScene, describeNpcResponse, describeCombatNarration } from '../game/deterministic.js';
+import { createEncounterRecord, emitEncounterStart } from '../game/encounters.js';
 
 export function createGameRoutes(db: Database, io: SocketServer): Router {
   const router = Router();
@@ -41,16 +42,14 @@ export function createGameRoutes(db: Database, io: SocketServer): Router {
     // Mark scene as visited
     run(db, 'UPDATE scenes SET visited = 1 WHERE id = ?', [sceneId]);
 
-    const connections = JSON.parse(scene.connections || '[]');
+    const connections = JSON.parse(scene.connections || '[]').filter((entry: any) => !entry.hidden);
     const npcsInScene = all(db,
       'SELECT name, personality FROM npcs WHERE campaign_id = ? AND location_scene_id = ? AND alive = 1',
       [campaignId, sceneId]) as any[];
 
-    // Get party context
     const characters = all(db,
       'SELECT name, level, race, char_class FROM characters WHERE campaign_id = ? AND status = "active"',
       [campaignId]) as any[];
-    const partyContext = characters.map(c => `${c.name} (Level ${c.level} ${c.race} ${c.char_class})`).join(', ');
 
     const description = describeScene({
       scene,
@@ -122,105 +121,21 @@ export function createGameRoutes(db: Database, io: SocketServer): Router {
   router.post('/combat/start', requireAuth, (req: any, res) => {
     const { campaignId, sceneId, enemies, initiativeType } = req.body;
 
-    const encounterId = uuid();
-
-    // Get party characters
-    const partyChars = all(db,
-      'SELECT * FROM characters WHERE campaign_id = ? AND status = "active"',
-      [campaignId]) as any[];
-
-    // Build combatant lists
-    const partyCombatants: Combatant[] = partyChars.map(c => ({
-      id: uuid(),
-      name: c.name,
-      charClass: c.char_class,
-      level: c.level,
-      thac0: c.thac0,
-      ac: c.ac,
-      hp: c.hp,
-      maxHp: c.max_hp,
-      str: c.str,
-      strPercentile: c.str_percentile,
-      dex: c.dex,
-      weaponSpeed: 5, // Default, should come from equipped weapon
-      weaponDamageSm: '1d6', // Default
-      weaponDamageLg: '1d6',
-      isLargeTarget: false,
-      conditions: JSON.parse(c.conditions || '[]'),
-      side: 'party' as const,
-    }));
-
-    const enemyCombatants: Combatant[] = (enemies || []).map((e: any) => ({
-      id: uuid(),
-      name: e.name,
-      charClass: 'fighter',
-      level: e.level || 1,
-      thac0: e.thac0 || 20,
-      ac: e.ac || 7,
-      hp: e.hp || 8,
-      maxHp: e.hp || 8,
-      str: e.str || 10,
-      dex: e.dex || 10,
-      weaponSpeed: e.weaponSpeed || 5,
-      weaponDamageSm: e.damage || '1d6',
-      weaponDamageLg: e.damage || '1d6',
-      isLargeTarget: e.size === 'L' || e.size === 'H' || e.size === 'G',
-      conditions: [],
-      side: 'enemy' as const,
-    }));
-
-    // Roll initiative
-    const allCombatants = [...partyCombatants, ...enemyCombatants];
-    const initiative = initiativeType === 'individual'
-      ? rollIndividualInitiative(allCombatants)
-      : rollGroupInitiative(partyCombatants, enemyCombatants);
-
-    // Create encounter
-    run(db, `
-      INSERT INTO encounters (id, campaign_id, scene_id, status, round, initiative_type, turn_order, current_turn_index)
-      VALUES (?, ?, ?, 'active', 1, ?, ?, 0)
-    `, [encounterId, campaignId, sceneId, initiativeType || 'group', JSON.stringify(initiative.order.map(o => o.id))]);
-
-    // Insert combatants
-    for (const c of allCombatants) {
-      const orderEntry = initiative.order.find(o => o.id === c.id);
-      run(db, `
-        INSERT INTO combatants (id, encounter_id, character_id, npc_id, name, side, initiative_roll, weapon_speed, final_initiative, current_hp, max_hp, thac0, ac)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [
-        c.id, encounterId,
-        c.side === 'party' ? partyChars.find(pc => pc.name === c.name)?.id : null,
-        null, c.name, c.side,
-        orderEntry?.initiative || 0, c.weaponSpeed, orderEntry?.initiative || 0,
-        c.hp, c.maxHp, c.thac0, c.ac,
-      ]);
-    }
-
-    const encounter = {
-      id: encounterId,
+    const started = createEncounterRecord({
+      db,
       campaignId,
       sceneId,
-      status: 'active' as const,
-      round: 1,
-      segment: 0,
-      initiativeType: (initiativeType || 'group') as 'group' | 'individual',
-      turnOrder: initiative.order.map(o => o.id),
-      currentTurnIndex: 0,
-    };
+      enemies,
+      initiativeType,
+    });
 
-    io.to(`campaign:${campaignId}`).emit('game:encounter_start', encounter);
+    emitEncounterStart(io, campaignId, started);
+    io.to(`campaign:${campaignId}`).emit('game:narration', {
+      actor: 'DM',
+      content: started.surpriseSummary,
+    });
 
-    // Prompt first combatant's turn
-    const firstTurn = initiative.order[0];
-    if (firstTurn) {
-      io.to(`campaign:${campaignId}`).emit('game:turn_prompt', {
-        combatantId: firstTurn.id,
-        name: firstTurn.name,
-        round: 1,
-      });
-    }
-
-    res.json({ ok: true, data: { encounter, initiative } });
+    res.json({ ok: true, data: started });
   });
 
   // Resolve a combat attack
