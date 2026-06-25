@@ -664,24 +664,33 @@ export function setupSocketHandlers(
       });
 
       if (!outcome) {
-        // Unrecognised by deterministic resolver — use AI to resolve naturally.
+        // Unknown action — AI resolves it. No action ever gets a dead rejection.
+        const sceneExits = JSON.parse(scene.connections || '[]')
+          .filter((c: any) => !c.hidden)
+          .map((c: any) => c.direction).join(', ') || 'none';
+        const sceneNpcNames = npcsInScene.map((n: any) => n.name).join(', ');
+        const sceneBlurb = [
+          scene.name,
+          scene.brief ? `— ${scene.brief}` : scene.ai_description ? `— ${String(scene.ai_description).slice(0, 120)}` : '',
+        ].filter(Boolean).join(' ');
+
+        let aiMsg = 'The moment passes without clear resolution — but it was not wasted.';
         try {
-          const sceneBlurb = (scene as any).description || (scene as any).name || 'a dungeon room';
-          const aiMsg = (await generate({
-            prompt: `The player typed: "${action}"\n\nResolve this as a terse AD&D Dungeon Master. One short paragraph. Present tense. Specific to this scene.`,
-            system: `You are a terse AD&D Dungeon Master. The party is in: ${sceneBlurb}. Resolve whatever the player attempts — never refuse. Present tense, human voice. Max 3 sentences.`,
-            maxTokens: 120,
+          aiMsg = (await generate({
+            system: 'You are a terse AD&D Dungeon Master. One paragraph max. Present tense. Specific and concrete. Address the player directly ("You…"). No filler phrases, no em-dashes, do not start with "The party".',
+            prompt: `Scene: ${sceneBlurb}. Light: ${scene.light_level || 'normal'}. Exits: ${sceneExits}.${sceneNpcNames ? ` Present: ${sceneNpcNames}.` : ''} Player action: "${action}". Resolve this as a DM.`,
+            maxTokens: 180,
             temperature: 0.75,
-          })).trim() || 'Nothing remarkable happens.';
-          run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
-            [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', aiMsg]);
-          io.to(`campaign:${campaignId}`).emit('game:narration', { content: aiMsg, actor: 'DM' });
-        } catch {
-          const safeMsg = 'Nothing happens.';
-          run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
-            [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', safeMsg]);
-          io.to(`campaign:${campaignId}`).emit('game:narration', { content: safeMsg, actor: 'DM' });
+          })).trim() || aiMsg;
+        } catch (aiErr) {
+          console.error('[AI fallback error]', aiErr);
+          // Ollama unreachable — still give something real
+          aiMsg = 'The room holds its attention on you for a moment. The action lands in the record of the place.';
         }
+
+        run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+          [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', aiMsg]);
+        io.to(`campaign:${campaignId}`).emit('game:narration', { content: aiMsg, actor: 'DM' });
         emitCampaignState(io, db, campaignId);
         return;
       }

@@ -980,6 +980,157 @@ export function resolveRichExploration(params: {
   }
 
 
+  // ── TARGETED EXAMINATION — "look at X", "examine X", "inspect X" ──────────
+  if (/^(look at|examine|inspect|study|peer at|peer into|check out|check the|look inside|look behind|look under|look through|feel the|feel around|run.*hand|stare at|scrutinize|investigate|take a closer look at)\b/i.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    const perceptionRoll = d20() + Math.floor((character.int - 10) / 2) + thiefBonus(character, 'find_traps') + companionMods.watchBonus;
+    const lines: string[] = [];
+
+    if (!state.clueFound && perceptionRoll >= 12) {
+      state.clueFound = true;
+      lines.push(`Closer examination reveals: ${blueprint.clue}`);
+      saveSceneState(db, campaignId, scene.id, state);
+    } else if (!state.knownHazard && perceptionRoll >= 10) {
+      state.knownHazard = true;
+      lines.push(`On closer inspection, signs of ${blueprint.trap.kind} resolve themselves. Worth knowing.`);
+      saveSceneState(db, campaignId, scene.id, state);
+    } else {
+      const examResponses = [
+        `It holds up under scrutiny, but nothing new resolves from looking harder. ${blueprint.roomAmbience}`,
+        `You take a long look. The room offers the same information twice: ${blueprint.signpostDetail}`,
+        `Worth examining. It gives away nothing beyond what the room already told you, but examining it was still the right instinct.`,
+      ];
+      lines.push(examResponses[Math.abs(hash(action + scene.id)) % examResponses.length]);
+    }
+
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, { content: lines.join(' '), explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action);
+  }
+
+  // ── MOVEMENT / APPROACH — "walk toward X", "approach X", "go toward X" ───
+  if (/^(walk toward|move toward|head toward|approach|go toward|follow the|follow|creep toward|inch toward|step toward|advance toward|make.*way toward|make.*way to|head to|move to|go to|move deeper|press deeper|push forward|advance|move forward|head forward|go deeper|go further|press on|continue)\b/i.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    const stealth = d20() + Math.floor((character.dex - 10) / 2) + thiefBonus(character, 'move_silently') + Math.min(1, companionMods.scoutBonus);
+    if (!state.tracksFound) {
+      state.tracksFound = true;
+      state.listened = true;
+      saveSceneState(db, campaignId, scene.id, state);
+    }
+    const noisy = stealth < 8;
+    if (noisy) shiftFactionStanding(campaignState, blueprint.faction, { heat: 1 });
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: noisy
+        ? `You move that way, but the floor and your kit are not cooperating. The advance is not quiet. ${blueprint.pressure}`
+        : `You advance carefully. The room gives way as you push deeper into it. ${blueprint.tracks ? `The ground here says: ${blueprint.tracks}` : blueprint.roomAmbience}`,
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action, noisy);
+  }
+
+  // ── ITEM PICKUP — "pick up X", "grab X", "take X" ─────────────────────────
+  if (/^(pick up|grab|take the|pocket|collect|retrieve|snatch)\b/i.test(lowered) || (/^take\b/i.test(lowered) && !/^take a\b/i.test(lowered))) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    if (!state.stashFound && !state.scavengedParts) {
+      const luckRoll = d6();
+      if (luckRoll >= 4) {
+        state.stashFound = true;
+        state.knownTreasure = true;
+        const goldFound = 4 + d6() * 2;
+        awardGoldAndXp(db, character, goldFound, 10);
+        saveSceneState(db, campaignId, scene.id, state);
+        saveCampaignState(db, campaignId, campaignState);
+        return finalizeOutcome(db, campaignId, {
+          content: `Your hand finds ${blueprint.stash.item}, along with ${goldFound} gp in mixed coin. A worthwhile stop.`,
+          goldDelta: goldFound, xpDelta: 10, explorationTurnAdvanced: turn.turn,
+        }, turn, campaignState, blueprint, action);
+      }
+    }
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: state.scavengedParts
+        ? `What you're reaching for isn't there anymore, or wasn't worth taking. The room has been worked.`
+        : `You reach for it. What looked useful proves not to be — too heavy, already claimed, or not quite what it appeared.`,
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
+  // ── OBJECT INTERACTION — "open X", "push X", "pull X", "touch X" ──────────
+  if (/^(open the|open a|push the|push a|pull the|pull a|touch the|touch a|poke|prod|tap the|press the|turn the|try the|try a|operate|activate)\b/i.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    if (/door|gate|hatch|portcullis|slab/i.test(lowered)) {
+      if (!state.obstacleCleared) {
+        const effort = d20() + Math.floor((character.str - 10) / 2) + Math.floor((character.level - 1) / 2);
+        if (effort >= 13) {
+          state.obstacleCleared = true;
+          saveSceneState(db, campaignId, scene.id, state);
+          saveCampaignState(db, campaignId, campaignState);
+          return finalizeOutcome(db, campaignId, {
+            content: `You try it and it opens — either unlocked or not as stuck as it looked. The space beyond it waits.`,
+            xpDelta: 10, explorationTurnAdvanced: turn.turn,
+          }, turn, campaignState, blueprint, action);
+        }
+        saveCampaignState(db, campaignId, campaignState);
+        return finalizeOutcome(db, campaignId, {
+          content: `You try. It doesn't move. The resistance is real — this will need force, a key, or patience.`,
+          explorationTurnAdvanced: turn.turn,
+        }, turn, campaignState, blueprint, action);
+      }
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, { content: 'Already open.', explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action);
+    }
+    const interactRoll = d6();
+    const responses = [
+      `You interact with it carefully. It responds the way things down here do: ambiguously. ${blueprint.signpostDetail}`,
+      `Nothing breaks, nothing triggers, nothing transforms. Whatever it was for, it keeps that to itself. ${blueprint.roomAmbience}`,
+      `You touch it and the room registers that. Nothing dramatic, but something shifted slightly.`,
+      `It moves, a little. The mechanism underneath is older than anything that should still work. Best leave it found the way you found it.`,
+    ];
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: responses[interactRoll % responses.length],
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
+  // ── SOCIAL / NOISE — "call out", "shout", "yell", "knock" ────────────────
+  if (/^(call out|call for|shout|yell|cry out|hail|whistle|speak up|make noise|bang on|bang the|knock on|knock the|knock)\b/i.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    shiftFactionStanding(campaignState, blueprint.faction, { heat: 2 }, `${character.name} made noise in ${scene.name}.`);
+    noteCampaignEvent(campaignState, `${character.name} made noise in ${scene.name}: ${action}`);
+    campaignState.encounterPressure = Math.min(10, campaignState.encounterPressure + 1);
+    saveCampaignState(db, campaignId, campaignState);
+    const npcName = npcs[0]?.name;
+    return finalizeOutcome(db, campaignId, {
+      content: npcName
+        ? `Your voice fills the space and ${npcName} reacts to it. Whatever else heard it is harder to measure, but the noise has carried.`
+        : `Your voice goes out and the dungeon takes it in. Whatever listens down here now has a bearing on you. ${blueprint.pressure}`,
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action, true);
+  }
+
+  // ── GENERAL ATTEMPT — "try to X", "attempt to X" ─────────────────────────
+  if (/^(try to|attempt to)\b/i.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    const effortRoll = d20() + Math.floor((character.level - 1) / 2);
+    const succeeded = effortRoll >= 12;
+    const responses = succeeded
+      ? [
+          `The attempt works, more or less. The room doesn't give ground easily, but the effort lands. ${blueprint.signpostDetail}`,
+          `It takes longer than it should, but you manage it. Progress yields to persistence if not elegance.`,
+          `Done. Not cleanly, but done. The party is a step further forward.`,
+        ]
+      : [
+          `The attempt falls short. Not by much, but by enough. The obstacle stays an obstacle.`,
+          `You try, but the room holds. A different approach, or better luck, would help.`,
+          `It resists. You're not outmatched, just not prepared for this particular problem.`,
+        ];
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: responses[effortRoll % responses.length],
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
   return null;
 }
 
