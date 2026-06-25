@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { fullRefreshQuestPwa } from '../pwa.js';
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -9,6 +10,7 @@ export default function PwaPrompt() {
   const [installEvent, setInstallEvent] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = useState(false);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     const handleBeforeInstallPrompt = (event: Event) => {
@@ -46,21 +48,19 @@ export default function PwaPrompt() {
     setInstallEvent(null);
   };
 
-  if (isInstalled && !isOffline) {
-    return null;
-  }
-
   return (
     <div className="mb-6 rounded-2xl border border-leather/20 bg-[linear-gradient(135deg,rgba(107,68,35,0.96),rgba(74,46,21,0.92))] px-4 py-3 text-parchment-light shadow-[0_12px_30px_rgba(74,46,21,0.18)]">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <p className="font-heading text-sm font-bold tracking-wide">
-            {isOffline ? 'Offline Mode Active' : 'Install QUEST'}
+            {isOffline ? 'Offline Mode Active' : isInstalled ? 'QUEST App Installed' : 'Install QUEST'}
           </p>
           <p className="font-body text-sm text-parchment-light/85">
             {isOffline
               ? 'Cached screens remain available, but live campaign actions need a connection.'
-              : 'Add QUEST to your home screen for a full-screen tavern-table experience.'}
+              : isInstalled
+                ? 'Use Full Refresh after a deployment to pull the newest client immediately.'
+                : 'Add QUEST to your home screen for a full-screen tavern-table experience.'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -69,6 +69,16 @@ export default function PwaPrompt() {
               Reconnect to play
             </span>
           )}
+          <button
+            onClick={async () => {
+              setRefreshing(true);
+              await fullRefreshQuestPwa();
+            }}
+            disabled={refreshing}
+            className="rounded-full border border-parchment-light/25 px-4 py-2 text-xs font-heading font-bold tracking-wide text-parchment-light transition-colors hover:bg-parchment-light/10 disabled:cursor-wait disabled:opacity-60"
+          >
+            {refreshing ? 'Refreshing...' : 'Full Refresh'}
+          </button>
           {!isOffline && installEvent && (
             <button
               onClick={handleInstall}
