@@ -637,6 +637,21 @@ export function setupSocketHandlers(
         emitCampaignState(io, db, campaignId);
         return;
       }
+      // ── Orientation queries — any question asking "where am I / what do I see" ─
+      const isOrientationQuery = /(where\s+(am\s+i|are\s+we)|what\s+(is|'?s|are)\s+(this\s+place|this\s+room|here)|what\s+(do\s+i|can\s+i)\s+see|what'?s\s+(here|around\s+(me|us))|describe\s+(this\s+place|the\s+room|where\s+(i\s+am|we\s+are))|tell\s+me\s+about\s+this\s+place|look\s+around)/i.test(action);
+      if (isOrientationQuery) {
+        const orientChars = all(db,
+          'SELECT name, level, race, char_class FROM characters WHERE campaign_id = ? AND status = "active"',
+          [campaignId]) as any[];
+        const orientDesc = describeScene({ scene, npcs: npcsInScene, party: orientChars });
+        run(db,
+          'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+          [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', orientDesc]);
+        io.to(`campaign:${campaignId}`).emit('game:narration', { content: orientDesc, actor: 'DM' });
+        emitCampaignState(io, db, campaignId);
+        return;
+      }
+
       const outcome = resolveRichExploration({
         db,
         campaignId,
