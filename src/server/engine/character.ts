@@ -188,6 +188,21 @@ export function meetsClassRequirements(scores: AbilityScores, charClass: CharCla
   return true;
 }
 
+/** Return which class requirements are still missing for a set of scores */
+export function getMissingClassRequirements(scores: AbilityScores, charClass: CharClass): string[] {
+  const reqs = CLASS_ABILITY_REQS[charClass];
+  const missing: string[] = [];
+
+  for (const [ability, minScore] of Object.entries(reqs)) {
+    const current = (scores as any)[ability];
+    if (current < minScore!) {
+      missing.push(`${ability.toUpperCase()} ${minScore}+`);
+    }
+  }
+
+  return missing;
+}
+
 /** Get all classes a character qualifies for given race and abilities */
 export function getEligibleClasses(race: Race, scores: AbilityScores): CharClass[] {
   return getAvailableClasses(race).filter(c => meetsClassRequirements(scores, c));

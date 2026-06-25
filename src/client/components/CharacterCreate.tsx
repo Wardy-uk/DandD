@@ -107,6 +107,12 @@ interface AbilityRoll {
   result: { rolls: number[]; total: number };
 }
 
+interface AvailableClassOption {
+  charClass: string;
+  eligible: boolean;
+  missingRequirements: string[];
+}
+
 interface Props {
   apiUrl: string;
   player: { id: string; token: string };
@@ -123,6 +129,7 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
   const [race, setRace] = useState('');
   const [charClass, setCharClass] = useState('');
   const [eligibleClasses, setEligibleClasses] = useState<string[]>([]);
+  const [availableClasses, setAvailableClasses] = useState<AvailableClassOption[]>([]);
   const [alignment, setAlignment] = useState('');
   const [validAlignments, setValidAlignments] = useState<string[]>([]);
   const [charName, setCharName] = useState('');
@@ -160,6 +167,7 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
       if (data.ok) {
         setAdjustedScores(data.data.adjustedScores);
         setEligibleClasses(data.data.singleClasses);
+        setAvailableClasses(data.data.availableClasses || []);
         setStep(3);
       }
     } catch {
@@ -351,7 +359,10 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
           </h3>
           <p className="text-sm text-ink-light font-body mb-2 leading-relaxed">
             Your class is your profession &mdash; how you fight, what you can do, and how you grow.
-            Only classes your {RACE_LABELS[race]}'s abilities qualify for are shown below.
+            Every class open to a {RACE_LABELS[race]} is shown below. Some are ready now, and some require more heroic rolls.
+          </p>
+          <p className="text-xs text-ink-faint font-body italic mb-4">
+            Paladin is the rare knightly ideal in AD&amp;D: hard to qualify for, but absolutely supported here when the dice smile on you.
           </p>
 
           {/* Show adjusted scores */}
@@ -375,22 +386,35 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
           )}
 
           <div className="space-y-2">
-            {eligibleClasses.map(c => (
-              <button key={c} onClick={() => selectClass(c)}
-                className="w-full py-3 px-4 rounded-lg border border-leather/15 text-left hover:bg-parchment-light/70 hover:border-leather/30 transition-all">
+            {availableClasses.map(option => {
+              const c = option.charClass;
+              return (
+              <button key={c} onClick={() => option.eligible && selectClass(c)} disabled={!option.eligible}
+                className={`w-full py-3 px-4 rounded-lg border text-left transition-all ${
+                  option.eligible
+                    ? 'border-leather/15 hover:bg-parchment-light/70 hover:border-leather/30'
+                    : 'border-leather/10 bg-parchment-dark/10 opacity-75 cursor-not-allowed'
+                }`}>
                 <div className="flex items-baseline justify-between">
                   <span className="font-heading font-bold text-leather-dark">{CLASS_LABELS[c] || c}</span>
-                  <span className="text-xs text-ink-faint font-body">{CLASS_HELP[c]?.prime}</span>
+                  <span className={`text-xs font-body ${option.eligible ? 'text-green-700' : 'text-ink-faint'}`}>
+                    {option.eligible ? 'Ready to play' : CLASS_HELP[c]?.prime}
+                  </span>
                 </div>
                 <p className="text-xs text-ink-faint font-body mt-0.5">{CLASS_HELP[c]?.desc}</p>
                 <p className="text-xs text-ink-light font-body mt-1 italic">{CLASS_HELP[c]?.role}</p>
+                {!option.eligible && option.missingRequirements.length > 0 && (
+                  <p className="text-xs text-blood font-body mt-2">
+                    Needs {option.missingRequirements.join(', ')}
+                  </p>
+                )}
               </button>
-            ))}
+            );})}
           </div>
           {eligibleClasses.length === 0 && (
             <div className="text-center py-6">
               <p className="text-blood text-sm font-body italic">
-                Your abilities don't meet the requirements for any class available to {RACE_LABELS[race]}.
+                These rolls are brutally low for a {RACE_LABELS[race]}. Nothing qualifies yet.
               </p>
               <p className="text-xs text-ink-faint font-body mt-2">
                 Try a different race, or go back and re-roll your abilities.

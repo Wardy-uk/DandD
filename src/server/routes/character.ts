@@ -11,6 +11,7 @@ import {
   generateAbilities3d6, generateAbilities4d6,
   getEligibleClasses, getEligibleMultiClasses,
   getValidAlignments, assembleCharacter, applyRacialAdjustments,
+  getAvailableClasses, meetsClassRequirements, getMissingClassRequirements,
 } from '../engine/character.js';
 import type { Race, CharClass, Alignment } from '../engine/tables.js';
 import { seedStarterCompanions } from '../game/companions.js';
@@ -37,6 +38,11 @@ export function createCharacterRoutes(db: Database): Router {
     const adjusted = applyRacialAdjustments(scores, race as Race);
     const singleClasses = getEligibleClasses(race as Race, adjusted);
     const multiClasses = getEligibleMultiClasses(race as Race, adjusted);
+    const availableClasses = getAvailableClasses(race as Race).map(charClass => ({
+      charClass,
+      eligible: meetsClassRequirements(adjusted, charClass),
+      missingRequirements: getMissingClassRequirements(adjusted, charClass),
+    }));
 
     res.json({
       ok: true,
@@ -44,6 +50,7 @@ export function createCharacterRoutes(db: Database): Router {
         adjustedScores: adjusted,
         singleClasses,
         multiClasses,
+        availableClasses,
       },
     });
   });
@@ -83,6 +90,26 @@ export function createCharacterRoutes(db: Database): Router {
 
     // Get player info
     const player = get(db, 'SELECT * FROM players WHERE id = ?', [req.player.id]) as any;
+
+    const adjusted = applyRacialAdjustments(scores, race as Race);
+    if (!getAvailableClasses(race as Race).includes(charClass as CharClass)) {
+      res.json({ ok: false, error: 'That class is not available for the chosen race' });
+      return;
+    }
+
+    if (!meetsClassRequirements(adjusted, charClass as CharClass)) {
+      const missing = getMissingClassRequirements(adjusted, charClass as CharClass);
+      res.json({
+        ok: false,
+        error: `That class needs ${missing.join(', ')}`,
+      });
+      return;
+    }
+
+    if (!getValidAlignments(charClass as CharClass).includes(alignment as Alignment)) {
+      res.json({ ok: false, error: 'That alignment is not valid for the chosen class' });
+      return;
+    }
 
     const character = assembleCharacter({
       id: uuid(),
