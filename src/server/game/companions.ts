@@ -324,6 +324,14 @@ export function resolveCompanionInteraction(params: {
     return assignCompanionDuty(db, target, state, matchedDuty.duty, character.name);
   }
 
+  if (/put .* first|move .* up|take point|front of the marching order/.test(lowered)) {
+    return updateCompanionOrder(db, target, state, 'front', character.name);
+  }
+
+  if (/put .* last|move .* back|fall back|rear of the marching order/.test(lowered)) {
+    return updateCompanionOrder(db, target, state, 'rear', character.name);
+  }
+
   if (/comfort|confide|apologize|apologise|praise|thank/.test(lowered)) {
     state.trust += 1;
     state.bond += 1;
@@ -798,6 +806,36 @@ function assignCompanionDuty(
     narration: [suited
       ? `${target.name} takes the ${duty} duty with the look of someone who feels seen and used well.`
       : `${target.name} accepts the ${duty} duty, but not without a flicker of doubt about whether this is really where they belong.`],
+    characterUpdated: false,
+  };
+}
+
+function updateCompanionOrder(
+  db: Database,
+  target: CompanionRow,
+  state: CompanionRelationshipState,
+  placement: 'front' | 'rear',
+  leaderName: string,
+) {
+  const bounds = get(db, `
+    SELECT MIN(companion_order) AS min_order, MAX(companion_order) AS max_order
+    FROM npcs
+    WHERE campaign_id = ? AND joined_party = 1 AND alive = 1
+  `, [get(db, 'SELECT campaign_id FROM npcs WHERE id = ?', [target.id])?.campaign_id]) as any;
+  const nextOrder = placement === 'front'
+    ? Number(bounds?.min_order ?? 0) - 1
+    : Number(bounds?.max_order ?? 0) + 1;
+
+  state.respect += 1;
+  state.lastBeat = `${leaderName} moved ${target.name} to the ${placement === 'front' ? 'front' : 'rear'} of the company order.`;
+  run(db, 'UPDATE npcs SET companion_order = ?, relationship_state = ?, disposition = ? WHERE id = ?',
+    [nextOrder, JSON.stringify(state), deriveDisposition(state), target.id]);
+
+  return {
+    handled: true,
+    narration: [placement === 'front'
+      ? `${target.name} shifts forward in the marching order and starts carrying themselves like they expect first contact.`
+      : `${target.name} falls back in the company order, taking a position better suited to reserve, watch, or caution.`],
     characterUpdated: false,
   };
 }

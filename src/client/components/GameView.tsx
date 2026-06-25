@@ -617,7 +617,24 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                   <div className="mt-1 text-[11px] font-body text-ink-light">
                     Duty: {companion.duty || 'unset'}
                   </div>
+                  <div className="mt-1 text-[11px] font-body text-ink-faint">
+                    Trust {companion.relationship.trust} • Bond {companion.relationship.bond} • Tension {companion.relationship.tension}
+                  </div>
                   <div className="mt-2 flex flex-wrap gap-1">
+                    <button
+                      type="button"
+                      onClick={() => quickAction(`Put ${companion.name} first in the marching order`)}
+                      className="rounded-full border border-leather/15 px-2 py-1 text-[10px] font-heading text-leather hover:bg-leather/5"
+                    >
+                      Forward
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => quickAction(`Put ${companion.name} last in the marching order`)}
+                      className="rounded-full border border-leather/15 px-2 py-1 text-[10px] font-heading text-leather hover:bg-leather/5"
+                    >
+                      Back
+                    </button>
                     {COMPANION_DUTIES.map((duty) => (
                       <button
                         key={duty.key}
