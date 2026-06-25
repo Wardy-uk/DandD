@@ -1,6 +1,7 @@
 import { v4 as uuid } from 'uuid';
 import type { Database } from 'sql.js';
 import { all, get, run } from '../db/helpers.js';
+import { getCampaignState } from './campaignState.js';
 
 export interface CompanionRelationshipState {
   trust: number;
@@ -14,6 +15,10 @@ export interface CompanionRelationshipState {
   currentDuty: string;
   aspiration: string;
   grievance: string;
+  personalQuestTitle: string;
+  personalQuestNeed: string;
+  personalQuestProgress: number;
+  personalQuestResolved: boolean;
   lastBeat: string;
 }
 
@@ -80,6 +85,10 @@ export function seedStarterCompanions(db: Database, campaignId: string) {
         currentDuty: npc.role,
         aspiration: npc.aspiration,
         grievance: npc.grievance,
+        personalQuestTitle: npc.personalQuestTitle,
+        personalQuestNeed: npc.personalQuestNeed,
+        personalQuestProgress: 0,
+        personalQuestResolved: false,
         lastBeat: `${npc.name} joined as part of the original company.`,
       }),
       npc.role,
@@ -119,6 +128,10 @@ export function getPartyCompanions(db: Database, campaignId: string) {
       duty: relationship.currentDuty,
       aspiration: relationship.aspiration,
       grievance: relationship.grievance,
+      personalQuestTitle: relationship.personalQuestTitle,
+      personalQuestNeed: relationship.personalQuestNeed,
+      personalQuestProgress: relationship.personalQuestProgress,
+      personalQuestResolved: relationship.personalQuestResolved,
       relationship,
       relationshipLabel: describeRelationship(relationship),
     };
@@ -149,6 +162,10 @@ export function getSceneNpcRoster(db: Database, campaignId: string, sceneId: str
       duty: relationship.currentDuty,
       aspiration: relationship.aspiration,
       grievance: relationship.grievance,
+      personalQuestTitle: relationship.personalQuestTitle,
+      personalQuestNeed: relationship.personalQuestNeed,
+      personalQuestProgress: relationship.personalQuestProgress,
+      personalQuestResolved: relationship.personalQuestResolved,
       relationshipLabel: describeRelationship(relationship),
       relationship,
       recruitHint: Number(row.joined_party || 0) === 1
@@ -439,6 +456,77 @@ export function getCompanionPartyModifiers(db: Database, campaignId: string, sce
   return modifiers;
 }
 
+export function progressCompanionArcs(params: {
+  db: Database;
+  campaignId: string;
+  sceneId: string;
+  action: string;
+  leaderName: string;
+}) {
+  const { db, campaignId, sceneId, action, leaderName } = params;
+  const lowered = action.toLowerCase();
+  const campaignState = getCampaignState(db, campaignId);
+  const rows = all(db, `
+    SELECT id, name, race, char_class, level, personality, disposition, location_scene_id,
+      stats, relationship_state, joined_party, companion_role, companion_order, alive
+    FROM npcs
+    WHERE campaign_id = ? AND location_scene_id = ? AND joined_party = 1 AND alive = 1
+    ORDER BY companion_order ASC, name ASC
+  `, [campaignId, sceneId]) as CompanionRow[];
+
+  const notes: string[] = [];
+  const factionPressure = Math.max(
+    campaignState.factions.locals?.heat || 0,
+    campaignState.factions.delvers?.heat || 0,
+    campaignState.factions.watch?.heat || 0,
+    campaignState.factions.shadows?.heat || 0,
+  );
+
+  for (const row of rows) {
+    const state = hydrateRelationshipState(row);
+    const role = String(row.companion_role || inferCompanionRole(row.char_class)).toLowerCase();
+    const directMatch = state.personalQuestNeed
+      .toLowerCase()
+      .split(/[\s,.;:]+/)
+      .filter((part) => part.length > 4)
+      .some((part) => lowered.includes(part));
+
+    const supportsQuest = directMatch
+      || (/parley|negotiate|talk/.test(lowered) && role === 'envoy')
+      || (/search|scout|trap|hidden/.test(lowered) && role === 'scout')
+      || (/secure|rest|heal|camp/.test(lowered) && role === 'warden')
+      || (/force|hold|fight|brace|doorway/.test(lowered) && role === 'vanguard');
+
+    if (!state.personalQuestResolved && supportsQuest) {
+      state.personalQuestProgress += directMatch ? 2 : 1;
+      state.trust += 1;
+      state.respect += 1;
+      state.lastBeat = `${leaderName} moved ${row.name}'s private concern forward.`;
+      if (state.personalQuestProgress >= 3) {
+        state.personalQuestResolved = true;
+        state.loyalty += 2;
+        state.morale += 2;
+        state.lastBeat = `${leaderName} helped resolve ${row.name}'s personal concern: ${state.personalQuestTitle}.`;
+        notes.push(`${row.name} sees one of their private concerns finally answered. The loyalty that follows feels real.`);
+      } else {
+        notes.push(`${row.name} notices the company moving closer to what they quietly wanted all along.`);
+      }
+      persistRelationshipState(db, row.id, state);
+      continue;
+    }
+
+    if (!state.personalQuestResolved && factionPressure >= 6 && /rest|loot|fallback|camp/.test(lowered)) {
+      state.tension += 1;
+      state.grievance = sharpenGrievance(state.grievance, row.name);
+      state.lastBeat = `${row.name}'s unresolved concerns are starting to fester under pressure.`;
+      persistRelationshipState(db, row.id, state);
+      notes.push(`${row.name} is getting harder to reassure. Something unresolved is starting to sour into resentment.`);
+    }
+  }
+
+  return notes;
+}
+
 export function resolveCompanionDrama(params: {
   db: Database;
   campaignId: string;
@@ -543,6 +631,10 @@ export function normalizeRelationshipState(raw: any): CompanionRelationshipState
     currentDuty: String(raw?.currentDuty || ''),
     aspiration: String(raw?.aspiration || ''),
     grievance: String(raw?.grievance || ''),
+    personalQuestTitle: String(raw?.personalQuestTitle || ''),
+    personalQuestNeed: String(raw?.personalQuestNeed || ''),
+    personalQuestProgress: Number(raw?.personalQuestProgress || 0),
+    personalQuestResolved: Boolean(raw?.personalQuestResolved),
     lastBeat: String(raw?.lastBeat || ''),
   };
 }
@@ -551,6 +643,7 @@ export function describeRelationship(state: CompanionRelationshipState) {
   if (state.romance >= 4 && state.tension <= 2) return 'romantic';
   if (state.tension >= 5) return 'volatile';
   if (state.loyalty >= 5 && state.respect >= 3) return 'sworn';
+  if (state.personalQuestResolved && state.loyalty >= 3) return 'proven';
   if (state.bond >= 4 && state.trust >= 3) return 'loyal friend';
   if (state.trust >= 2) return 'steadily warming';
   if (state.tension >= 2) return 'strained';
@@ -591,6 +684,8 @@ function buildStarterRoster(setting: string) {
       stats: { hp: 10, currentHp: 10, maxHp: 10, thac0: 20, ac: 6, str: 15, dex: 12, weaponSpeed: 6, damage: '1d8' },
       aspiration: 'Stand in front when the trouble turns real.',
       grievance: 'Despises leaders who freeze when a decision has to be made.',
+      personalQuestTitle: 'Hold the line cleanly',
+      personalQuestNeed: 'Break an obstacle or win a hard fight without panic or hesitation.',
     },
     {
       name: grim ? 'Tavish Reed' : 'Tavish Quick',
@@ -606,6 +701,8 @@ function buildStarterRoster(setting: string) {
       stats: { hp: 7, currentHp: 7, maxHp: 7, thac0: 20, ac: 7, str: 11, dex: 16, weaponSpeed: 5, damage: '1d6' },
       aspiration: 'Be the one who spots the angle no one else saw.',
       grievance: 'Hates blundering into traps that patience would have beaten.',
+      personalQuestTitle: 'Map a safer road',
+      personalQuestNeed: 'Find hidden routes, expose traps, and prove caution pays.',
     },
   ];
 }
@@ -628,6 +725,8 @@ function hydrateRelationshipState(row: CompanionRow) {
     currentDuty: state.currentDuty || innerLife.currentDuty,
     aspiration: state.aspiration || innerLife.aspiration,
     grievance: state.grievance || innerLife.grievance,
+    personalQuestTitle: state.personalQuestTitle || innerLife.personalQuestTitle,
+    personalQuestNeed: state.personalQuestNeed || innerLife.personalQuestNeed,
   };
 }
 
@@ -641,6 +740,8 @@ function buildInnerLife(row: CompanionRow) {
       currentDuty: 'scout',
       aspiration: loweredPersonality.includes('curious') ? 'Find something no one else spotted first.' : 'Stay useful by being first to danger, not last to notice it.',
       grievance: 'Hates being marched blind into obvious risk.',
+      personalQuestTitle: 'Map a safer road',
+      personalQuestNeed: 'Find hidden routes, expose traps, and prove caution pays.',
     };
   }
   if (role === 'warden') {
@@ -650,6 +751,8 @@ function buildInnerLife(row: CompanionRow) {
       currentDuty: 'warden',
       aspiration: 'Keep the company alive long enough to matter.',
       grievance: 'Resents wasteful risk and sloppy camp discipline.',
+      personalQuestTitle: 'Make camp mean something',
+      personalQuestNeed: 'Secure rooms, rest safely, and keep people alive instead of merely lucky.',
     };
   }
   if (role === 'vanguard') {
@@ -659,6 +762,8 @@ function buildInnerLife(row: CompanionRow) {
       currentDuty: 'vanguard',
       aspiration: 'Stand where the line might break and keep it from breaking.',
       grievance: 'Will not quietly accept cowardice or dithering under pressure.',
+      personalQuestTitle: 'Hold the line cleanly',
+      personalQuestNeed: 'Break an obstacle or win a hard fight without panic or hesitation.',
     };
   }
   return {
@@ -667,6 +772,8 @@ function buildInnerLife(row: CompanionRow) {
     currentDuty: 'watch',
     aspiration: 'Earn a secure place in the company.',
     grievance: 'Dislikes being treated as disposable.',
+    personalQuestTitle: 'Earn a place',
+    personalQuestNeed: 'Be trusted with real responsibility and see the company stand by them.',
   };
 }
 
@@ -721,6 +828,11 @@ function parseInventory(raw: string | null | undefined) {
   } catch {
     return [];
   }
+}
+
+function sharpenGrievance(grievance: string, name: string) {
+  if (grievance.includes('again')) return grievance;
+  return `${grievance} ${name} is starting to think it may happen again.`;
 }
 
 function hashValue(value: string) {

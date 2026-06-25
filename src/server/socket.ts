@@ -16,6 +16,7 @@ import {
   getCompanionPartyModifiers,
   getJoinedCompanionIdsInScene,
   getPartyCompanions,
+  progressCompanionArcs,
   getSceneNpcRoster,
   resolveCompanionDrama,
   resolveCompanionInteraction,
@@ -462,6 +463,13 @@ export function setupSocketHandlers(
         action,
         leaderName: character.name,
       });
+      const arcNotes = progressCompanionArcs({
+        db,
+        campaignId,
+        sceneId: scene.id,
+        action,
+        leaderName: character.name,
+      });
       io.to(`campaign:${campaignId}`).emit('game:state_update', {
         type: 'companions_update',
         payload: getPartyCompanions(db, campaignId),
@@ -484,6 +492,12 @@ export function setupSocketHandlers(
         actor: outcome.actor || 'DM',
       });
       for (const note of dramaNotes) {
+        io.to(`campaign:${campaignId}`).emit('game:narration', {
+          content: note,
+          actor: 'DM',
+        });
+      }
+      for (const note of arcNotes) {
         io.to(`campaign:${campaignId}`).emit('game:narration', {
           content: note,
           actor: 'DM',

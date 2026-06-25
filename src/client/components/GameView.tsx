@@ -48,6 +48,10 @@ interface Companion {
   duty: string;
   aspiration: string;
   grievance: string;
+  personalQuestTitle: string;
+  personalQuestNeed: string;
+  personalQuestProgress: number;
+  personalQuestResolved: boolean;
   hp: number;
   maxHp: number;
   relationshipLabel: string;
@@ -76,6 +80,10 @@ interface SceneNpc {
   duty: string;
   aspiration: string;
   grievance: string;
+  personalQuestTitle: string;
+  personalQuestNeed: string;
+  personalQuestProgress: number;
+  personalQuestResolved: boolean;
   relationshipLabel: string;
   recruitHint: string;
 }
@@ -284,6 +292,9 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
     'Look around',
     'Listen carefully',
     'Read the battlefield',
+    leadCompanion && !leadCompanion.personalQuestResolved
+      ? leadCompanion.personalQuestNeed
+      : (leadCompanion ? `Ask ${leadCompanion.name} to scout ahead` : (recruitableNpc ? `Ask ${recruitableNpc.name} to join us` : (encounterActive ? 'Hold the doorway' : 'Search for traps'))),
     leadCompanion ? `Ask ${leadCompanion.name} to scout ahead` : (recruitableNpc ? `Ask ${recruitableNpc.name} to join us` : (encounterActive ? 'Hold the doorway' : 'Search for traps')),
     leadCompanion ? `Comfort ${leadCompanion.name}` : (encounterActive ? 'Take cover and aim' : 'Search for hidden doors'),
     recruitableNpc ? `Ask ${recruitableNpc.name} to join us` : (encounterActive ? 'Hold the doorway' : 'Search for traps'),
@@ -454,6 +465,12 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                   <div className="mt-1 text-[11px] font-body text-ink-faint">
                     Resents: {companion.grievance}
                   </div>
+                  <div className="mt-1 text-[11px] font-body text-ink-light">
+                    Lead: {companion.personalQuestTitle} {companion.personalQuestResolved ? '(resolved)' : `(${Math.min(companion.personalQuestProgress, 3)}/3)`}
+                  </div>
+                  <div className="mt-1 text-[11px] font-body text-ink-faint">
+                    {companion.personalQuestNeed}
+                  </div>
                   {companion.relationship.lastBeat && (
                     <p className="mt-1 text-[11px] font-body text-ink-faint">
                       {companion.relationship.lastBeat}
@@ -495,9 +512,14 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                     {npc.relationshipLabel} • {npc.recruitHint}
                   </div>
                   {npc.joinedParty && (
-                    <div className="mt-1 text-[11px] font-body text-ink-faint">
-                      Wants: {npc.aspiration}
-                    </div>
+                    <>
+                      <div className="mt-1 text-[11px] font-body text-ink-faint">
+                        Wants: {npc.aspiration}
+                      </div>
+                      <div className="mt-1 text-[11px] font-body text-ink-light">
+                        Lead: {npc.personalQuestTitle} {npc.personalQuestResolved ? '(resolved)' : `(${Math.min(npc.personalQuestProgress, 3)}/3)`}
+                      </div>
+                    </>
                   )}
                 </div>
               ))}
