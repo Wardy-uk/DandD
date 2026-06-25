@@ -906,8 +906,16 @@ export function resolveRichExploration(params: {
       lines.push(`Your torch is low. The far end of the room is guesswork.`);
     }
 
-    // Lead with room-type ambience (blends room character + dungeon theme)
-    lines.push(blueprint.roomAmbience);
+    // Lead with an active-observation framing line, not the entry description verbatim
+    const lookLeadins = [
+      'You pause and take it in.',
+      'You make a deliberate sweep of the room.',
+      'You stop and look — really look.',
+      'You slow your breathing and take stock.',
+      'You cast your eye across the room again.',
+    ];
+    const leadIn = lookLeadins[(d6() - 1) % lookLeadins.length];
+    lines.push(`${leadIn} ${blueprint.roomAmbience}`);
 
     // Atmospheric details — pick by perception roll, not everything at once
     const atmosphericDetails: string[] = [];

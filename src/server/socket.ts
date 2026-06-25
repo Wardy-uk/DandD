@@ -51,6 +51,7 @@ interface ConnectedPlayer {
 }
 
 const connectedPlayers = new Map<string, ConnectedPlayer>();
+const actionLocks = new Set<string>(); // prevent concurrent action processing per campaign
 
 function emitCampaignState(io: SocketServer<ClientToServerEvents, ServerToClientEvents>, db: Database, campaignId: string) {
   io.to(`campaign:${campaignId}`).emit('game:state_update', {
@@ -193,6 +194,11 @@ export function setupSocketHandlers(
       const { campaignId, action } = data;
       const player = connectedPlayers.get(socket.id);
       if (!player) return;
+      // Prevent concurrent action processing - queue would be complex so just drop duplicates
+      if (actionLocks.has(campaignId)) {
+        socket.emit('game:narration', { content: 'A moment passes... (please wait)', actor: 'DM' });
+        return;
+      }
 
       // Get player's character in this campaign
       const character = get(db,
@@ -675,6 +681,10 @@ export function setupSocketHandlers(
         ].filter(Boolean).join(' ');
 
         let aiMsg = 'The moment passes without clear resolution — but it was not wasted.';
+
+        // Signal to client that AI is processing
+        io.to(`campaign:${campaignId}`).emit('game:narration', { content: '…', actor: 'DM', thinking: true });
+        actionLocks.add(campaignId);
         try {
           aiMsg = (await generate({
             system: 'You are a terse AD&D Dungeon Master. One paragraph max. Present tense. Specific and concrete. Address the player directly ("You…"). No filler phrases, no em-dashes, do not start with "The party".',
@@ -686,6 +696,8 @@ export function setupSocketHandlers(
           console.error('[AI fallback error]', aiErr);
           // Ollama unreachable — still give something real
           aiMsg = 'The room holds its attention on you for a moment. The action lands in the record of the place.';
+        } finally {
+          actionLocks.delete(campaignId);
         }
 
         run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',

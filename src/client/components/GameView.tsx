@@ -208,7 +208,12 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
   }, [campaignId]);
 
   useEffect(() => {
-    const onNarration = (data: { content: string; actor: string }) => {
+    const onNarration = (data: { content: string; actor: string; thinking?: boolean }) => {
+      if (data.thinking) {
+        // AI is processing — show indicator without adding to log
+        setDmThinking('The DM considers…');
+        return;
+      }
       setDmThinking('');
       addLogEntry('narration', data.actor, data.content);
       // Analyse DM narration for combat/environmental sounds
