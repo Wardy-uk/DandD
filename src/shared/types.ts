@@ -285,7 +285,7 @@ export interface ApiResponse<T = unknown> {
 // ─── Socket Events ──────────────────────────────────────────────────────────
 
 export interface ServerToClientEvents {
-  'game:narration': (data: { content: string; actor: string }) => void;
+  'game:narration': (data: { content: string; actor: string; thinking?: boolean }) => void;
   'game:combat_result': (data: { result: unknown }) => void;
   'game:scene_enter': (data: { scene: Scene; description: string }) => void;
   'game:player_action': (data: { playerId: string; playerName: string; action: string }) => void;
