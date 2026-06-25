@@ -9,7 +9,7 @@ import type { Database } from 'sql.js';
 import type { ServerToClientEvents, ClientToServerEvents } from '../shared/types.js';
 import { get, all, run } from './db/helpers.js';
 import { describeScene, findMovementTarget } from './game/deterministic.js';
-import { resolveRichExploration } from './game/adventure.js';
+import { resolveRichExploration, buildSceneBlueprint } from './game/adventure.js';
 import { addLootWeight, applyAttritionDamage, getCampaignState, getCampaignStateSnapshot, getLightModifiers, lightTorch, makeCamp, saveCampaignState, shiftFactionStanding, tickDelveConditions } from './game/campaignState.js';
 import { createEncounterRecord, describeBattlefield, emitEncounterStart, getActiveEncounter, resolveEncounterAction } from './game/encounters.js';
 import { awardExplorationXp } from './engine/progression.js';
@@ -680,6 +680,39 @@ export function setupSocketHandlers(
           scene.brief ? `— ${scene.brief}` : scene.ai_description ? `— ${String(scene.ai_description).slice(0, 120)}` : '',
         ].filter(Boolean).join(' ');
 
+        // Build richer scene context for the AI
+        const aiBlueprint = buildSceneBlueprint(scene);
+        const aiCampaignState = getCampaignState(db, campaignId);
+
+        // Character condition
+        const hpPct = character.max_hp > 0 ? character.hp / character.max_hp : 1;
+        const charCondition = hpPct <= 0.25 ? 'badly wounded' : hpPct <= 0.5 ? 'injured' : hpPct <= 0.75 ? 'lightly wounded' : 'healthy';
+
+        // Faction heat — surface the highest heat faction if it matters
+        const hotFactions = Object.entries(aiCampaignState.factions)
+          .filter(([, f]) => (f as any).heat >= 3)
+          .map(([k]) => k);
+
+        // Encounter pressure cue
+        const pressure = aiCampaignState.encounterPressure;
+        const pressureCue = pressure >= 7 ? 'imminent danger — something is closing in'
+          : pressure >= 4 ? 'tension is building — the dungeon is aware of them'
+          : 'quiet';
+
+        const contextParts: string[] = [
+          `Scene: ${sceneBlurb}`,
+          `Ambience: ${aiBlueprint.roomAmbience}`,
+          `Hazard present: ${aiBlueprint.trap.kind}`,
+          aiBlueprint.clue ? `Notable detail: ${aiBlueprint.clue}` : '',
+          aiBlueprint.tracks ? `Tracks/signs: ${aiBlueprint.tracks}` : '',
+          `Light: ${scene.light_level || 'normal'}`,
+          `Exits: ${sceneExits}`,
+          sceneNpcNames ? `Present: ${sceneNpcNames}` : '',
+          `Character: ${character.name} (${character.char_class} level ${character.level}), condition: ${charCondition} (${character.hp}/${character.max_hp} HP)`,
+          hotFactions.length ? `Faction alert: ${hotFactions.join(', ')} are actively hostile` : '',
+          `Dungeon mood: ${pressureCue}`,
+        ].filter(Boolean);
+
         let aiMsg = 'The moment passes without clear resolution — but it was not wasted.';
 
         // Signal to client that AI is processing
@@ -687,15 +720,22 @@ export function setupSocketHandlers(
         actionLocks.add(campaignId);
         try {
           aiMsg = (await generate({
-            system: 'You are a terse AD&D Dungeon Master. One paragraph max. Present tense. Specific and concrete. Address the player directly ("You…"). No filler phrases, no em-dashes, do not start with "The party".',
-            prompt: `Scene: ${sceneBlurb}. Light: ${scene.light_level || 'normal'}. Exits: ${sceneExits}.${sceneNpcNames ? ` Present: ${sceneNpcNames}.` : ''} Player action: "${action}". Resolve this as a DM.`,
+            system: `You are a terse AD&D Dungeon Master narrating in present tense. One short paragraph, 2-3 sentences.
+Rules:
+- Address the player as "you" or by their character name (${character.name})
+- Be specific — name objects, textures, sounds, smells drawn from the scene details provided
+- Never say "nothing happens" or "the moment passes"
+- Never open with "The party" or "You find yourself"
+- If the action is impossible, describe why vividly rather than refusing
+- Voice: dry, wry, like a DM who has seen it all but still enjoys the theatre`,
+            prompt: `${contextParts.join('. ')}.\nPlayer action: "${action}". Narrate the outcome.`,
             maxTokens: 180,
             temperature: 0.75,
           })).trim() || aiMsg;
         } catch (aiErr) {
           console.error('[AI fallback error]', aiErr);
           // Ollama unreachable — still give something real
-          aiMsg = 'The room holds its attention on you for a moment. The action lands in the record of the place.';
+          aiMsg = `${aiBlueprint.roomAmbience} The attempt registers. Nothing dramatic shifts, but the room has noted it.`;
         } finally {
           actionLocks.delete(campaignId);
         }

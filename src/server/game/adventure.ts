@@ -1139,6 +1139,239 @@ export function resolveRichExploration(params: {
     }, turn, campaignState, blueprint, action);
   }
 
+
+  // -- SEARCH / TRAP CHECK — "search room", "look for traps", "check for traps"
+  if (/^(search room|search the room|search carefully|look for traps|check for traps|check the floor|feel the walls|sweep the room for|scout for traps|hunt for traps)$/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    const searchScore = d20() + Math.floor((character.int - 10) / 2) + thiefBonus(character, 'find_traps') + companionMods.scoutBonus;
+    const lines: string[] = [];
+
+    if (!state.knownHazard && searchScore >= 10) {
+      state.knownHazard = true;
+      const hazardFind = blueprint.roomSpecificHazard || blueprint.trap.kind;
+      lines.push(`Your search turns up something worth knowing: signs of ${hazardFind} here. Worth remembering before anyone commits weight to the wrong surface.`);
+      saveSceneState(db, campaignId, scene.id, state);
+    }
+
+    if (!state.clueFound && searchScore >= 13) {
+      state.clueFound = true;
+      const roomFind = blueprint.roomSpecificFind || blueprint.clue;
+      if (/ossuary|crypt|bone|tomb/.test(scene.name.toLowerCase())) {
+        lines.push(`Bone dust coats a hidden niche low in the far wall — easy to miss. Inside: ${roomFind}`);
+      } else if (/flood|water|cistern|well|sump/.test(scene.name.toLowerCase())) {
+        lines.push(`Below the waterline, half-submerged, something catches your eye: ${roomFind}`);
+      } else if (/guard|barracks|watch|post/.test(scene.name.toLowerCase())) {
+        lines.push(`Behind the duty roster scratched into the wall, someone hid a note: ${roomFind}`);
+      } else {
+        lines.push(`Patient work pays off. ${roomFind}`);
+      }
+      saveSceneState(db, campaignId, scene.id, state);
+    }
+
+    if (!state.trapTriggered && !state.trapDisarmed && searchScore <= 7) {
+      state.trapTriggered = true;
+      state.knownHazard = true;
+      const trap = triggerTrap(db, character, inventory, blueprint, campaignState, companionMods);
+      lines.push(trap.content);
+      saveSceneState(db, campaignId, scene.id, state);
+      saveCampaignState(db, campaignId, campaignState);
+      return withPulse({ ...trap, content: lines.join(' ') }, turn.pulse);
+    }
+
+    if (lines.length === 0) {
+      lines.push(`You work the room with method — corners, seams, disturbed flagstones. ${blueprint.roomAmbience} Nothing new emerges, but you leave knowing what is not there.`);
+    }
+
+    saveSceneState(db, campaignId, scene.id, state);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, { content: lines.join(' '), explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action);
+  }
+
+  // -- LISTEN AT DOOR / LISTEN CAREFULLY
+  if (/^(listen carefully|listen at the door|listen at door|press.*ear.*door|press.*ear.*wall|hold.*breath.*listen|listen at)/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    const listenScore = d20() + Math.floor((character.wis - 10) / 2) + thiefBonus(character, 'detect_noise') + companionMods.watchBonus;
+    state.listened = true;
+    saveSceneState(db, campaignId, scene.id, state);
+
+    let result: string;
+    if (listenScore >= 18) {
+      result = `Muffled voices — two, maybe three — on the other side. They are not moving. ${blueprint.pressure}`;
+    } else if (listenScore >= 14) {
+      result = `Something is moving beyond the door. Not fast, not slow. Pacing, or patrolling. ${blueprint.tracks}`;
+    } else if (listenScore >= 10) {
+      result = `Distant scraping, like stone on stone, then silence. Could be structural. Could not be. ${blueprint.roomAmbience}`;
+    } else if (listenScore >= 6) {
+      result = `Dripping water, the creak of the place settling. Nothing obviously alive, but nothing obviously safe.`;
+    } else {
+      result = `Nothing — or nothing you can separate from your own blood in your ears. The door keeps its secrets.`;
+    }
+
+    noteCampaignEvent(campaignState, `${character.name} listened at a threshold in ${scene.name}.`);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, { content: result, explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action);
+  }
+
+  // -- STEAL / PICKPOCKET
+  if (/^(steal|pickpocket|lift from|filch from|cut the purse|take from)\b/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    if (npcs.length === 0) {
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
+        content: `Fingers ready, but there is no one here to steal from. The room holds no pockets.`,
+        explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action);
+    }
+
+    const target = npcs[0];
+    const dexRoll = d20() + Math.floor((character.dex - 10) / 2) + thiefBonus(character, 'pick_pockets');
+    const awareness = 10 + Math.floor((target.level || 1) / 2);
+    if (dexRoll >= awareness) {
+      const goldLifted = 2 + d6() * 2;
+      awardGoldAndXp(db, character, goldLifted, 10);
+      noteCampaignEvent(campaignState, `${character.name} lightened ${target.name}'s purse in ${scene.name}.`);
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
+        content: `${target.name} notices nothing. Your fingers return with ${goldLifted} gp in mixed coin — enough to matter, taken cleanly.`,
+        goldDelta: goldLifted, xpDelta: 10, explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action);
+    }
+
+    shiftFactionStanding(campaignState, blueprint.faction, { heat: 3, reputation: -1 }, `${character.name} was caught stealing from ${target.name}.`);
+    campaignState.encounterPressure = Math.min(10, campaignState.encounterPressure + 2);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: `${target.name}'s hand closes around your wrist before you clear the purse. The moment turns cold fast. The room knows what just happened.`,
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action, true);
+  }
+
+  // -- FORCE / TRY THE LOCK / OPEN (without tools)
+  if (/^(force the lock|force lock|try the lock|try to open|try the door|try the gate|jimmy the lock|wrench the lock)$/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    if (state.lockOpened || state.obstacleCleared) {
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, { content: 'Already open — the mechanism was dealt with earlier.', explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action);
+    }
+    const hasTools = inventory.some((item) => item.item === 'Lockpick Set' && item.quantity > 0);
+    if (hasTools) {
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
+        content: `You have picks. Use them properly — say "pick lock" to work ${blueprint.lock.kind} with any skill.`,
+        explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action);
+    }
+    const forceRoll = d20() + Math.floor((character.str - 10) / 2);
+    if (forceRoll >= 16) {
+      state.lockOpened = true;
+      shiftFactionStanding(campaignState, blueprint.faction, { heat: 1 });
+      saveSceneState(db, campaignId, scene.id, state);
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
+        content: `Brute persuasion works where finesse won't. ${blueprint.lock.kind} gives with a crack that echoes further than you'd like. The way is open.`,
+        xpDelta: 10, explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action, true);
+    }
+    const bruise = Math.max(1, roll(1, 3).total - 1);
+    applyHp(db, character.id, character.hp - bruise);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: `${blueprint.lock.kind} holds. The mechanism clicked once, maybe twice, but it does not give. Your shoulder knows the cost.`,
+      hpDelta: -bruise, explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
+  // -- HIDE / PRESS INTO SHADOWS
+  if (/^(hide|hide in shadows|press into shadows|slip into shadows|melt into the shadows|take cover|find cover|seek cover|crouch|duck behind)/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    const hideRoll = d20() + Math.floor((character.dex - 10) / 2) + thiefBonus(character, 'hide_in_shadows') + companionMods.scoutBonus;
+    const lightPenalty = (campaignState.delve?.lightLevel === 'normal') ? -2 : 0;
+    const adjusted = hideRoll + lightPenalty;
+    const coverFeature = blueprint.roomSpecificFind ? blueprint.roomSpecificFind : blueprint.roomAmbience;
+
+    if (adjusted >= 13) {
+      campaignState.encounterPressure = Math.max(0, campaignState.encounterPressure - 1);
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
+        content: `You find the angle the room offers and use it. ${coverFeature} — against that backdrop, you become background. Whatever comes through here next will look past you.`,
+        explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action);
+    }
+
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: `The shadows here are shallow. You find a workable spot, but it would not survive a deliberate search. ${blueprint.pressure}`,
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
+  // -- CHECK BODY / LOOT THE BODY
+  if (/^(check body|check the body|search the body|search corpse|search the corpse|loot the body|loot the corpse|strip the body|go through.*pockets|pat down)/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    if (state.scavengedParts) {
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
+        content: `The body has been gone through. Whatever it carried is already in your kit or gone to someone who moved faster.`,
+        explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action);
+    }
+
+    const copperRoll = d6();
+    const silverRoll = d6() <= 3 ? d6() : 0;
+    const goldFound = Math.floor(copperRoll / 3) + Math.floor(silverRoll / 5);
+    state.scavengedParts = true;
+    if (goldFound > 0) {
+      awardGoldAndXp(db, character, goldFound, 5);
+      state.knownTreasure = true;
+    }
+
+    const bodyFinds = [
+      `a worn knife, a couple of corroded copper pieces, and a folded scrap of something that might be a map`,
+      `nothing of obvious value — but the boots are good quality if you can stomach wearing them`,
+      `a handful of copper, a cracked lantern, and a ring with the crest filed off`,
+      `odds and ends: chalk stub, a bent spike, and ${blueprint.stash.item}`,
+    ];
+    const findDesc = bodyFinds[Math.abs(hash(scene.id)) % bodyFinds.length];
+    saveSceneState(db, campaignId, scene.id, state);
+    noteCampaignEvent(campaignState, `${character.name} searched a body in ${scene.name}.`);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: `You work quickly and without sentiment. The body yields: ${findDesc}.${goldFound > 0 ? ` Net value: ${goldFound} gp.` : ' Nothing worth carrying, but nothing missed.'}`,
+      goldDelta: goldFound > 0 ? goldFound : undefined,
+      xpDelta: goldFound > 0 ? 5 : undefined,
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
+  // -- PRAY / KNEEL / OFFER PRAYER
+  if (/^(pray|kneel|kneel and pray|offer prayer|offer a prayer|say a prayer|bow.*head|give thanks|invoke.*gods|ask.*gods|petition.*gods)/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    const divineClass = /paladin|cleric|druid/.test(character.char_class);
+
+    if (divineClass) {
+      const omens = [
+        `A faint warmth settles in the hollow of your chest — not heat, but the absence of cold. ${scene.name} doesn't feel friendlier, but it feels witnessed.`,
+        `The air shifts slightly, as though something very far away exhaled. Your god offers no promises here, only presence.`,
+        `Something in the room's ambient noise drops a half-tone. Brief, unmistakable. The divine is not absent from ${scene.name} — it is just choosing its moment.`,
+        `The flame on your torch stabilises. Your god is listening. That will have to be enough.`,
+      ];
+      const omen = omens[Math.abs(hash(character.id + scene.id)) % omens.length];
+      shiftFactionStanding(campaignState, 'watch', { reputation: 1 }, `${character.name} showed discipline in ${scene.name}.`);
+      noteCampaignEvent(campaignState, `${character.name} prayed in ${scene.name} and received an omen.`);
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, { content: omen, explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action);
+    }
+
+    const silences = [
+      `You kneel and speak the words. The room does not answer. The dungeon is not a place that rewards prayer, only preparation — but you feel marginally steadier for having said it.`,
+      `Stone under your knees, dark above. Whatever you asked for disappears into the ambient indifference of ${scene.name}. Not all prayers are answered. Not all go unheard.`,
+      `The rafters creak once, somewhere in the middle of your petition. It probably means nothing. Probably.`,
+    ];
+    const silence = silences[Math.abs(hash(character.id + scene.id)) % silences.length];
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, { content: silence, explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action);
+  }
+
   return null;
 }
 
