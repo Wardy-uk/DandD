@@ -122,6 +122,16 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
       addLogEntry('system', '', `${data.name} has the initiative in round ${data.round}.`);
     };
 
+    const onEncounterUpdate = (data: { status?: string; round?: number }) => {
+      if (data.status === 'resolved') {
+        addLogEntry('system', '', 'The encounter is resolved.');
+      } else if (data.status === 'fled') {
+        addLogEntry('system', '', 'The encounter breaks apart as one side flees.');
+      } else if (data.round) {
+        addLogEntry('system', '', `Combat pressure shifts into round ${data.round}.`);
+      }
+    };
+
     socket.on('game:narration', onNarration);
     socket.on('game:scene_enter', onSceneEnter);
     socket.on('game:player_action', onPlayerAction);
@@ -132,6 +142,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
     socket.on('game:player_left', onPlayerLeft);
     socket.on('game:combat_result', onCombatResult);
     socket.on('game:encounter_start', onEncounterStart);
+    socket.on('game:encounter_update', onEncounterUpdate);
     socket.on('game:turn_prompt', onTurnPrompt);
 
     return () => {
@@ -145,6 +156,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
       socket.off('game:player_left', onPlayerLeft);
       socket.off('game:combat_result', onCombatResult);
       socket.off('game:encounter_start', onEncounterStart);
+      socket.off('game:encounter_update', onEncounterUpdate);
       socket.off('game:turn_prompt', onTurnPrompt);
     };
   }, [socket]);

@@ -10,7 +10,7 @@ import type { ServerToClientEvents, ClientToServerEvents } from '../shared/types
 import { get, all, run } from './db/helpers.js';
 import { describeScene, findMovementTarget } from './game/deterministic.js';
 import { resolveRichExploration } from './game/adventure.js';
-import { createEncounterRecord, emitEncounterStart, getActiveEncounter } from './game/encounters.js';
+import { createEncounterRecord, emitEncounterStart, getActiveEncounter, resolveEncounterAction } from './game/encounters.js';
 
 interface ConnectedPlayer {
   socketId: string;
@@ -140,6 +140,57 @@ export function setupSocketHandlers(
         [logId, campaignId, 1, 'player_action', character.name, action]);
 
       const campaign = get(db, 'SELECT * FROM campaigns WHERE id = ?', [campaignId]) as any;
+      const activeEncounter = getActiveEncounter(db, campaignId);
+      if (activeEncounter) {
+        const resolution = resolveEncounterAction({
+          db,
+          campaignId,
+          encounterId: activeEncounter.id,
+          action,
+          actingCharacterId: character.id,
+        });
+
+        if (!resolution.ok) {
+          io.to(`campaign:${campaignId}`).emit('game:narration', {
+            actor: 'DM',
+            content: resolution.error || 'That combat action cannot be resolved right now.',
+          });
+          return;
+        }
+
+        for (const result of resolution.combatResults) {
+          run(db,
+            'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content, mechanical_detail) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [crypto.randomUUID(), campaignId, 1, 'combat', result.attacker, result.description, JSON.stringify(result)]);
+          io.to(`campaign:${campaignId}`).emit('game:combat_result', { result });
+        }
+
+        for (const note of resolution.narration) {
+          run(db,
+            'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+            [crypto.randomUUID(), campaignId, 1, 'narration', note.actor, note.content]);
+          io.to(`campaign:${campaignId}`).emit('game:narration', note);
+        }
+
+        for (const updatedCharacterId of resolution.updatedCharacterIds) {
+          const updatedCharacter = get(db, 'SELECT * FROM characters WHERE id = ?', [updatedCharacterId]) as any;
+          if (updatedCharacter) {
+            io.to(`campaign:${campaignId}`).emit('game:state_update', {
+              type: 'character_update',
+              payload: updatedCharacter,
+            });
+          }
+        }
+
+        if (resolution.encounterUpdate) {
+          io.to(`campaign:${campaignId}`).emit('game:encounter_update', resolution.encounterUpdate);
+        }
+        if (resolution.turnPrompt) {
+          io.to(`campaign:${campaignId}`).emit('game:turn_prompt', resolution.turnPrompt);
+        }
+        return;
+      }
+
       const scene = campaign?.current_scene_id
         ? get(db, 'SELECT * FROM scenes WHERE id = ?', [campaign.current_scene_id]) as any
         : null;

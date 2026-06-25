@@ -17,7 +17,7 @@ import {
 import { roll, rollNotation, d20, d100, roll2d6 } from '../engine/dice.js';
 import type { SavingThrows } from '../engine/tables.js';
 import { describeScene, describeNpcResponse, describeCombatNarration } from '../game/deterministic.js';
-import { createEncounterRecord, emitEncounterStart } from '../game/encounters.js';
+import { createEncounterRecord, emitEncounterStart, resolveEncounterAction } from '../game/encounters.js';
 
 export function createGameRoutes(db: Database, io: SocketServer): Router {
   const router = Router();
@@ -140,63 +140,40 @@ export function createGameRoutes(db: Database, io: SocketServer): Router {
 
   // Resolve a combat attack
   router.post('/combat/attack', requireAuth, (req: any, res) => {
-    const { campaignId, encounterId, attackerId, defenderId, ranged, range } = req.body;
+    const { campaignId, encounterId, characterId, action, attackerId, defenderId } = req.body;
+    const fallbackAction = action || (attackerId && defenderId ? `attack ${defenderId}` : 'attack');
+    const resolution = resolveEncounterAction({
+      db,
+      campaignId,
+      encounterId,
+      action: fallbackAction,
+      actingCharacterId: characterId || null,
+    });
 
-    const attacker = get(db, 'SELECT * FROM combatants WHERE id = ?', [attackerId]) as any;
-    const defender = get(db, 'SELECT * FROM combatants WHERE id = ?', [defenderId]) as any;
-    if (!attacker || !defender) {
-      res.json({ ok: false, error: 'Combatant not found' });
+    if (!resolution.ok) {
+      res.json({ ok: false, error: resolution.error || 'Combat action failed' });
       return;
     }
 
-    const attackerCombatant: Combatant = {
-      id: attacker.id, name: attacker.name, charClass: 'fighter', level: 1,
-      thac0: attacker.thac0, ac: attacker.ac, hp: attacker.current_hp, maxHp: attacker.max_hp,
-      str: 10, dex: 10, weaponSpeed: attacker.weapon_speed,
-      weaponDamageSm: '1d8', weaponDamageLg: '1d8',
-      isLargeTarget: false, conditions: [], side: attacker.side,
-    };
-
-    const defenderCombatant: Combatant = {
-      id: defender.id, name: defender.name, charClass: 'fighter', level: 1,
-      thac0: defender.thac0, ac: defender.ac, hp: defender.current_hp, maxHp: defender.max_hp,
-      str: 10, dex: 10, weaponSpeed: defender.weapon_speed,
-      weaponDamageSm: '1d8', weaponDamageLg: '1d8',
-      isLargeTarget: false, conditions: [], side: defender.side,
-    };
-
-    const result = ranged
-      ? resolveMissileAttack(attackerCombatant, defenderCombatant, range || 'short')
-      : resolveAttack(attackerCombatant, defenderCombatant);
-
-    // Update defender HP
-    if (result.hit && result.defenderHpAfter !== undefined) {
-      run(db, 'UPDATE combatants SET current_hp = ? WHERE id = ?',
-        [Math.max(0, result.defenderHpAfter), defender.id]);
-
-      // Update character HP if party member
-      if (defender.character_id) {
-        run(db, 'UPDATE characters SET hp = ? WHERE id = ?',
-          [Math.max(0, result.defenderHpAfter), defender.character_id]);
-      }
+    for (const result of resolution.combatResults) {
+      run(db,
+        'INSERT INTO game_log (id, campaign_id, type, actor, content, mechanical_detail) VALUES (?, ?, ?, ?, ?, ?)',
+        [uuid(), campaignId, 'combat', result.attacker, result.description, JSON.stringify(result)]);
+      io.to(`campaign:${campaignId}`).emit('game:combat_result', { result });
     }
 
-    // Log mechanical result
-    run(db,
-      'INSERT INTO game_log (id, campaign_id, type, actor, content, mechanical_detail) VALUES (?, ?, ?, ?, ?, ?)',
-      [uuid(), campaignId, 'combat', attacker.name, result.description, JSON.stringify(result)]);
+    for (const note of resolution.narration) {
+      io.to(`campaign:${campaignId}`).emit('game:narration', note);
+    }
 
-    const scene = get(db,
-      'SELECT * FROM scenes WHERE id = (SELECT scene_id FROM encounters WHERE id = ?)',
-      [encounterId]) as any;
-    io.to(`campaign:${campaignId}`).emit('game:narration', {
-      content: describeCombatNarration(result.description, scene?.name),
-      actor: 'DM',
-    });
+    if (resolution.encounterUpdate) {
+      io.to(`campaign:${campaignId}`).emit('game:encounter_update', resolution.encounterUpdate);
+    }
+    if (resolution.turnPrompt) {
+      io.to(`campaign:${campaignId}`).emit('game:turn_prompt', resolution.turnPrompt);
+    }
 
-    io.to(`campaign:${campaignId}`).emit('game:combat_result', { result });
-
-    res.json({ ok: true, data: result });
+    res.json({ ok: true, data: resolution });
   });
 
   // ─── Dice Rolling ───────────────────────────────────────────────────
