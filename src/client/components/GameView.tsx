@@ -154,13 +154,11 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
 
   const headers = { Authorization: `Bearer ${player.token}`, 'Content-Type': 'application/json' };
 
-  // Join campaign socket room
   useEffect(() => {
     socket.emit('game:join', { campaignId, playerId: player.id });
     return () => { socket.emit('game:leave', { campaignId }); };
   }, [campaignId, player.id, socket]);
 
-  // Fetch character data
   useEffect(() => {
     if (!characterId) return;
     fetch(`${apiUrl}/api/characters/${characterId}`, { headers })
@@ -175,40 +173,30 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
       .catch(() => {});
   }, [campaignId]);
 
-  // Socket listeners
   useEffect(() => {
     const onNarration = (data: { content: string; actor: string }) => {
       setDmThinking('');
       addLogEntry('narration', data.actor, data.content);
     };
-
     const onSceneEnter = (data: { scene: Scene; description: string }) => {
       setCurrentScene(data.scene);
       setEncounterActive(false);
       setDmThinking('');
       addLogEntry('scene_enter', 'DM', data.description);
     };
-
     const onPlayerAction = (data: { playerId: string; playerName: string; action: string }) => {
       addLogEntry('player_action', data.playerName, data.action);
     };
-
     const onDmThinking = (data: { status: string }) => {
       setDmThinking(data.status);
     };
-
     const onLogEntry = (data: LogEntry) => {
       addLogEntry(data.type, data.actor, data.content);
     };
-
     const onStateUpdate = (data: { type: string; payload: any }) => {
       if (data.type === 'recent_logs') {
         setGameLog(data.payload.map((l: any) => ({
-          id: l.id,
-          type: l.type,
-          actor: l.actor,
-          content: l.content,
-          timestamp: l.timestamp,
+          id: l.id, type: l.type, actor: l.actor, content: l.content, timestamp: l.timestamp,
         })));
       } else if (data.type === 'character_update') {
         setCharacter(data.payload);
@@ -228,30 +216,24 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
         setCampaignState(data.payload || null);
       }
     };
-
     const onPlayerJoined = (data: { playerId: string; playerName: string }) => {
       setOnlinePlayers(prev => [...new Set([...prev, data.playerName])]);
       addLogEntry('system', '', `${data.playerName} has joined the adventure.`);
     };
-
     const onPlayerLeft = (data: { playerId: string; playerName: string }) => {
       setOnlinePlayers(prev => prev.filter(p => p !== data.playerName));
       addLogEntry('system', '', `${data.playerName} has departed.`);
     };
-
     const onCombatResult = (data: { result: any }) => {
       addLogEntry('combat', data.result.attacker, data.result.description);
     };
-
     const onEncounterStart = (data: { round: number }) => {
       setEncounterActive(true);
       addLogEntry('system', '', `Encounter joined. Round ${data.round} begins.`);
     };
-
     const onTurnPrompt = (data: { name: string; round: number }) => {
       addLogEntry('system', '', `${data.name} has the initiative in round ${data.round}.`);
     };
-
     const onEncounterUpdate = (data: { status?: string; round?: number }) => {
       if (data.status === 'resolved') {
         setEncounterActive(false);
@@ -293,15 +275,13 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
     };
   }, [socket]);
 
-  // Auto-scroll log
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [gameLog, dmThinking]);
 
   const addLogEntry = (type: string, actor: string, content: string) => {
     setGameLog(prev => [...prev, {
-      id: crypto.randomUUID(),
-      type, actor, content,
+      id: crypto.randomUUID(), type, actor, content,
       timestamp: new Date().toISOString(),
     }]);
   };
@@ -391,15 +371,14 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
     encounterActive ? 'Brace and hold' : 'Rest',
   ].filter(Boolean) as string[];
 
-  // Mobile panel metadata
   const joinedCompanions = companions.filter(c => c.joinedParty);
-  const mobilePanels = [
-    { key: 'character' as const, label: 'Chr', show: !!character, badge: 0 },
-    { key: 'company' as const, label: 'Cmp', show: joinedCompanions.length > 0, badge: joinedCompanions.length },
-    { key: 'scene' as const, label: 'Scn', show: sceneNpcs.length > 0 || !!battlefield, badge: sceneNpcs.length },
-    { key: 'expedition' as const, label: 'Exp', show: !!campaignState, badge: 0 },
-    { key: 'map' as const, label: 'Map', show: !!campaignMap, badge: 0 },
-  ].filter(p => p.show);
+  const mobilePanels: Array<{ key: NonNullable<MobilePanel>; label: string; icon: string; show: boolean; badge: number }> = [
+    { key: 'character', label: 'Char',  icon: '⚔',  show: !!character,                                  badge: 0 },
+    { key: 'company',   label: 'Party', icon: '⛨',  show: joinedCompanions.length > 0,                  badge: joinedCompanions.length },
+    { key: 'scene',     label: 'Scene', icon: '◈',  show: sceneNpcs.length > 0 || !!battlefield,         badge: sceneNpcs.length },
+    { key: 'expedition',label: 'Delve', icon: '⚖',  show: !!campaignState,                              badge: 0 },
+    { key: 'map',       label: 'Map',   icon: '◎',  show: !!campaignMap,                                badge: 0 },
+  ].filter(p => p.show) as Array<{ key: NonNullable<MobilePanel>; label: string; icon: string; show: boolean; badge: number }>;
 
   const panelTitle = openPanel === 'character' ? (character?.name || 'Character')
     : openPanel === 'company' ? 'Company'
@@ -407,7 +386,6 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
     : openPanel === 'expedition' ? 'Expedition'
     : 'Map';
 
-  // ── Log entry renderer (shared between mobile and desktop) ──
   const renderLogEntries = () => (
     <>
       {gameLog.length === 0 && (
@@ -456,31 +434,164 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
     </>
   );
 
-  // ── Quick actions renderer ──
-  const renderQuickActions = (wrap: boolean) => (
-    <div className={`mb-3 ${wrap ? '' : '-mx-3 px-3 overflow-x-auto'}`}>
-      <div className={`flex gap-2 ${wrap ? 'flex-wrap' : 'flex-nowrap'}`}>
-        {quickActions.map(action => (
-          <button key={action} onClick={() => quickAction(action)}
-            className={`${wrap ? '' : 'flex-shrink-0'} text-xs px-3 py-1.5 rounded-full border border-leather/15 text-leather font-heading hover:bg-leather/5 transition-colors whitespace-nowrap`}>
-            {action}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-
   return (
     <div className="relative">
 
       {/* ═══════════════════════════════════════════════════
-          SHARED LAYOUT: sidebar on desktop, hidden on mobile
-          Log panel fills full height on mobile
+          MOBILE LAYOUT  (< lg)
+          Intentionally designed for iPhone:
+            • thin top bar — name + HP only
+            • scene strip — location + exits
+            • log — fills the screen
+            • sticky bottom — quick actions + input + tab bar
           ═══════════════════════════════════════════════════ */}
-      <div className="flex flex-col lg:flex-row gap-0 lg:gap-4 lg:h-[calc(100vh-120px)]">
+      <div className="lg:hidden flex flex-col" style={{ height: '100dvh' }}>
+
+        {/* ── Top bar ── */}
+        <div className="flex-shrink-0 flex items-center gap-2 border-b border-leather/15 bg-parchment-light/80 px-3 py-2.5">
+          <button
+            onClick={onBack}
+            className="flex-shrink-0 text-base text-leather font-body pr-1 py-1 -ml-1 touch-manipulation"
+            aria-label="Leave campaign"
+          >
+            ←
+          </button>
+
+          {character ? (
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="font-heading text-sm font-bold text-leather-dark truncate leading-tight">
+                  {character.name}
+                </span>
+                {encounterActive && (
+                  <span className="flex-shrink-0 text-[9px] font-heading font-bold bg-blood text-parchment-light px-1.5 py-0.5 rounded uppercase tracking-wide">
+                    Combat
+                  </span>
+                )}
+                <span className={`flex-shrink-0 text-xs font-heading font-bold ml-auto ${
+                  character.hp <= character.max_hp * 0.25 ? 'text-blood' : 'text-ink-faint'
+                }`}>
+                  {character.hp}/{character.max_hp}
+                </span>
+              </div>
+              <div className="mt-1 h-1 rounded-full bg-parchment-dark/30 overflow-hidden">
+                <div className="h-full rounded-full transition-all" style={{
+                  width: `${Math.min(100, (character.hp / character.max_hp) * 100)}%`,
+                  backgroundColor: character.hp > character.max_hp * 0.5 ? '#2d5a1e'
+                    : character.hp > character.max_hp * 0.25 ? '#c49a2a' : '#8b1a1a',
+                }} />
+              </div>
+            </div>
+          ) : (
+            <span className="flex-1 font-heading text-sm text-ink-faint">Adventure</span>
+          )}
+        </div>
+
+        {/* ── Scene strip ── */}
+        {currentScene && (
+          <div className="flex-shrink-0 flex items-center gap-2 px-3 py-2 border-b border-leather/10 bg-parchment/50 overflow-x-auto">
+            <span className="font-heading font-bold text-leather-dark text-xs flex-shrink-0 truncate max-w-[45%]">
+              {currentScene.name}
+            </span>
+            {currentScene.connections.length > 0 && (
+              <div className="flex gap-1.5 flex-nowrap">
+                {currentScene.connections.map((c, i) => (
+                  <button
+                    key={i}
+                    onClick={() => quickAction(`I go ${c.direction}`)}
+                    className="flex-shrink-0 text-[11px] px-2.5 py-1 rounded-full border border-leather/25 text-leather font-heading whitespace-nowrap active:bg-leather/10 touch-manipulation"
+                  >
+                    {c.direction}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Game log — dominant surface ── */}
+        <div className="flex-1 min-h-0 overflow-y-auto px-3 pt-3 pb-2 space-y-3">
+          {renderLogEntries()}
+        </div>
+
+        {/* ── Sticky bottom action area ── */}
+        <div className="flex-shrink-0 border-t border-leather/15 bg-parchment-light/80 backdrop-blur-sm">
+
+          {/* Quick actions — horizontal scroll, touch-friendly */}
+          <div className="overflow-x-auto py-2 px-3 border-b border-leather/8">
+            <div className="flex gap-2 flex-nowrap">
+              {quickActions.map(action => (
+                <button
+                  key={action}
+                  onClick={() => quickAction(action)}
+                  className="flex-shrink-0 text-xs px-3 py-2 rounded-full border border-leather/20 text-leather font-heading whitespace-nowrap active:bg-leather/10 transition-colors touch-manipulation"
+                >
+                  {action}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Input row */}
+          <div className="flex gap-2 px-3 py-2.5">
+            <input
+              type="text"
+              value={inputText}
+              onChange={e => setInputText(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="What do you do?"
+              className="flex-1 px-4 py-3 rounded-xl border border-leather/20 bg-parchment font-body text-sm text-ink placeholder:text-ink-faint/50 focus:outline-none focus:border-leather/50 focus:ring-1 focus:ring-leather/20"
+            />
+            <button
+              onClick={sendAction}
+              disabled={!inputText.trim()}
+              className="rounded-xl bg-leather px-5 py-3 text-sm font-heading font-semibold text-parchment-light hover:bg-leather-dark disabled:opacity-30 active:bg-leather-dark flex-shrink-0 touch-manipulation"
+            >
+              Act
+            </button>
+          </div>
+
+          {/* Bottom tab bar — panel navigation */}
+          {mobilePanels.length > 0 && (
+            <div
+              className="flex border-t border-leather/10"
+              style={{ paddingBottom: 'max(4px, env(safe-area-inset-bottom, 4px))' }}
+            >
+              {mobilePanels.map(({ key, label, icon, badge }) => {
+                const active = openPanel === key;
+                return (
+                  <button
+                    key={key}
+                    onClick={() => setOpenPanel(active ? null : key)}
+                    className={`relative flex-1 flex flex-col items-center justify-center py-2 gap-0.5 transition-colors touch-manipulation ${
+                      active
+                        ? 'text-leather-dark bg-leather/8'
+                        : 'text-ink-faint active:text-leather'
+                    }`}
+                  >
+                    <span className="text-base leading-none">{icon}</span>
+                    <span className="text-[9px] font-heading uppercase tracking-wider leading-none">{label}</span>
+                    {badge > 0 && !active && (
+                      <span className="absolute top-1.5 right-[18%] w-3.5 h-3.5 rounded-full bg-leather text-parchment-light text-[7px] font-bold flex items-center justify-center leading-none">
+                        {badge > 9 ? '9+' : badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ═══════════════════════════════════════════════════
+          DESKTOP LAYOUT  (≥ lg)
+          Sidebar + log panel — unchanged from before
+          ═══════════════════════════════════════════════════ */}
+      <div className="hidden lg:flex gap-4 h-[calc(100vh-120px)]">
 
         {/* ─ Desktop Sidebar ─ */}
-        <div className="hidden lg:flex w-72 flex-shrink-0 flex-col gap-3 overflow-y-auto pr-1">
+        <div className="w-72 flex-shrink-0 flex flex-col gap-3 overflow-y-auto pr-1">
           <button onClick={onBack} className="text-xs text-leather hover:text-leather-dark font-body">
             &larr; Leave Campaign
           </button>
@@ -495,9 +606,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                   Level {character.level} {character.race} {character.char_class}
                 </p>
               </button>
-
               <div className="h-px bg-leather/10 my-3" />
-
               <div className="mb-3">
                 <div className="flex justify-between text-xs font-heading mb-1">
                   <span className="text-ink-faint">HP</span>
@@ -513,13 +622,11 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                   }} />
                 </div>
               </div>
-
               <div className="grid grid-cols-3 gap-1 text-center mb-3">
                 <div className="text-xs"><span className="text-ink-faint font-heading">AC</span> <span className="font-bold font-heading">{character.ac}</span></div>
                 <div className="text-xs"><span className="text-ink-faint font-heading">THAC0</span> <span className="font-bold font-heading">{character.thac0}</span></div>
                 <div className="text-xs"><span className="text-ink-faint font-heading">Mv</span> <span className="font-bold font-heading">{character.base_movement || character.baseMovement}</span></div>
               </div>
-
               <div className="grid grid-cols-3 gap-1 text-center mb-3">
                 {[['STR', character.str], ['DEX', character.dex], ['CON', character.con],
                   ['INT', character.int], ['WIS', character.wis], ['CHA', character.cha]].map(([label, val]) => (
@@ -532,7 +639,6 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                   </div>
                 ))}
               </div>
-
               <div className="text-xs space-y-0.5">
                 <div className="font-heading font-bold text-ink-faint uppercase tracking-wider text-[10px] mb-1">Saving Throws</div>
                 {[['PP', character.save_paralysis], ['RW', character.save_rod],
@@ -544,7 +650,6 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                     </div>
                   ))}
               </div>
-
               <div className="h-px bg-leather/10 my-3" />
               <div className="flex justify-between text-xs">
                 <span className="text-ink-faint font-heading">Gold</span>
@@ -662,66 +767,14 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
           <CampaignMap mapData={campaignMap} />
         </div>
 
-        {/* ─ Main Log Panel ─ */}
-        <div className="game-log-panel flex flex-col overflow-hidden rounded-lg border border-leather/15 bg-parchment-light/30">
-
-          {/* Mobile top bar */}
-          <div className="lg:hidden flex-shrink-0 flex items-center gap-2 border-b border-leather/15 bg-parchment-light/60 px-3 py-2">
-            <button onClick={onBack} className="text-sm text-leather font-body flex-shrink-0 pr-1">←</button>
-
-            {character ? (
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="font-heading text-sm font-bold text-leather-dark truncate">{character.name}</span>
-                  {encounterActive && (
-                    <span className="flex-shrink-0 text-[9px] font-heading font-bold bg-blood text-parchment-light px-1.5 py-0.5 rounded uppercase tracking-wide">
-                      Combat
-                    </span>
-                  )}
-                  <span className={`flex-shrink-0 text-xs font-heading font-bold ${character.hp <= character.max_hp * 0.25 ? 'text-blood' : 'text-ink-faint'}`}>
-                    {character.hp}/{character.max_hp}
-                  </span>
-                </div>
-                <div className="mt-0.5 h-1 rounded-full bg-parchment-dark/30 overflow-hidden">
-                  <div className="h-full rounded-full transition-all" style={{
-                    width: `${Math.min(100, (character.hp / character.max_hp) * 100)}%`,
-                    backgroundColor: character.hp > character.max_hp * 0.5 ? '#2d5a1e'
-                      : character.hp > character.max_hp * 0.25 ? '#c49a2a' : '#8b1a1a',
-                  }} />
-                </div>
-              </div>
-            ) : (
-              <div className="flex-1" />
-            )}
-
-            {/* Panel toggle pills */}
-            <div className="flex gap-1 flex-shrink-0">
-              {mobilePanels.map(({ key, label, badge }) => (
-                <button
-                  key={key}
-                  onClick={() => setOpenPanel(openPanel === key ? null : key)}
-                  className={`relative px-2 py-1 rounded text-[10px] font-heading uppercase tracking-wide border transition-colors ${
-                    openPanel === key
-                      ? 'border-leather bg-leather/10 text-leather-dark'
-                      : 'border-leather/25 text-ink-faint hover:border-leather/50 hover:text-ink-light'
-                  }`}
-                >
-                  {label}
-                  {badge > 0 && openPanel !== key && (
-                    <span className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full bg-leather text-parchment-light text-[8px] font-bold flex items-center justify-center leading-none">
-                      {badge}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
+        {/* ─ Desktop Log Panel ─ */}
+        <div className="flex-1 flex flex-col overflow-hidden rounded-lg border border-leather/15 bg-parchment-light/30">
 
           {/* Scene header */}
           {currentScene && (
-            <div className="flex-shrink-0 border-b border-leather/10 bg-parchment-light/40 px-3 py-2 sm:px-5 sm:py-3">
+            <div className="flex-shrink-0 border-b border-leather/10 bg-parchment-light/40 px-5 py-3">
               <div className="flex items-center justify-between gap-2">
-                <h2 className="font-heading font-bold tracking-wide text-leather-dark text-sm sm:text-base truncate min-w-0">
+                <h2 className="font-heading font-bold tracking-wide text-leather-dark text-base truncate min-w-0">
                   {currentScene.name}
                 </h2>
                 {currentScene.connections.length > 0 && (
@@ -739,16 +792,14 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
           )}
 
           {/* Game log */}
-          <div className="flex-1 min-h-0 overflow-y-auto px-3 py-4 sm:px-5 space-y-3">
+          <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-3">
             {renderLogEntries()}
           </div>
 
-          {/* Input area */}
-          <div className="flex-shrink-0 border-t border-leather/10 bg-parchment-light/40 px-3 pt-2 pb-3 sm:p-4"
-               style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom, 0.75rem))' }}>
-            {/* Quick actions: horizontal scroll on mobile, wrap on desktop */}
-            <div className="mb-2 -mx-3 px-3 sm:mx-0 sm:px-0 overflow-x-auto sm:overflow-visible">
-              <div className="flex gap-2 flex-nowrap sm:flex-wrap">
+          {/* Desktop input area */}
+          <div className="flex-shrink-0 border-t border-leather/10 bg-parchment-light/40 p-4">
+            <div className="mb-3 -mx-1 overflow-x-auto">
+              <div className="flex gap-2 flex-nowrap px-1 sm:flex-wrap">
                 {quickActions.map(action => (
                   <button key={action} onClick={() => quickAction(action)}
                     className="flex-shrink-0 text-xs px-3 py-1.5 rounded-full border border-leather/15 text-leather font-heading hover:bg-leather/5 transition-colors whitespace-nowrap">
@@ -757,8 +808,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                 ))}
               </div>
             </div>
-
-            <div className="flex gap-2 mt-1">
+            <div className="flex gap-2">
               <input
                 type="text"
                 value={inputText}
@@ -777,33 +827,29 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
       </div>
 
       {/* ═══════════════════════════════════════════════════
-          MOBILE PANEL DRAWER (bottom sheet)
+          MOBILE PANEL DRAWER (bottom sheet — shared)
           ═══════════════════════════════════════════════════ */}
       {openPanel && (
         <div className="fixed inset-0 z-50 lg:hidden" aria-modal="true">
-          {/* Backdrop */}
           <div
             className="absolute inset-0 bg-ink/40 backdrop-blur-sm"
             onClick={() => setOpenPanel(null)}
           />
-          {/* Sheet */}
           <div
             className="absolute inset-x-0 bottom-0 flex flex-col bg-parchment rounded-t-2xl shadow-2xl"
             style={{ maxHeight: '82vh', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
             onClick={e => e.stopPropagation()}
           >
-            {/* Sheet header */}
             <div className="flex-shrink-0 flex items-center justify-between border-b border-leather/15 px-4 py-3">
               <h3 className="font-heading font-bold text-leather-dark">{panelTitle}</h3>
               <button
                 onClick={() => setOpenPanel(null)}
-                className="text-xs font-heading text-ink-faint hover:text-ink px-3 py-1.5 rounded border border-leather/15 hover:border-leather/30 transition-colors"
+                className="text-xs font-heading text-ink-faint hover:text-ink px-3 py-1.5 rounded border border-leather/15 hover:border-leather/30 transition-colors touch-manipulation"
               >
                 Close
               </button>
             </div>
 
-            {/* Sheet content */}
             <div className="flex-1 min-h-0 overflow-y-auto">
               {openPanel === 'character' && character && (
                 <MobileCharacterPanel
@@ -856,7 +902,6 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
               )}
               {openPanel === 'expedition' && campaignState && (
                 <div className="p-4 space-y-4">
-                  {/* Pressure */}
                   <div>
                     <div className="flex justify-between text-sm font-heading text-ink-faint mb-1">
                       <span>Encounter Pressure</span>
@@ -870,9 +915,8 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                       }} />
                     </div>
                   </div>
-                  {/* Supplies */}
                   <div>
-                    <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">Supplies</div>
+                    <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">Supplies on Hand</div>
                     <div className="grid grid-cols-2 gap-2 text-sm font-body text-ink-faint">
                       <div>Torches: <span className="text-ink-light font-semibold">{carriedSupplies.torches}</span></div>
                       <div>Rations: <span className="text-ink-light font-semibold">{carriedSupplies.rations}</span></div>
@@ -881,7 +925,6 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                       <div>Rope: <span className="text-ink-light font-semibold">{carriedSupplies.rope}</span></div>
                     </div>
                   </div>
-                  {/* Spent */}
                   <div>
                     <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">Spent This Run</div>
                     <div className="grid grid-cols-2 gap-2 text-sm font-body text-ink-faint">
@@ -891,7 +934,6 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                       <div>Bandages: <span className="text-ink-light">{campaignState.supply.bandagesUsed}</span></div>
                     </div>
                   </div>
-                  {/* Factions */}
                   {campaignState.factions.length > 0 && (
                     <div>
                       <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">Factions</div>
@@ -908,7 +950,6 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                       </div>
                     </div>
                   )}
-                  {/* Recent events */}
                   {campaignState.recentEvents.length > 0 && (
                     <div>
                       <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">Recent Events</div>
@@ -943,7 +984,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
   );
 }
 
-// Sub-components
+// ─── Sub-components ───────────────────────────────────────────────────────────
 
 function MobileCharacterPanel({ character, onOpenSheet }: { character: any; onOpenSheet: () => void }) {
   return (
