@@ -67,6 +67,20 @@ interface Companion {
   };
 }
 
+interface DelveConditionsView {
+  torchesLit: number;
+  lightsOutAt: number;
+  lightLevel: 'bright' | 'normal' | 'dim' | 'dark';
+  fatigueTicks: number;
+  hungerTicks: number;
+  attritionHp: number;
+  lootCarried: number;
+  encumbered: boolean;
+  retreatPenalty: number;
+  campQuality: 'poor' | 'adequate' | 'good' | 'fortified';
+  tensionFromSupply: number;
+}
+
 interface CampaignStateView {
   encounterPressure: number;
   supply: {
@@ -76,6 +90,7 @@ interface CampaignStateView {
     arrowsSpent: number;
     bandagesUsed: number;
   };
+  delve?: DelveConditionsView;
   factions: Array<{
     key: string;
     name: string;
@@ -915,6 +930,29 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                       }} />
                     </div>
                   </div>
+                  {campaignState.delve && (
+                    <div>
+                      <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">Delve Conditions</div>
+                      <div className="grid grid-cols-2 gap-2 text-sm font-body text-ink-faint">
+                        <div className="flex items-center gap-1">
+                          <span>{campaignState.delve.lightLevel === 'dark' ? '🕯' : campaignState.delve.lightLevel === 'dim' ? '🕯' : '🔦'}</span>
+                          <span>Light: <span className={`font-semibold ${campaignState.delve.lightLevel === 'dark' ? 'text-red-600' : campaignState.delve.lightLevel === 'dim' ? 'text-amber-600' : 'text-ink-light'}`}>{campaignState.delve.lightLevel}</span></span>
+                        </div>
+                        <div>Fatigue: <span className={`font-semibold ${campaignState.delve.fatigueTicks >= 4 ? 'text-red-600' : campaignState.delve.fatigueTicks >= 2 ? 'text-amber-600' : 'text-ink-light'}`}>{campaignState.delve.fatigueTicks}/5</span></div>
+                        <div>Hunger: <span className={`font-semibold ${campaignState.delve.hungerTicks >= 3 ? 'text-red-600' : campaignState.delve.hungerTicks >= 2 ? 'text-amber-600' : 'text-ink-light'}`}>{campaignState.delve.hungerTicks}/4</span></div>
+                        <div>Load: <span className={`font-semibold ${campaignState.delve.encumbered ? 'text-amber-600' : 'text-ink-light'}`}>{campaignState.delve.lootCarried} gp{campaignState.delve.encumbered ? ' ⚠' : ''}</span></div>
+                        {campaignState.delve.retreatPenalty > 0 && (
+                          <div className="col-span-2 text-amber-700 font-semibold text-xs">⚠ Retreat speed −{campaignState.delve.retreatPenalty}</div>
+                        )}
+                        {campaignState.delve.campQuality !== 'adequate' && (
+                          <div>Camp: <span className="text-ink-light font-semibold capitalize">{campaignState.delve.campQuality}</span></div>
+                        )}
+                        {campaignState.delve.tensionFromSupply > 0 && (
+                          <div className="col-span-2 text-red-700 text-xs font-semibold">Supply strain: tension +{campaignState.delve.tensionFromSupply}</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                   <div>
                     <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">Supplies on Hand</div>
                     <div className="grid grid-cols-2 gap-2 text-sm font-body text-ink-faint">

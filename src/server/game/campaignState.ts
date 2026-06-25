@@ -8,6 +8,30 @@ export interface FactionStanding {
   notes: string;
 }
 
+export interface DelveConditions {
+  // Light state
+  torchesLit: number;        // currently burning torches
+  lightsOutAt: number;       // exploration turn when torches run out (0 = unlimited)
+  lightLevel: 'bright' | 'normal' | 'dim' | 'dark';
+
+  // Fatigue / attrition
+  fatigueTicks: number;      // 0–5; each turn without rest adds 1
+  hungerTicks: number;       // 0–4; each 4 turns without rations adds 1
+  attritionHp: number;       // HP lost to accumulated attrition (applied to character)
+
+  // Encumbrance from loot
+  lootCarried: number;       // gp-weight equivalent
+  encumbered: boolean;       // lootCarried > threshold
+  retreatPenalty: number;    // movement penalty (0–3) when encumbered
+
+  // Camp quality (last rest)
+  campQuality: 'poor' | 'adequate' | 'good' | 'fortified';
+  campTurnNumber: number;    // turn when last camp was made
+
+  // Companion tension from supply
+  tensionFromSupply: number; // extra tension applied to all companions
+}
+
 export interface CampaignSimulationState {
   factions: Record<string, FactionStanding>;
   supply: {
@@ -17,6 +41,7 @@ export interface CampaignSimulationState {
     arrowsSpent: number;
     bandagesUsed: number;
   };
+  delve: DelveConditions;
   encounterPressure: number;
   lastEncounterTurn: number;
   recentEvents: string[];
@@ -25,6 +50,7 @@ export interface CampaignSimulationState {
 export interface CampaignStateSnapshot {
   encounterPressure: number;
   supply: CampaignSimulationState['supply'];
+  delve: DelveConditions;
   factions: Array<{
     key: string;
     name: string;
@@ -106,6 +132,7 @@ export function getCampaignStateSnapshot(state: CampaignSimulationState): Campai
   return {
     encounterPressure: state.encounterPressure,
     supply: { ...state.supply },
+    delve: { ...state.delve },
     factions: Object.entries(state.factions).map(([key, faction]) => ({
       key,
       name: faction.name,
@@ -138,6 +165,20 @@ function createDefaultCampaignState(): CampaignSimulationState {
       arrowsSpent: 0,
       bandagesUsed: 0,
     },
+    delve: {
+      torchesLit: 0,
+      lightsOutAt: 0,
+      lightLevel: 'normal',
+      fatigueTicks: 0,
+      hungerTicks: 0,
+      attritionHp: 0,
+      lootCarried: 0,
+      encumbered: false,
+      retreatPenalty: 0,
+      campQuality: 'adequate',
+      campTurnNumber: 0,
+      tensionFromSupply: 0,
+    },
     encounterPressure: 2,
     lastEncounterTurn: 0,
     recentEvents: [],
@@ -152,6 +193,10 @@ function normalizeCampaignState(raw: any): CampaignSimulationState {
       ...base.supply,
       ...(raw?.supply || {}),
     },
+    delve: {
+      ...base.delve,
+      ...(raw?.delve || {}),
+    },
     encounterPressure: Number(raw?.encounterPressure ?? base.encounterPressure),
     lastEncounterTurn: Number(raw?.lastEncounterTurn ?? base.lastEncounterTurn),
     recentEvents: Array.isArray(raw?.recentEvents) ? raw.recentEvents.slice(0, 12) : [],
@@ -161,3 +206,191 @@ function normalizeCampaignState(raw: any): CampaignSimulationState {
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
+
+// ─── Delve Pressure Functions ─────────────────────────────────────────────────
+
+const ENCUMBRANCE_THRESHOLD = 200;  // gp-weight before encumbered
+const LIGHT_TORCH_TURNS    = 6;    // turns per torch
+
+/**
+ * Tick delve conditions each exploration turn.
+ * Returns string notes for anything dramatic.
+ */
+export function tickDelveConditions(params: {
+  state: CampaignSimulationState;
+  explorationTurn: number;
+  torchesCarried: number;
+  rationsCarried: number;
+  leaderName: string;
+}): string[] {
+  const { state, explorationTurn, torchesCarried, rationsCarried, leaderName } = params;
+  const d = state.delve;
+  const notes: string[] = [];
+
+  // ── Light ──────────────────────────────────────────────────────────────────
+  if (d.torchesLit > 0 && d.lightsOutAt > 0 && explorationTurn >= d.lightsOutAt) {
+    // Torch burned out
+    state.supply.torchesBurned += 1;
+    d.torchesLit = Math.max(0, d.torchesLit - 1);
+    if (torchesCarried > 0) {
+      // Auto-light next
+      d.lightsOutAt = explorationTurn + LIGHT_TORCH_TURNS;
+      notes.push(`A torch gutters and dies. Another is lit. ${torchesCarried - 1} remain in the pack.`);
+    } else {
+      d.torchesLit = 0;
+      d.lightsOutAt = 0;
+      d.lightLevel = 'dark';
+      notes.push(`The last torch dies. Darkness closes in. Scouting, mapping, and surprise checks now carry a heavy penalty.`);
+    }
+  }
+
+  // Derive light level from torches + turns
+  if (d.torchesLit > 0) {
+    const turnsRemaining = d.lightsOutAt - explorationTurn;
+    d.lightLevel = turnsRemaining <= 1 ? 'dim' : 'normal';
+  } else if (d.torchesLit === 0 && torchesCarried === 0) {
+    d.lightLevel = 'dark';
+  } else {
+    d.lightLevel = 'normal';
+  }
+
+  // ── Fatigue ────────────────────────────────────────────────────────────────
+  const turnsSinceCamp = explorationTurn - d.campTurnNumber;
+  const newFatigueTick = Math.floor(turnsSinceCamp / 4);
+  if (newFatigueTick > d.fatigueTicks) {
+    d.fatigueTicks = Math.min(5, newFatigueTick);
+    if (d.fatigueTicks >= 3) {
+      d.attritionHp += 1;
+      notes.push(`Exhaustion is taking its toll on ${leaderName}'s company. The constant pace without real rest is costing them.`);
+    }
+    if (d.fatigueTicks >= 5) {
+      notes.push(`The company is dangerously fatigued. Without camp soon, the attrition will become serious.`);
+    }
+  }
+
+  // ── Hunger ────────────────────────────────────────────────────────────────
+  if (explorationTurn > 0 && explorationTurn % 4 === 0 && rationsCarried === 0) {
+    d.hungerTicks = Math.min(4, d.hungerTicks + 1);
+    if (d.hungerTicks >= 2) {
+      d.tensionFromSupply += 1;
+      notes.push(`The company has gone without rations too long. The hunger is starting to show in shorter tempers and slower thinking.`);
+    }
+    if (d.hungerTicks >= 4) {
+      d.attritionHp += 1;
+      notes.push(`Going without food this long is becoming dangerous. Someone will need to eat or the company will break down.`);
+    }
+  }
+
+  return notes;
+}
+
+/**
+ * Light a torch explicitly. Returns result note.
+ */
+export function lightTorch(state: CampaignSimulationState, explorationTurn: number, torchesCarried: number): string {
+  if (torchesCarried <= 0) return 'There are no torches left to light.';
+  state.delve.torchesLit += 1;
+  state.delve.lightsOutAt = explorationTurn + LIGHT_TORCH_TURNS;
+  state.delve.lightLevel = 'normal';
+  return `A torch is lit. It will last another ${LIGHT_TORCH_TURNS} turns of exploration.`;
+}
+
+/**
+ * Record loot pickup; updates encumbrance state.
+ */
+export function addLootWeight(state: CampaignSimulationState, gpWeight: number): string[] {
+  const d = state.delve;
+  d.lootCarried += gpWeight;
+  const notes: string[] = [];
+  if (d.lootCarried >= ENCUMBRANCE_THRESHOLD && !d.encumbered) {
+    d.encumbered = true;
+    d.retreatPenalty = 1;
+    notes.push(`The company is now loaded down with loot. Retreat speed and movement checks carry a penalty until they unload.`);
+  }
+  if (d.lootCarried >= ENCUMBRANCE_THRESHOLD * 2) {
+    d.retreatPenalty = 2;
+    notes.push(`The haul is getting seriously heavy. A tactical retreat now would be slow and costly — ideal ambush conditions for anything following.`);
+  }
+  if (d.lootCarried >= ENCUMBRANCE_THRESHOLD * 3) {
+    d.retreatPenalty = 3;
+    notes.push(`The company is critically over-laden. They cannot fight well, cannot move fast, and cannot easily retreat.`);
+  }
+  return notes;
+}
+
+/**
+ * Make camp. Resets fatigue, updates camp quality, affects companions.
+ */
+export function makeCamp(params: {
+  state: CampaignSimulationState;
+  explorationTurn: number;
+  rationsAvailable: number;
+  sceneLight: string;
+  fortified: boolean;
+  leaderName: string;
+}): string[] {
+  const { state, explorationTurn, rationsAvailable, sceneLight, fortified, leaderName } = params;
+  const d = state.delve;
+  const notes: string[] = [];
+
+  // Reset fatigue
+  const fatigueReduction = fortified ? d.fatigueTicks : Math.floor(d.fatigueTicks / 2);
+  d.fatigueTicks = Math.max(0, d.fatigueTicks - fatigueReduction);
+  d.campTurnNumber = explorationTurn;
+
+  // Camp quality
+  if (fortified && rationsAvailable >= 1) {
+    d.campQuality = 'fortified';
+    d.tensionFromSupply = Math.max(0, d.tensionFromSupply - 2);
+    notes.push(`${leaderName}'s company makes a proper camp — barred door, rationed food, a proper watch rotation. Everyone wakes steadier.`);
+  } else if (rationsAvailable >= 1) {
+    d.campQuality = 'good';
+    d.tensionFromSupply = Math.max(0, d.tensionFromSupply - 1);
+    notes.push(`Camp is rough but fed. The ration goes around and the company settles into a functional rest.`);
+  } else if (sceneLight !== 'dark') {
+    d.campQuality = 'adequate';
+    notes.push(`Camp is made without food, but at least the light holds. Rest is partial at best.`);
+  } else {
+    d.campQuality = 'poor';
+    d.tensionFromSupply += 1;
+    notes.push(`Camp in the dark, unfed. The company rests poorly and wakes worse. The night sits heavy on morale.`);
+  }
+
+  // Reset hunger if rationed
+  if (rationsAvailable >= 1 && d.hungerTicks > 0) {
+    d.hungerTicks = Math.max(0, d.hungerTicks - 2);
+  }
+
+  return notes;
+}
+
+/**
+ * Apply accumulated attrition HP to a character. Returns hp delta.
+ */
+export function applyAttritionDamage(state: CampaignSimulationState): number {
+  const hp = state.delve.attritionHp;
+  state.delve.attritionHp = 0;
+  return -hp;  // negative = damage
+}
+
+/**
+ * Get light-level modifiers for scouting/surprise.
+ */
+export function getLightModifiers(state: CampaignSimulationState): {
+  scoutPenalty: number;
+  surprisePenalty: number;
+  mapPenalty: number;
+  description: string;
+} {
+  switch (state.delve.lightLevel) {
+    case 'bright':
+      return { scoutPenalty: 0, surprisePenalty: 0, mapPenalty: 0, description: 'Full light — no penalties.' };
+    case 'normal':
+      return { scoutPenalty: 0, surprisePenalty: 0, mapPenalty: 0, description: 'Adequate torchlight.' };
+    case 'dim':
+      return { scoutPenalty: 1, surprisePenalty: 1, mapPenalty: 1, description: 'Guttering light — scouting and surprise checks penalised.' };
+    case 'dark':
+      return { scoutPenalty: 3, surprisePenalty: 3, mapPenalty: 3, description: 'Total darkness — scouting, mapping, and surprise are severely impaired.' };
+  }
+}
+

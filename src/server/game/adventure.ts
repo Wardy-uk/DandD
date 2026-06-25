@@ -119,10 +119,12 @@ export interface AdventureActionOutcome {
 
 const directions = ['north', 'south', 'east', 'west', 'down', 'up', 'behind the collapsed masonry'];
 const ambienceTable = [
-  'A faint metallic tang hangs in the air, as though old violence stained the stone.',
-  'Every scrape seems to echo too far, suggesting the dungeon carries sound into unseen reaches.',
-  'Dust lies thick enough to preserve old movement, but not so thick that you trust it.',
-  'The place feels used in irregular bursts, not abandoned.',
+  'Metal and old damp. The stone holds onto both.',
+  'Sound carries wrong in here. Your footsteps come back half a beat late.',
+  'Dust, but not undisturbed. Someone or something has been through.',
+  'The air moves slightly. Something nearby is breathing, or there is a gap somewhere.',
+  'Cold from the floor up. Not the cold of outside — the cold of below.',
+  'Smoke residue on the ceiling. Fire, and not recently.',
 ];
 const clueTable = [
   'Someone was moving supplies through here in a hurry, and left their route imperfectly concealed.',
@@ -143,10 +145,11 @@ const trapKinds = [
   'a concealed snare that yanks the unwary off balance',
 ];
 const tracksTable = [
-  'small clawed tracks leading toward deeper dark',
-  'hobnailed boot marks over older, softer footprints',
-  'drag marks where something heavy was hauled recently',
-  'the shuffle and scrape of nervous sentries changing post',
+  'small clawed prints, heading deeper. Recent.',
+  'boot marks — hobnailed, heavy — over older, softer ones',
+  'drag marks. Something was hauled this way, and not gently',
+  'the scuff pattern of a nervous sentry on a short route',
+  'blood, dried dark, smeared toward the far wall',
 ];
 const obstacleTable = [
   'a swollen oak door that must be forced',
@@ -155,10 +158,11 @@ const obstacleTable = [
   'a chained iron-bound hatch with a stubborn locking bar',
 ];
 const pressureTable = [
-  'You get the sense that staying loud here will bring trouble.',
-  'Whatever lives nearby is not far enough away to ignore repeated disturbances.',
-  'This area feels close to a patrol route, even if the patrol is currently elsewhere.',
-  'The longer you work here, the more likely you are to be noticed.',
+  'Keep it quiet. Something nearby is paying attention.',
+  'You are not alone in this wing. Not yet.',
+  'A patrol has been through here. Might be back.',
+  'Move fast. This room does not feel like somewhere to linger.',
+  'The door behind you is the only way out. Worth remembering.',
 ];
 const lockTable = [
   'a tricky warded chest-hasp',
