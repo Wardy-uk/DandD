@@ -32,6 +32,15 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+      - name: Check Netlify token
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+        run: |
+          if [ -z "$NETLIFY_AUTH_TOKEN" ]; then
+            echo "::error title=Missing NETLIFY_AUTH_TOKEN::Add NETLIFY_AUTH_TOKEN in GitHub repository secrets so pushes to main can publish the frontend."
+            exit 1
+          fi
+
       - name: Deploy to Netlify
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
