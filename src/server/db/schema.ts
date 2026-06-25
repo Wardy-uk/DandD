@@ -310,6 +310,21 @@ function runMigrations() {
   `);
 
   db.run(`
+    CREATE TABLE IF NOT EXISTS campaign_rumours (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL,
+      text TEXT NOT NULL,
+      truth_level TEXT DEFAULT 'partial',
+      discovered INTEGER DEFAULT 0,
+      source TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  try { db.run('CREATE INDEX IF NOT EXISTS idx_rumours_campaign ON campaign_rumours(campaign_id)'); } catch {}
+
+  try { db.run('ALTER TABLE campaigns ADD COLUMN last_nightly_run_at TEXT'); } catch {}
+
+  db.run(`
     CREATE TABLE IF NOT EXISTS scene_state (
       scene_id TEXT PRIMARY KEY,
       campaign_id TEXT NOT NULL,

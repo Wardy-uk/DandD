@@ -32,6 +32,26 @@ export interface DelveConditions {
   tensionFromSupply: number; // extra tension applied to all companions
 }
 
+export interface NightlyWorldEvent {
+  id: string;
+  type: string;
+  text: string;
+  injected: boolean;
+  createdAt: string;
+}
+
+export interface NightlyLogEntry {
+  at: string;
+  summary: string;
+  details: string[];
+}
+
+export interface NightlyGrowthData {
+  pendingDawnSummary: string | null;
+  pendingWorldEvents: NightlyWorldEvent[];
+  nightlyLog: NightlyLogEntry[];
+}
+
 export interface CampaignSimulationState {
   factions: Record<string, FactionStanding>;
   supply: {
@@ -45,6 +65,7 @@ export interface CampaignSimulationState {
   encounterPressure: number;
   lastEncounterTurn: number;
   recentEvents: string[];
+  nightlyGrowth: NightlyGrowthData;
 }
 
 export interface CampaignStateSnapshot {
@@ -182,6 +203,11 @@ function createDefaultCampaignState(): CampaignSimulationState {
     encounterPressure: 2,
     lastEncounterTurn: 0,
     recentEvents: [],
+    nightlyGrowth: {
+      pendingDawnSummary: null,
+      pendingWorldEvents: [],
+      nightlyLog: [],
+    },
   };
 }
 
@@ -200,6 +226,15 @@ function normalizeCampaignState(raw: any): CampaignSimulationState {
     encounterPressure: Number(raw?.encounterPressure ?? base.encounterPressure),
     lastEncounterTurn: Number(raw?.lastEncounterTurn ?? base.lastEncounterTurn),
     recentEvents: Array.isArray(raw?.recentEvents) ? raw.recentEvents.slice(0, 12) : [],
+    nightlyGrowth: {
+      pendingDawnSummary: raw?.nightlyGrowth?.pendingDawnSummary ?? null,
+      pendingWorldEvents: Array.isArray(raw?.nightlyGrowth?.pendingWorldEvents)
+        ? raw.nightlyGrowth.pendingWorldEvents
+        : [],
+      nightlyLog: Array.isArray(raw?.nightlyGrowth?.nightlyLog)
+        ? raw.nightlyGrowth.nightlyLog.slice(-5)
+        : [],
+    },
   };
 }
 
