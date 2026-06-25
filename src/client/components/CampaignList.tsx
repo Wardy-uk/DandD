@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { CampaignSettingOption } from '../../shared/campaignSettings.js';
 import type { CampaignStartMode } from '../../shared/campaignModes.js';
+import Chronicle from './Chronicle.js';
 
 interface Campaign {
   id: string;
@@ -33,6 +34,7 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
   const [newName, setNewName] = useState('');
   const [newSettingId, setNewSettingId] = useState('');
   const [newStartMode, setNewStartMode] = useState<CampaignStartMode>('solo');
+  const [chronicleCampaign, setChronicle] = useState<{ id: string; name: string } | null>(null);
 
   const headers = { Authorization: `Bearer ${player.token}`, 'Content-Type': 'application/json' };
 
@@ -117,7 +119,6 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
       if (data.ok) {
         setShowJoin(false);
         setBrowseCampaigns([]);
-        // Go straight into the campaign — no character yet, so null
         onJoinCampaign(campaignId, null);
       }
     } catch (err) {
@@ -126,7 +127,6 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
   };
 
   const enterCampaign = async (campaignId: string) => {
-    // Check if player has a character in this campaign
     try {
       const res = await fetch(`${apiUrl}/api/campaigns/${campaignId}`, { headers });
       const data = await res.json();
@@ -174,34 +174,66 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
       ) : (
         <div className="space-y-3">
           {campaigns.map(c => (
-            <button
+            <div
               key={c.id}
-              onClick={() => enterCampaign(c.id)}
-            className="group w-full rounded-lg border border-leather/15 bg-parchment-light/40 p-4 text-left transition-all hover:border-leather/30 hover:bg-parchment-light/70 sm:p-5"
+              className="group rounded-lg border border-leather/15 bg-parchment-light/40 p-4 transition-all hover:border-leather/30 hover:bg-parchment-light/70 sm:p-5"
             >
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div className="min-w-0">
-                  <h3 className="truncate font-heading text-base font-bold tracking-wide text-leather-dark group-hover:text-leather sm:text-lg">
-                    {c.name}
-                  </h3>
-                  {c.setting && (
-                    <p className="text-sm text-ink-faint font-body mt-0.5 italic">{c.setting}</p>
-                  )}
+              {/* Clickable header area — enters campaign */}
+              <button
+                className="w-full text-left"
+                onClick={() => enterCampaign(c.id)}
+              >
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <h3 className="truncate font-heading text-base font-bold tracking-wide text-leather-dark group-hover:text-leather sm:text-lg">
+                      {c.name}
+                    </h3>
+                    {c.setting && (
+                      <p className="text-sm text-ink-faint font-body mt-0.5 italic">{c.setting}</p>
+                    )}
+                  </div>
+                  <span className={`text-xs font-heading font-semibold px-2 py-1 rounded ${
+                    c.status === 'active' ? 'bg-heal/10 text-heal' : 'bg-ink-faint/10 text-ink-faint'
+                  }`}>
+                    {c.status}
+                  </span>
                 </div>
-                <span className={`text-xs font-heading font-semibold px-2 py-1 rounded ${
-                  c.status === 'active' ? 'bg-heal/10 text-heal' : 'bg-ink-faint/10 text-ink-faint'
-                }`}>
-                  {c.status}
-                </span>
+                <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-faint font-body">
+                  <span>Session {c.session_number}</span>
+                  <span>{c.player_count} player{c.player_count !== 1 ? 's' : ''}</span>
+                  <span>{c.character_count} character{c.character_count !== 1 ? 's' : ''}</span>
+                </div>
+              </button>
+
+              {/* Campaign actions */}
+              <div className="mt-3 flex gap-2 border-t border-leather/10 pt-3">
+                <button
+                  onClick={() => enterCampaign(c.id)}
+                  className="flex-1 rounded-md bg-leather px-3 py-1.5 text-xs font-heading font-semibold text-parchment-light hover:bg-leather-dark transition-colors"
+                >
+                  Play
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setChronicle({ id: c.id, name: c.name }); }}
+                  className="flex-1 rounded-md border border-leather/20 px-3 py-1.5 text-xs font-heading font-semibold text-leather hover:bg-leather/10 transition-colors"
+                >
+                  📜 Chronicle
+                </button>
               </div>
-              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-faint font-body">
-                <span>Session {c.session_number}</span>
-                <span>{c.player_count} player{c.player_count !== 1 ? 's' : ''}</span>
-                <span>{c.character_count} character{c.character_count !== 1 ? 's' : ''}</span>
-              </div>
-            </button>
+            </div>
           ))}
         </div>
+      )}
+
+      {/* Chronicle Modal */}
+      {chronicleCampaign && (
+        <Chronicle
+          campaignId={chronicleCampaign.id}
+          campaignName={chronicleCampaign.name}
+          apiUrl={apiUrl}
+          player={player}
+          onClose={() => setChronicle(null)}
+        />
       )}
 
       {/* Create Campaign Modal */}
