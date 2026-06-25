@@ -14,10 +14,15 @@ import { getCampaignState, getCampaignStateSnapshot } from './game/campaignState
 import { createEncounterRecord, describeBattlefield, emitEncounterStart, getActiveEncounter, resolveEncounterAction } from './game/encounters.js';
 import { buildCampaignMapIntel } from './game/mapIntel.js';
 import {
+  checkCompanionRefusals,
+  checkJealousyTriggers,
+  checkRecruitmentFriction,
   getCompanionPartyModifiers,
   getJoinedCompanionIdsInScene,
   getPartyCompanions,
+  logCompanionDisagreement,
   progressCompanionArcs,
+  recordRiskyDecision,
   getSceneNpcRoster,
   resolveCompanionDrama,
   resolveCompanionInteraction,
@@ -305,6 +310,24 @@ export function setupSocketHandlers(
         'SELECT * FROM npcs WHERE campaign_id = ? AND location_scene_id = ? AND alive = 1',
         [campaignId, scene.id]) as any[];
 
+      // ── Companion refusals (won't do that again / low-trust blocks) ──
+      const refusals = checkCompanionRefusals({
+        db, campaignId, sceneId: scene.id, action, leaderName: character.name,
+      });
+      if (refusals.length > 0) {
+        for (const r of refusals) {
+          const refusalLogId = crypto.randomUUID();
+          run(db,
+            'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+            [refusalLogId, campaignId, 1, 'narration', r.companion, r.reason]);
+          io.to(`campaign:${campaignId}`).emit('game:narration', { actor: r.companion, content: r.reason });
+        }
+        io.to(`campaign:${campaignId}`).emit('game:state_update', {
+          type: 'companions_update', payload: getPartyCompanions(db, campaignId),
+        });
+        return;
+      }
+
       const companionInteraction = resolveCompanionInteraction({
         db,
         campaignId,
@@ -341,6 +364,20 @@ export function setupSocketHandlers(
         const targetNpc = npcsInScene.find((npc) => action.toLowerCase().includes(String(npc.name || '').toLowerCase())) || npcsInScene[0];
         const recruit = tryRecruitNpc({ db, npcId: targetNpc.id, leaderCha: Number(character.cha || 10), action: action.toLowerCase() });
         io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: recruit.content });
+        if (recruit.ok) {
+          // Existing companions may react to the new addition
+          const frictionNotes = checkRecruitmentFriction({
+            db, campaignId, sceneId: scene.id,
+            newNpcId: targetNpc.id, newNpcName: targetNpc.name,
+            newNpcClass: targetNpc.char_class || '', leaderName: character.name,
+          });
+          for (const note of frictionNotes) {
+            run(db,
+              'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+              [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', note]);
+            io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: note });
+          }
+        }
         io.to(`campaign:${campaignId}`).emit('game:state_update', {
           type: 'companions_update',
           payload: getPartyCompanions(db, campaignId),
@@ -457,6 +494,17 @@ export function setupSocketHandlers(
       emitCampaignState(io, db, campaignId);
 
       const companionIds = getJoinedCompanionIdsInScene(db, campaignId, scene.id);
+
+      // ── Risky decision accumulation ─────────────────────────────────
+      const riskyNotes = recordRiskyDecision({
+        db, campaignId, sceneId: scene.id, action, leaderName: character.name,
+      });
+
+      // ── Disagreement logging (role-vs-order mismatches) ─────────────
+      const disagreementNotes = logCompanionDisagreement({
+        db, campaignId, sceneId: scene.id, action, leaderName: character.name,
+      });
+
       if (/rest|camp|secure|fallback|mark fallback point|parley|negotiate/.test(action.toLowerCase())) {
         updateCompanionRelationships({
           db,
@@ -509,6 +557,18 @@ export function setupSocketHandlers(
         content: outcome.content,
         actor: outcome.actor || 'DM',
       });
+      for (const note of riskyNotes) {
+        run(db,
+          'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+          [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', note]);
+        io.to(`campaign:${campaignId}`).emit('game:narration', { content: note, actor: 'DM' });
+      }
+      for (const note of disagreementNotes) {
+        run(db,
+          'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+          [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', note]);
+        io.to(`campaign:${campaignId}`).emit('game:narration', { content: note, actor: 'DM' });
+      }
       for (const note of dramaNotes) {
         io.to(`campaign:${campaignId}`).emit('game:narration', {
           content: note,

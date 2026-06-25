@@ -20,6 +20,10 @@ export interface CompanionRelationshipState {
   personalQuestProgress: number;
   personalQuestResolved: boolean;
   lastBeat: string;
+  // Human behaviour extensions
+  riskyDecisionCount: number;   // reckless calls the leader has made (accumulates)
+  refusalHistory: string[];     // action-category slugs this companion won't repeat
+  disagreementCount: number;    // total logged disagreements (degrades bond over time)
 }
 
 type CompanionDuty = 'scout' | 'vanguard' | 'warden' | 'envoy' | 'watch' | 'torch';
@@ -353,11 +357,17 @@ export function resolveCompanionInteraction(params: {
     state.tension += state.trust < 2 ? 1 : 0;
     state.lastBeat = `${character.name} tested the line between camaraderie and attraction with ${target.name}.`;
     persistRelationshipState(db, target.id, state);
+
+    // Jealousy: other companions with romantic investment notice
+    const jealousyNotes = checkJealousyTriggers({
+      db, campaignId, sceneId, targetNpcId: target.id, leaderName: character.name,
+    });
+    const romanticLine = state.trust >= 2
+      ? `${target.name} meets the moment instead of dodging it. Something warmer now hangs in the air between you.`
+      : `${target.name} reads the moment badly and pulls back. The camp mood tightens instead of softening.`;
     return {
       handled: true,
-      narration: [state.trust >= 2
-        ? `${target.name} meets the moment instead of dodging it. Something warmer now hangs in the air between you.`
-        : `${target.name} reads the moment badly and pulls back. The camp mood tightens instead of softening.`],
+      narration: [romanticLine, ...jealousyNotes],
       characterUpdated: false,
     };
   }
@@ -676,6 +686,9 @@ export function normalizeRelationshipState(raw: any): CompanionRelationshipState
     personalQuestProgress: Number(raw?.personalQuestProgress || 0),
     personalQuestResolved: Boolean(raw?.personalQuestResolved),
     lastBeat: String(raw?.lastBeat || ''),
+    riskyDecisionCount: Number(raw?.riskyDecisionCount || 0),
+    refusalHistory: Array.isArray(raw?.refusalHistory) ? raw.refusalHistory : [],
+    disagreementCount: Number(raw?.disagreementCount || 0),
   };
 }
 
@@ -689,6 +702,272 @@ export function describeRelationship(state: CompanionRelationshipState) {
   if (state.tension >= 2) return 'strained';
   return 'uncertain';
 }
+
+// ─── Human Behaviour: Refusals, Risky Decisions, Jealousy, Friction ──────────
+
+// Risk action categories that get remembered if refused or repeated
+const RISKY_ACTION_PATTERNS: Array<{ slug: string; pattern: RegExp; label: string }> = [
+  { slug: 'sacrifice',    pattern: /sacrifice|leave .* behind|abandon .* to/i,           label: 'being left behind' },
+  { slug: 'blind_charge', pattern: /charge in blind|rush in|charge straight|press on without/i, label: 'charging in blind' },
+  { slug: 'no_retreat',   pattern: /no retreat|hold to the last|fight to the death|no fallback/i, label: 'refusing to retreat' },
+  { slug: 'trap_gamble',  pattern: /ignore the trap|chance the trap|walk through anyway/i, label: 'ignoring known traps' },
+  { slug: 'reckless',     pattern: /reckless|damn the risk|forget the danger|throw caution/i, label: 'throwing caution aside' },
+];
+
+// Low-trust / high-tension thresholds that gate refusal
+function willRefuse(state: CompanionRelationshipState, slug: string): boolean {
+  if (state.refusalHistory.includes(slug)) return true;   // "won't do that again" memory
+  if (state.loyalty <= -1 && state.tension >= 4) return true;
+  if (state.trust <= -1 && state.tension >= 5) return true;
+  return false;
+}
+
+/**
+ * Check whether any joined companions refuse the current order before it executes.
+ * Returns an array of refusal objects (empty = all comply).
+ * Callers should inject these as narration notes and skip/modify the action as appropriate.
+ */
+export function checkCompanionRefusals(params: {
+  db: Database;
+  campaignId: string;
+  sceneId: string;
+  action: string;
+  leaderName: string;
+}): Array<{ companion: string; reason: string }> {
+  const { db, campaignId, sceneId, action, leaderName } = params;
+  const joined = all(db, `
+    SELECT id, campaign_id, name, race, char_class, level, personality, disposition, location_scene_id,
+      stats, relationship_state, joined_party, companion_role, companion_order, alive
+    FROM npcs
+    WHERE campaign_id = ? AND location_scene_id = ? AND joined_party = 1 AND alive = 1
+    ORDER BY companion_order ASC
+  `, [campaignId, sceneId]) as CompanionRow[];
+
+  const refusals: Array<{ companion: string; reason: string }> = [];
+
+  for (const npc of joined) {
+    const state = hydrateRelationshipState(npc);
+    for (const cat of RISKY_ACTION_PATTERNS) {
+      if (!cat.pattern.test(action)) continue;
+      if (!willRefuse(state, cat.slug)) continue;
+
+      const wasRemembered = state.refusalHistory.includes(cat.slug);
+      const reason = wasRemembered
+        ? `${npc.name} has been through ${cat.label} before and flatly refuses to go through it again.`
+        : `${npc.name} draws the line here — their trust in ${leaderName}'s judgement does not extend this far.`;
+
+      // Log disagreement
+      state.disagreementCount += 1;
+      state.bond -= 1;
+      state.lastBeat = `${npc.name} refused: ${cat.label}.`;
+      persistRelationshipState(db, npc.id, state);
+
+      refusals.push({ companion: npc.name, reason });
+      break; // one refusal reason per companion per action
+    }
+  }
+
+  return refusals;
+}
+
+/**
+ * Record that the leader made a risky call.
+ * Accumulates per-companion; at thresholds, companions push back mechanically.
+ * Returns narration lines to inject.
+ */
+export function recordRiskyDecision(params: {
+  db: Database;
+  campaignId: string;
+  sceneId: string;
+  action: string;
+  leaderName: string;
+}): string[] {
+  const { db, campaignId, sceneId, action, leaderName } = params;
+  const matched = RISKY_ACTION_PATTERNS.find((cat) => cat.pattern.test(action));
+  if (!matched) return [];
+
+  const joined = all(db, `
+    SELECT id, campaign_id, name, race, char_class, level, personality, disposition, location_scene_id,
+      stats, relationship_state, joined_party, companion_role, companion_order, alive
+    FROM npcs
+    WHERE campaign_id = ? AND location_scene_id = ? AND joined_party = 1 AND alive = 1
+  `, [campaignId, sceneId]) as CompanionRow[];
+
+  const notes: string[] = [];
+
+  for (const npc of joined) {
+    const state = hydrateRelationshipState(npc);
+    state.riskyDecisionCount += 1;
+    const count = state.riskyDecisionCount;
+
+    if (count === 2) {
+      state.tension += 1;
+      state.morale -= 1;
+      state.lastBeat = `${npc.name} is watching ${leaderName}'s pattern of risky calls with growing unease.`;
+      notes.push(`${npc.name} says nothing, but the set of their jaw says they're counting.`);
+    } else if (count === 4) {
+      state.loyalty -= 1;
+      state.tension += 1;
+      state.lastBeat = `${npc.name}'s loyalty to ${leaderName} is eroding under repeated reckless calls.`;
+      notes.push(`${npc.name} keeps pace, but the light behind their eyes has changed. Too many bad calls have a weight.`);
+    } else if (count >= 6) {
+      state.loyalty -= 1;
+      state.morale -= 1;
+      // Lock the refusal memory — they won't follow this category again
+      if (!state.refusalHistory.includes(matched.slug)) {
+        state.refusalHistory = [...state.refusalHistory, matched.slug];
+      }
+      state.lastBeat = `${npc.name} has decided they won't follow ${leaderName} into ${matched.label} again.`;
+      notes.push(`${npc.name} looks at ${leaderName} with something colder than anger. The next time ${matched.label} comes up, they will not follow.`);
+    }
+
+    persistRelationshipState(db, npc.id, state);
+  }
+
+  return notes;
+}
+
+/**
+ * Log a companion disagreement — when a companion's role/values clash with an order.
+ * Does not prevent the action, but degrades bond over time and logs clearly.
+ */
+export function logCompanionDisagreement(params: {
+  db: Database;
+  campaignId: string;
+  sceneId: string;
+  action: string;
+  leaderName: string;
+}): string[] {
+  const { db, campaignId, sceneId, action, leaderName } = params;
+  const lowered = action.toLowerCase();
+  const joined = all(db, `
+    SELECT id, campaign_id, name, race, char_class, level, personality, disposition, location_scene_id,
+      stats, relationship_state, joined_party, companion_role, companion_order, alive
+    FROM npcs
+    WHERE campaign_id = ? AND location_scene_id = ? AND joined_party = 1 AND alive = 1
+    ORDER BY companion_order ASC
+  `, [campaignId, sceneId]) as CompanionRow[];
+
+  const notes: string[] = [];
+
+  for (const npc of joined) {
+    const state = hydrateRelationshipState(npc);
+    const role = String(npc.companion_role || inferCompanionRole(npc.char_class)).toLowerCase();
+
+    let disagreement = '';
+    if (role === 'scout' && /charge|rush|no check|straight through/.test(lowered) && state.tension >= 2) {
+      disagreement = `${npc.name} thinks the ground ahead has not been read yet, and says so quietly.`;
+    } else if (role === 'warden' && /press on|no rest|keep moving|ignore wounds/.test(lowered) && state.tension >= 2) {
+      disagreement = `${npc.name} points out that someone needs tending before the company moves again.`;
+    } else if (role === 'envoy' && /threaten|force|intimidate|demand/.test(lowered) && state.trust >= 1) {
+      disagreement = `${npc.name} believes a softer approach here would cost less than ${leaderName} is about to spend.`;
+    } else if (role === 'vanguard' && /run|flee|retreat now|fall back immediately/.test(lowered) && state.respect >= 2) {
+      disagreement = `${npc.name} holds their ground a beat too long before following the retreat order.`;
+    }
+
+    if (!disagreement) continue;
+
+    state.disagreementCount += 1;
+    state.tension += 1;
+    if (state.disagreementCount % 3 === 0) {
+      state.bond -= 1;  // every 3rd disagreement erodes bond
+      disagreement += ` This is the third time ${npc.name} has had to push back.`;
+    }
+    state.lastBeat = `${npc.name} disagreed with ${leaderName}'s call.`;
+    persistRelationshipState(db, npc.id, state);
+    notes.push(disagreement);
+  }
+
+  return notes;
+}
+
+/**
+ * Check for jealousy when a romance/bond interaction targets one companion
+ * while others in the party have existing romantic investment.
+ */
+export function checkJealousyTriggers(params: {
+  db: Database;
+  campaignId: string;
+  sceneId: string;
+  targetNpcId: string;
+  leaderName: string;
+}): string[] {
+  const { db, campaignId, sceneId, targetNpcId, leaderName } = params;
+  const others = all(db, `
+    SELECT id, campaign_id, name, race, char_class, level, personality, disposition, location_scene_id,
+      stats, relationship_state, joined_party, companion_role, companion_order, alive
+    FROM npcs
+    WHERE campaign_id = ? AND location_scene_id = ? AND joined_party = 1 AND alive = 1 AND id != ?
+  `, [campaignId, sceneId, targetNpcId]) as CompanionRow[];
+
+  const notes: string[] = [];
+
+  for (const npc of others) {
+    const state = hydrateRelationshipState(npc);
+    if (state.romance < 2) continue;  // no investment, no jealousy
+
+    state.tension += 1;
+    state.morale -= 1;
+    state.lastBeat = `${npc.name} noticed ${leaderName}'s attention go elsewhere and felt the shift.`;
+    persistRelationshipState(db, npc.id, state);
+
+    if (state.romance >= 4) {
+      notes.push(`${npc.name}'s expression closes. They say nothing, but the silence has an edge that was not there before.`);
+    } else {
+      notes.push(`${npc.name} makes themselves busy elsewhere in the camp. The mood shift is subtle but visible.`);
+    }
+  }
+
+  return notes;
+}
+
+/**
+ * Check whether existing companions push back against recruiting a new NPC.
+ * Returns friction narration notes; does not block recruitment.
+ */
+export function checkRecruitmentFriction(params: {
+  db: Database;
+  campaignId: string;
+  sceneId: string;
+  newNpcId: string;
+  newNpcName: string;
+  newNpcClass: string;
+  leaderName: string;
+}): string[] {
+  const { db, campaignId, sceneId, newNpcId, newNpcName, newNpcClass, leaderName } = params;
+  const existing = all(db, `
+    SELECT id, campaign_id, name, race, char_class, level, personality, disposition, location_scene_id,
+      stats, relationship_state, joined_party, companion_role, companion_order, alive
+    FROM npcs
+    WHERE campaign_id = ? AND location_scene_id = ? AND joined_party = 1 AND alive = 1
+  `, [campaignId, sceneId]) as CompanionRow[];
+
+  const notes: string[] = [];
+  const newRole = inferCompanionRole(newNpcClass);
+
+  for (const npc of existing) {
+    const state = hydrateRelationshipState(npc);
+    const existingRole = String(npc.companion_role || inferCompanionRole(npc.char_class)).toLowerCase();
+    const roleConflict = existingRole === newRole;
+
+    // High-tension companions push back harder
+    if (state.tension >= 4) {
+      state.tension += 1;
+      state.lastBeat = `${npc.name} was cold to the idea of ${newNpcName} joining.`;
+      persistRelationshipState(db, npc.id, state);
+      notes.push(`${npc.name} is openly cold about the new addition. The company already feels stretched, and ${newNpcName} is another unknown.`);
+    } else if (roleConflict && state.respect >= 2) {
+      // Territorial about their role when they're respected in it
+      state.tension += 1;
+      state.lastBeat = `${npc.name} was quietly territorial about ${newNpcName} taking a similar role.`;
+      persistRelationshipState(db, npc.id, state);
+      notes.push(`${npc.name} watches ${newNpcName} with the careful attention of someone assessing competition. They are not hostile — not yet — but they are watching.`);
+    }
+  }
+
+  return notes;
+}
+
 
 function deriveDisposition(state: CompanionRelationshipState) {
   const score = state.trust + state.bond + state.respect + state.romance + state.loyalty - state.tension;
