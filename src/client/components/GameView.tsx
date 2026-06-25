@@ -3,6 +3,21 @@ import type { Socket } from 'socket.io-client';
 import CharacterSheet from './CharacterSheet.js';
 import CampaignMap from './CampaignMap.js';
 import TownView from './TownView.js';
+import { playSound, setAmbience } from '../audio/audioEngine.js';
+
+// ─── Narration text analysis ──────────────────────────────────────────────────
+
+function detectSoundFromNarration(text: string): 'attack_hit' | 'attack_miss' | 'enemy_defeated' | 'level_up' | 'trap_trigger' | 'torch_light' | 'search_find' | null {
+  const t = text.toLowerCase();
+  if (/\b(level up|gain(s)? a level|levelled up)\b/.test(t)) return 'level_up';
+  if (/\b(slain|defeat(?:ed|s)|kill(?:ed|s)|falls dead|collapses|crumples|drops dead)\b/.test(t)) return 'enemy_defeated';
+  if (/\btrap\b.{0,30}\b(trigger|snap|click|spring|activate|fires?)\b|\b(dart|spike|blade|pit)\b/.test(t)) return 'trap_trigger';
+  if (/\b(torch|candle|lantern)\b.{0,20}\b(lit|light|ignit|flicker)\b/.test(t)) return 'torch_light';
+  if (/\b(find|found|discover|spot|notice)\b.{0,30}\b(hidden|secret|passage|door|chest|cache)\b/.test(t)) return 'search_find';
+  if (/\b(misses?|dodges?|parri(?:ed|es)|deflects?|avoids?|goes wide)\b/.test(t)) return 'attack_miss';
+  if (/\b(hits?|strikes?|wounds?|slashes?|cuts?|smites?|cracks?|crushes?|lands? a blow)\b/.test(t)) return 'attack_hit';
+  return null;
+}
 
 interface LogEntry {
   id: string;
@@ -196,12 +211,16 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
     const onNarration = (data: { content: string; actor: string }) => {
       setDmThinking('');
       addLogEntry('narration', data.actor, data.content);
+      // Analyse DM narration for combat/environmental sounds
+      const detected = detectSoundFromNarration(data.content);
+      if (detected) playSound(detected);
     };
     const onSceneEnter = (data: { scene: Scene; description: string }) => {
       setCurrentScene(data.scene);
       setEncounterActive(false);
       setDmThinking('');
       addLogEntry('scene_enter', 'DM', data.description);
+      playSound('scene_enter');
     };
     const onPlayerAction = (data: { playerId: string; playerName: string; action: string }) => {
       addLogEntry('player_action', data.playerName, data.action);
@@ -241,8 +260,14 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
       } else if (data.type === 'phase_change') {
         setCampaignPhase(data.payload?.phase || 'dungeon');
         if (data.payload?.townName) setTownName(data.payload.townName);
+        if (data.payload?.phase === 'town') setAmbience('town_day');
+        else setAmbience('dungeon_quiet');
       } else if (data.type === 'campaign') {
-        if (data.payload?.campaign_phase) setCampaignPhase(data.payload.campaign_phase);
+        if (data.payload?.campaign_phase) {
+          setCampaignPhase(data.payload.campaign_phase);
+          if (data.payload.campaign_phase === 'town') setAmbience('town_day');
+          else setAmbience('dungeon_quiet');
+        }
         if (data.payload?.town_name) setTownName(data.payload.town_name);
       }
     };
@@ -260,6 +285,8 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
     const onEncounterStart = (data: { round: number }) => {
       setEncounterActive(true);
       addLogEntry('system', '', `Encounter joined. Round ${data.round} begins.`);
+      playSound('combat_start');
+      setAmbience('dungeon_combat');
     };
     const onTurnPrompt = (data: { name: string; round: number }) => {
       addLogEntry('system', '', `${data.name} has the initiative in round ${data.round}.`);
@@ -268,9 +295,11 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
       if (data.status === 'resolved') {
         setEncounterActive(false);
         addLogEntry('system', '', 'The encounter is resolved.');
+        setAmbience('dungeon_quiet');
       } else if (data.status === 'fled') {
         setEncounterActive(false);
         addLogEntry('system', '', 'The encounter breaks apart as one side flees.');
+        setAmbience('dungeon_quiet');
       } else if (data.round) {
         addLogEntry('system', '', `Combat pressure shifts into round ${data.round}.`);
       }
@@ -309,6 +338,12 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [gameLog, dmThinking]);
 
+  // Set dungeon ambience when game view mounts (deferred until first user interaction)
+  useEffect(() => {
+    setAmbience('dungeon_quiet');
+    return () => { setAmbience('silence'); };
+  }, []);
+
   const addLogEntry = (type: string, actor: string, content: string) => {
     setGameLog(prev => [...prev, {
       id: crypto.randomUUID(), type, actor, content,
@@ -318,6 +353,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
 
   const sendAction = () => {
     if (!inputText.trim()) return;
+    playSound('action_submit');
     socket.emit('game:action', { campaignId, action: inputText });
     setInputText('');
   };

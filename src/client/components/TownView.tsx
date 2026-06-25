@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Socket } from 'socket.io-client';
+import { playSound, setAmbience } from '../audio/audioEngine.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -221,6 +222,12 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
     fetchTownData();
   }, [fetchTownData]);
 
+  // Set town ambience on mount
+  useEffect(() => {
+    setAmbience('town_day');
+    return () => { setAmbience('silence'); };
+  }, []);
+
   useEffect(() => {
     const onNarration = (data: { actor: string; content: string }) => {
       setLog(prev => [...prev.slice(-30), { actor: data.actor, content: data.content, id: crypto.randomUUID() }]);
@@ -263,6 +270,7 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
     if (data.ok) {
       fetchTownData();
       showMsg(`Sold ${data.data.soldItems.length} item(s) for ${data.data.gpEarned.toFixed(1)} GP (+${data.data.xpAwarded} XP)`);
+      playSound('coin_clink');
     } else {
       showMsg(data.error || 'Sale failed');
     }
@@ -279,6 +287,7 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
       setBuyCart({});
       fetchTownData();
       showMsg(`Purchased ${order.length} item type(s) for ${data.data.gpSpent.toFixed(2)} GP`);
+      playSound('purchase');
     } else {
       showMsg(data.error || 'Purchase failed');
     }
@@ -307,6 +316,7 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
       fetchTownData();
       if (data.data.healed.length > 0) {
         showMsg(`Healed: ${data.data.healed.join(', ')} (${data.data.gpSpent} GP)`);
+        playSound('heal');
       } else {
         showMsg('No injuries to treat.');
       }
