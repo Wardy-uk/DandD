@@ -1225,7 +1225,7 @@ export function resolveRichExploration(params: {
 
     const target = npcs[0];
     const dexRoll = d20() + Math.floor((character.dex - 10) / 2) + thiefBonus(character, 'pick_pockets');
-    const awareness = 10 + Math.floor((target.level || 1) / 2);
+    const awareness = 10 + Math.floor(((target as any).level || 1) / 2);
     if (dexRoll >= awareness) {
       const goldLifted = 2 + d6() * 2;
       awardGoldAndXp(db, character, goldLifted, 10);
