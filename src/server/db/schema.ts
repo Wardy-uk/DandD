@@ -94,6 +94,8 @@ function runMigrations() {
   try { db.run('ALTER TABLE campaigns ADD COLUMN target_npc_buffer INTEGER DEFAULT 4'); } catch {}
   try { db.run('ALTER TABLE campaigns ADD COLUMN last_growth_check_at TEXT'); } catch {}
   try { db.run('ALTER TABLE campaigns ADD COLUMN last_growth_build_at TEXT'); } catch {}
+  try { db.run('ALTER TABLE campaigns ADD COLUMN exploration_turn INTEGER DEFAULT 0'); } catch {}
+  try { db.run('ALTER TABLE campaigns ADD COLUMN danger_level INTEGER DEFAULT 2'); } catch {}
 
   db.run(`
     CREATE TABLE IF NOT EXISTS campaign_players (
@@ -298,6 +300,15 @@ function runMigrations() {
       title TEXT NOT NULL,
       content TEXT NOT NULL,
       created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS scene_state (
+      scene_id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL,
+      state_json TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT DEFAULT (datetime('now'))
     )
   `);
 

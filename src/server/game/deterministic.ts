@@ -1,4 +1,5 @@
 import { d6, d20 } from '../engine/dice.js';
+import { describeSceneDepth } from './adventure.js';
 
 interface SceneConnection {
   direction: string;
@@ -103,8 +104,9 @@ export function describeScene(params: {
   const exitText = connections.length > 0
     ? `Obvious ways onward lead ${joinList(connections.map((c) => c.direction))}.`
     : 'No obvious exit presents itself at first glance.';
+  const depthText = describeSceneDepth(scene);
 
-  return `${scene.name} lies before you. ${brief} ${light} ${terrain} ${npcText} ${exitText}`;
+  return `${scene.name} lies before you. ${brief} ${light} ${terrain} ${depthText} ${npcText} ${exitText}`;
 }
 
 export function findMovementTarget(action: string, scene: SceneRecord): SceneConnection | null {

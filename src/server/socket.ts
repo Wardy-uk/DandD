@@ -8,7 +8,8 @@ import type { Server as SocketServer, Socket } from 'socket.io';
 import type { Database } from 'sql.js';
 import type { ServerToClientEvents, ClientToServerEvents } from '../shared/types.js';
 import { get, all, run } from './db/helpers.js';
-import { describeScene, findMovementTarget, resolveExplorationAction } from './game/deterministic.js';
+import { describeScene, findMovementTarget } from './game/deterministic.js';
+import { resolveRichExploration } from './game/adventure.js';
 
 interface ConnectedPlayer {
   socketId: string;
@@ -61,6 +62,12 @@ export function setupSocketHandlers(
       const campaign = get(db, 'SELECT * FROM campaigns WHERE id = ?', [campaignId]) as any;
       if (campaign) {
         socket.emit('game:state_update', { type: 'campaign', payload: campaign });
+        const joinedCharacter = get(db,
+          'SELECT * FROM characters WHERE campaign_id = ? AND player_id = ? AND status != "dead"',
+          [campaignId, playerId]) as any;
+        if (joinedCharacter) {
+          socket.emit('game:state_update', { type: 'character_update', payload: joinedCharacter });
+        }
 
         // Send recent game log
         const recentLogs = all(db,
@@ -72,12 +79,22 @@ export function setupSocketHandlers(
         if (campaign.current_scene_id) {
           const scene = get(db, 'SELECT * FROM scenes WHERE id = ?', [campaign.current_scene_id]) as any;
           if (scene) {
+            const npcsInScene = all(db,
+              'SELECT name, personality FROM npcs WHERE campaign_id = ? AND location_scene_id = ? AND alive = 1',
+              [campaignId, scene.id]) as any[];
+            const characters = all(db,
+              'SELECT name, level, race, char_class FROM characters WHERE campaign_id = ? AND status = "active"',
+              [campaignId]) as any[];
             socket.emit('game:scene_enter', {
               scene: {
                 ...scene,
-                connections: JSON.parse(scene.connections || '[]'),
+                connections: JSON.parse(scene.connections || '[]').filter((entry: any) => !entry.hidden),
               },
-              description: scene.ai_description || scene.brief,
+              description: describeScene({
+                scene,
+                npcs: npcsInScene,
+                party: characters,
+              }),
             });
           }
         }
@@ -100,7 +117,7 @@ export function setupSocketHandlers(
     // ─── Player Action (exploration/roleplay) ─────────────────────────
 
     socket.on('game:action', (data) => {
-      const { campaignId, action, details } = data;
+      const { campaignId, action } = data;
       const player = connectedPlayers.get(socket.id);
       if (!player) return;
 
@@ -176,16 +193,22 @@ export function setupSocketHandlers(
       const npcsInScene = all(db,
         'SELECT * FROM npcs WHERE campaign_id = ? AND location_scene_id = ? AND alive = 1',
         [campaignId, scene.id]) as any[];
-      const outcome = resolveExplorationAction({
-        action,
+      const outcome = resolveRichExploration({
+        db,
+        campaignId,
         scene,
         character,
         npcs: npcsInScene,
+        action,
+        connections: JSON.parse(scene.connections || '[]'),
       });
 
-      if (outcome.updatedConnections) {
-        run(db, 'UPDATE scenes SET connections = ? WHERE id = ?',
-          [JSON.stringify(outcome.updatedConnections), scene.id]);
+      if (!outcome) {
+        io.to(`campaign:${campaignId}`).emit('game:narration', {
+          content: 'That action needs a little more specificity before the engine can resolve it. Try naming what you inspect, force, search, or attempt to negotiate with.',
+          actor: 'DM',
+        });
+        return;
       }
 
       const dmLogId = crypto.randomUUID();
@@ -193,9 +216,27 @@ export function setupSocketHandlers(
         'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
         [dmLogId, campaignId, 1, 'dm_response', 'DM', outcome.content]);
 
+      if (outcome.sceneConnections) {
+        io.to(`campaign:${campaignId}`).emit('game:state_update', {
+          type: 'scene_update',
+          payload: {
+            id: scene.id,
+            connections: outcome.sceneConnections,
+          },
+        });
+      }
+
+      const updatedCharacter = get(db, 'SELECT * FROM characters WHERE id = ?', [character.id]) as any;
+      if (updatedCharacter) {
+        io.to(`campaign:${campaignId}`).emit('game:state_update', {
+          type: 'character_update',
+          payload: updatedCharacter,
+        });
+      }
+
       io.to(`campaign:${campaignId}`).emit('game:narration', {
         content: outcome.content,
-        actor: outcome.actor,
+        actor: outcome.actor || 'DM',
       });
     });
 

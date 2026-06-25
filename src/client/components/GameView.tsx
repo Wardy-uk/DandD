@@ -91,6 +91,12 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
           content: l.content,
           timestamp: l.timestamp,
         })));
+      } else if (data.type === 'character_update') {
+        setCharacter(data.payload);
+      } else if (data.type === 'scene_update') {
+        setCurrentScene(prev => prev && prev.id === data.payload.id
+          ? { ...prev, connections: data.payload.connections || prev.connections }
+          : prev);
       }
     };
 
