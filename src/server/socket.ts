@@ -12,6 +12,7 @@ import { describeScene, findMovementTarget } from './game/deterministic.js';
 import { resolveRichExploration } from './game/adventure.js';
 import { addLootWeight, applyAttritionDamage, getCampaignState, getCampaignStateSnapshot, getLightModifiers, lightTorch, makeCamp, saveCampaignState, shiftFactionStanding, tickDelveConditions } from './game/campaignState.js';
 import { createEncounterRecord, describeBattlefield, emitEncounterStart, getActiveEncounter, resolveEncounterAction } from './game/encounters.js';
+import { awardExplorationXp } from './engine/progression.js';
 import { buildCampaignMapIntel } from './game/mapIntel.js';
 import {
   checkRivalPresence,
@@ -21,6 +22,7 @@ import {
   tickRivals,
 } from './game/rivals.js';
 import { popDawnSummary, popPendingWorldEvents, surfaceRumours } from './game/nightlyGrowth.js';
+import { checkFactionSceneEntry, isParleyAction, resolveParley } from './game/factions.js';
 import {
   checkCompanionRefusals,
   checkJealousyTriggers,
@@ -195,6 +197,20 @@ export function setupSocketHandlers(
         'SELECT * FROM characters WHERE campaign_id = ? AND player_id = ? AND status != "dead"',
         [campaignId, player.playerId]) as any;
       if (!character) return;
+
+      // Dying characters can't take exploration actions (unconscious and bleeding)
+      if (character.status === 'dying') {
+        const activeEncounter = getActiveEncounter(db, campaignId);
+        // Allow first aid and combat actions during an active encounter
+        const isFirstAid = /first aid|stabilise|stabilize|bind wounds|help the dying|help/.test(action.toLowerCase());
+        if (!activeEncounter || (!isFirstAid && !/attack|shoot|cast|turn undead|lay on hands|rally|retreat|parley/.test(action.toLowerCase()))) {
+          socket.emit('game:narration', {
+            actor: 'DM',
+            content: `${character.name} is unconscious and bleeding. They cannot act. Another party member needs to reach them with first aid, or the encounter must end.`,
+          });
+          return;
+        }
+      }
 
       // Broadcast the action to all players
       io.to(`campaign:${campaignId}`).emit('game:player_action', {
@@ -477,9 +493,31 @@ export function setupSocketHandlers(
           return;
         }
 
+        const wasUnvisited = !nextScene.visited;
         run(db, 'UPDATE campaigns SET current_scene_id = ? WHERE id = ?', [nextScene.id, campaignId]);
         run(db, 'UPDATE scenes SET visited = 1 WHERE id = ?', [nextScene.id]);
         syncCompanionsToScene(db, campaignId, nextScene.id);
+        // Exploration XP for entering a new (previously unvisited) scene
+        if (wasUnvisited) {
+          const levelUps = awardExplorationXp(db, campaignId);
+          for (const lu of levelUps) {
+            if (lu.narration) {
+              run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                [crypto.randomUUID(), campaignId, 1, 'level_up', 'DM', lu.narration]);
+              io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: lu.narration });
+            }
+          }
+          // Push updated character stats to clients after XP award
+          const updatedChars = all(db,
+            'SELECT * FROM characters WHERE campaign_id = ? AND status NOT IN ("dead")',
+            [campaignId]) as any[];
+          for (const uc of updatedChars) {
+            io.to(`campaign:${campaignId}`).emit('game:state_update', {
+              type: 'character_update',
+              payload: uc,
+            });
+          }
+        }
 
         // ── Rival tick: advance all active rivals when party moves ──
         const explorationTurn = Number((get(db, 'SELECT exploration_turn FROM campaigns WHERE id = ?', [campaignId]) as any)?.exploration_turn || 0);
@@ -777,8 +815,7 @@ export function setupSocketHandlers(
       });
       for (const note of riskyNotes) {
         run(db,
-          'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
-          [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', note]);
+          'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',          [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', note]);
         io.to(`campaign:${campaignId}`).emit('game:narration', { content: note, actor: 'DM' });
       }
       for (const note of disagreementNotes) {

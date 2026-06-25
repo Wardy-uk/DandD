@@ -15,7 +15,7 @@ export const AlignmentEnum = z.enum([
 ]);
 export type Alignment = z.infer<typeof AlignmentEnum>;
 
-export const CharacterStatusEnum = z.enum(['active', 'camp', 'autopilot', 'dead']);
+export const CharacterStatusEnum = z.enum(['active', 'camp', 'autopilot', 'dying', 'dead']);
 export type CharacterStatus = z.infer<typeof CharacterStatusEnum>;
 
 export const CampaignStatusEnum = z.enum(['active', 'paused', 'completed']);

@@ -636,6 +636,7 @@ function usedRollIndices(
   const indices: number[] = [];
   const taken = new Set<number>();
   for (const key of abilityKeys) {
+    
     const score = currentScores[key];
     const index = rolls.findIndex((roll, rollIndex) => roll.result.total === score && !taken.has(rollIndex));
     if (index >= 0) {

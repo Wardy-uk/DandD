@@ -359,11 +359,11 @@ function runMigrations() {
   `);
   try { db.run('CREATE INDEX IF NOT EXISTS idx_rivals_campaign ON rival_parties(campaign_id)'); } catch(e) {}
 
+  // Progression columns
+  try { db.run('ALTER TABLE characters ADD COLUMN injuries TEXT DEFAULT "[]"'); } catch {}
+
   // Indexes
   const indexes = [
-    'CREATE INDEX IF NOT EXISTS idx_characters_campaign ON characters(campaign_id)',
-    'CREATE INDEX IF NOT EXISTS idx_characters_player ON characters(player_id)',
-    'CREATE INDEX IF NOT EXISTS idx_scenes_campaign ON scenes(campaign_id)',
     'CREATE INDEX IF NOT EXISTS idx_npcs_campaign ON npcs(campaign_id)',
     'CREATE INDEX IF NOT EXISTS idx_game_log_campaign ON game_log(campaign_id)',
     'CREATE INDEX IF NOT EXISTS idx_ai_queue_status ON ai_queue(status, priority)',

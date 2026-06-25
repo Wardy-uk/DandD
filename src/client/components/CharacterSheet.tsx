@@ -30,6 +30,14 @@ export default function CharacterSheet({ character, onClose }: Props) {
         <button onClick={onClose} className="text-ink-faint hover:text-ink text-2xl leading-none p-1 -mr-1 min-w-[2.5rem] min-h-[2.5rem] flex items-center justify-center">&times;</button>
       </div>
 
+      {/* Dying banner */}
+      {c.status === 'dying' && (
+        <div className="mb-4 rounded border border-blood bg-blood/10 px-3 py-2 text-center">
+          <p className="text-sm font-heading font-bold text-blood tracking-wide">DYING — {c.hp} HP</p>
+          <p className="text-xs text-blood/80 font-body mt-0.5">Unconscious and bleeding. First aid required to stabilise. At &minus;10 they&apos;re dead.</p>
+        </div>
+      )}
+
       <div className="h-px bg-gradient-to-r from-leather/30 via-leather/10 to-transparent mb-4" />
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2 lg:gap-6">
@@ -68,9 +76,9 @@ export default function CharacterSheet({ character, onClose }: Props) {
                 ['HP', `${c.hp}/${c.max_hp || c.maxHp}`],
                 ['Mv', c.base_movement || c.baseMovement],
               ].map(([label, val]) => (
-                <div key={label as string} className="text-center border border-leather/10 rounded p-2 bg-parchment-light/30">
+                <div key={label as string} className={`text-center border rounded p-2 ${label === 'HP' && Number(c.hp) <= 0 ? 'border-blood/40 bg-blood/5' : 'border-leather/10 bg-parchment-light/30'}`}>
                   <div className="text-[10px] font-heading text-ink-faint uppercase">{label as string}</div>
-                  <div className="text-lg font-heading font-bold text-leather-dark">{val}</div>
+                  <div className={`text-lg font-heading font-bold ${label === 'HP' && Number(c.hp) <= 0 ? 'text-blood' : 'text-leather-dark'}`}>{val}</div>
                 </div>
               ))}
             </div>
@@ -200,14 +208,46 @@ export default function CharacterSheet({ character, onClose }: Props) {
           {/* Conditions */}
           {(() => {
             const conditions = c.conditions ? (typeof c.conditions === 'string' ? JSON.parse(c.conditions) : c.conditions) : [];
-            return conditions.length > 0 && (
+            const visibleConditions = conditions.filter((cond: string) => cond !== 'stabilised');            return visibleConditions.length > 0 && (
               <div>
                 <h3 className="text-[10px] font-heading font-bold text-blood uppercase tracking-wider mb-2">Conditions</h3>
                 <div className="flex gap-1 flex-wrap">
-                  {conditions.map((cond: string, i: number) => (
-                    <span key={i} className="text-xs px-2 py-0.5 rounded-full bg-blood/10 text-blood font-heading">{cond}</span>
+                  {visibleConditions.map((cond: string, i: number) => (
+                    <span key={i} className="text-xs px-2 py-0.5 rounded-full bg-blood/10 text-blood font-heading">{cond.replace(/_/g, ' ')}</span>
                   ))}
                 </div>
+              </div>
+            );
+          })()}
+
+          {/* Injuries */}
+          {(() => {
+            let injuries: any[] = [];
+            try {
+              injuries = c.injuries ? (typeof c.injuries === 'string' ? JSON.parse(c.injuries) : c.injuries) : [];
+            } catch {}
+            const activeInjuries = injuries.filter((inj: any) => !inj.treated);
+            if (injuries.length === 0) return null;
+            return (
+              <div>
+                <h3 className="text-[10px] font-heading font-bold text-blood uppercase tracking-wider mb-2">
+                  Injuries {activeInjuries.length > 0 && <span className="text-blood">({activeInjuries.length} active)</span>}
+                </h3>
+                <div className="space-y-1.5">
+                  {injuries.map((inj: any, i: number) => (
+                    <div key={i} className={`rounded p-2 text-xs ${inj.treated ? 'bg-ink-faint/5 border border-ink-faint/10' : inj.worsened ? 'bg-blood/15 border border-blood/30' : 'bg-blood/8 border border-blood/20'}`}>
+                      <div className="flex items-center justify-between gap-2 mb-0.5">
+                        <span className={`font-heading font-bold ${inj.treated ? 'text-ink-faint line-through' : 'text-blood'}`}>{inj.name}</span>
+                        {inj.worsened && !inj.treated && <span className="text-[9px] text-blood/70 font-heading uppercase tracking-wider">Worsened</span>}
+                        {inj.treated && <span className="text-[9px] text-ink-faint font-heading uppercase tracking-wider">Treated</span>}
+                      </div>
+                      <p className={`font-body ${inj.treated ? 'text-ink-faint' : 'text-ink'}`}>{inj.description}</p>
+                    </div>
+                  ))}
+                </div>
+                {activeInjuries.length > 0 && (
+                  <p className="text-[10px] text-ink-faint font-body italic mt-1">Injuries clear after camp rest with bandages.</p>
+                )}
               </div>
             );
           })()}

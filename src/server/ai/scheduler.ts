@@ -33,6 +33,7 @@ export function startNightlyGrowthScheduler(db: Database) {
 
     for (const campaign of campaigns) {
       // ── AI content buffer (scenes / NPCs / lore) ─────────────────────
+      // ── AI content buffer (scenes / NPCs / lore) ─────────────────────
       const lastContentRun = typeof campaign.last_growth_check_at === 'string'
         ? String(campaign.last_growth_check_at).slice(0, 10)
         : '';

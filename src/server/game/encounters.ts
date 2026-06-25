@@ -2,7 +2,8 @@ import { v4 as uuid } from 'uuid';
 import type { Database } from 'sql.js';
 import type { Server as SocketServer } from 'socket.io';
 import { all, get, run } from '../db/helpers.js';
-import { getCampaignState, noteCampaignEvent, saveCampaignState, shiftFactionStanding } from './campaignState.js';
+import { getCampaignState, noteCampaignEvent, saveCampaignState, shiftFactionStanding, recordDeath, checkAndAwardMilestone } from './campaignState.js';
+import { awardXp, rollInjury, addInjuryToCharacter } from '../engine/progression.js';
 import { getCompanionPartyModifiers } from './companions.js';
 import {
   checkMorale,
@@ -325,6 +326,7 @@ export function resolveEncounterAction(params: {
     }
 
     let advanced = advanceEncounterTurn(db, encounter.id);
+    if (advanced.bleedingNarration) narration.push(...advanced.bleedingNarration);
     let loopGuard = 0;
     while (advanced.prompt && advanced.current && (advanced.current.side === 'enemy' || (advanced.current.side === 'party' && advanced.current.npc_id && !advanced.current.character_id)) && loopGuard < 8) {
       const enemyActor = advanced.current;
@@ -359,6 +361,7 @@ export function resolveEncounterAction(params: {
       }
 
       advanced = advanceEncounterTurn(db, encounter.id);
+      if (advanced.bleedingNarration) narration.push(...advanced.bleedingNarration);
       loopGuard += 1;
     }
 
@@ -395,6 +398,7 @@ export function resolveEncounterAction(params: {
   }
 
   let advanced = advanceEncounterTurn(db, encounter.id);
+  if (advanced.bleedingNarration) narration.push(...advanced.bleedingNarration);
   let loopGuard = 0;
   while (advanced.prompt && advanced.current && (advanced.current.side === 'enemy' || (advanced.current.side === 'party' && advanced.current.npc_id && !advanced.current.character_id)) && loopGuard < 8) {
     const enemyActor = advanced.current;
@@ -429,6 +433,7 @@ export function resolveEncounterAction(params: {
     }
 
     advanced = advanceEncounterTurn(db, encounter.id);
+    if (advanced.bleedingNarration) narration.push(...advanced.bleedingNarration);
     loopGuard += 1;
   }
 
@@ -498,6 +503,7 @@ function autoResolveNonPlayerTurns(
     if (state.ended) return { ended: true, prompt };
 
     const advanced = advanceEncounterTurn(db, encounter.id);
+    if (advanced.bleedingNarration) narration.push(...advanced.bleedingNarration);
     prompt = advanced.prompt;
     active = advanced.current;
     loopGuard += 1;
@@ -668,6 +674,68 @@ function resolveSpecialCombatAction(
     };
   }
 
+  if (/first aid|bind wounds|stabilise|stabilize|help the dying|help/.test(action)) {
+    // Find a dying ally (negative HP, not yet dead)
+    const dyingAlly = combatants.find((c) =>
+      c.side === 'party' && Number(c.current_hp) <= 0 && Number(c.current_hp) > -10 && c.character_id
+      && !safeConditions(c.conditions).includes('stabilised')
+      && (action.includes(String(c.name || '').toLowerCase()) || true), // target named or auto-pick
+    );
+    if (!dyingAlly) {
+      return {
+        narration: [{ actor: 'DM', content: 'No one in reach is dying. Save the bandage.' }],
+        combatResults: [],
+        updatedCharacterIds: current.character_id ? [current.character_id] : [],
+      };
+    }
+    // Consume a bandage from inventory
+    const actorChar = current.character_id
+      ? get(db, 'SELECT inventory FROM characters WHERE id = ?', [current.character_id]) as any
+      : null;
+    let inventory: any[] = [];
+    try { inventory = JSON.parse(actorChar?.inventory || '[]'); } catch {}
+    const bandageIdx = inventory.findIndex((item: any) =>
+      /bandage|binding|medic|field dressing/i.test(String(item.item || '')));
+    const hasBandage = bandageIdx !== -1 && (inventory[bandageIdx].quantity || 1) > 0;
+    if (!hasBandage) {
+      return {
+        narration: [{
+          actor: 'DM',
+          content: `${current.name} reaches for a bandage and finds none. ${dyingAlly.name} keeps bleeding.`,
+        }],
+        combatResults: [],
+        updatedCharacterIds: current.character_id ? [current.character_id] : [],
+      };
+    }
+    // Use the bandage
+    if (inventory[bandageIdx].quantity > 1) {
+      inventory[bandageIdx].quantity -= 1;
+    } else {
+      inventory.splice(bandageIdx, 1);
+    }
+    if (current.character_id) {
+      run(db, 'UPDATE characters SET inventory = ? WHERE id = ?', [JSON.stringify(inventory), current.character_id]);
+    }
+    // Stabilise the dying ally
+    const dyingConditions = safeConditions(dyingAlly.conditions);
+    setCombatantConditions(db, dyingAlly, appendConditionList(dyingConditions, ['stabilised']));
+    if (dyingAlly.character_id) {
+      const existingConditions = JSON.parse(
+        (get(db, 'SELECT conditions FROM characters WHERE id = ?', [dyingAlly.character_id]) as any)?.conditions || '[]'
+      );
+      run(db, 'UPDATE characters SET conditions = ? WHERE id = ?',
+        [JSON.stringify([...existingConditions, 'stabilised']), dyingAlly.character_id]);
+    }
+    return {
+      narration: [{
+        actor: 'DM',
+        content: `${current.name} tears a bandage open and works fast — pressing it into the wound, binding tight. ${dyingAlly.name} stops losing blood. Unconscious, wounded, but not dying anymore. They'll need camp rest to recover, but the clock has stopped.`,
+      }],
+      combatResults: [],
+      updatedCharacterIds: [current.character_id, dyingAlly.character_id].filter(Boolean) as string[],
+    };
+  }
+
   return null;
 }
 
@@ -697,21 +765,34 @@ function resolveAttackExchange(
   let remainingHp = defender.current_hp;
   let nextConditions = safeConditions(defender.conditions);
   if (result.hit && result.defenderHpAfter !== undefined) {
-    remainingHp = Math.max(0, result.defenderHpAfter);
+    const prevHp = Number(defender.current_hp);
+    const defenderMaxHp = Number(defender.max_hp || 1);
+    // Party characters use AD&D dying system — allow negative HP
+    const rawHp = result.defenderHpAfter;
+    remainingHp = defender.character_id ? rawHp : Math.max(0, rawHp);
     nextConditions = appendConditionList(nextConditions, [remainingHp <= 0 ? 'down' : 'wounded']);
-    if (intent.forcingHazard && battlefield.hazard && remainingHp > 0) {
+    if (intent.forcingHazard && battlefield.hazard && remainingHp > -10) {
       const hazardDamage = rollHazardDamage(battlefield);
-      remainingHp = Math.max(0, remainingHp - hazardDamage);
+      remainingHp = defender.character_id ? remainingHp - hazardDamage : Math.max(0, remainingHp - hazardDamage);
       nextConditions = appendConditionList(nextConditions, ['off_balance', `hazard:${slugify(battlefield.hazard)}`]);
       result.description += ` The position collapses into ${battlefield.hazard}, adding ${hazardDamage} more damage.`;
       result.defenderHpAfter = remainingHp;
-      result.defenderKilled = remainingHp <= 0;
+      result.defenderKilled = remainingHp <= -10;
     }
     run(db, 'UPDATE combatants SET current_hp = ?, conditions = ? WHERE id = ?',
       [remainingHp, JSON.stringify(nextConditions), defender.id]);
     if (defender.character_id) {
+      const newStatus = remainingHp <= -10 ? 'dead' : remainingHp <= 0 ? 'dying' : 'active';
       run(db, 'UPDATE characters SET hp = ?, status = ? WHERE id = ?',
-        [remainingHp, remainingHp <= 0 ? 'dead' : 'active', defender.character_id]);
+        [remainingHp, newStatus, defender.character_id]);
+      // Injury: on crit, or single hit drops character from >25% to ≤25% max HP
+      const critHit = result.natural20;
+      const brokeThreshold = prevHp > defenderMaxHp * 0.25 && remainingHp <= defenderMaxHp * 0.25;
+      if ((critHit || brokeThreshold) && remainingHp > -10 && newStatus !== 'dead') {
+        const injury = rollInjury();
+        addInjuryToCharacter(db, defender.character_id, injury);
+        result.description += ` ${injury.name}: ${injury.description}`;
+      }
     }
     if (defender.npc_id) {
       const npc = get(db, 'SELECT stats FROM npcs WHERE id = ?', [defender.npc_id]) as any;
@@ -1009,24 +1090,76 @@ function evaluatePartyState(db: Database, encounter: any, defender: any, attacke
   const refreshed = getEncounterCombatants(db, encounter.id);
   const party = refreshed.filter((c) => c.side === 'party');
   const livingParty = party.filter((c) => c.current_hp > 0);
+  const dyingParty = party.filter((c) => c.current_hp <= 0 && c.current_hp > -10 && c.character_id);
   const encounterScene = get(db, 'SELECT scene_id, campaign_id FROM encounters WHERE id = ?', [encounter.id]) as any;
-  const companionMods = getCompanionPartyModifiers(db, encounterScene.campaign_id, encounterScene.scene_id);
+  const campaignId: string = encounterScene?.campaign_id || '';
+  const companionMods = getCompanionPartyModifiers(db, campaignId, encounterScene?.scene_id);
+
   if (livingParty.length === 0) {
     concludeEncounter(db, encounter.id, 'resolved');
-    narration.push({ actor: 'DM', content: 'The party is overwhelmed. The encounter is decided in the enemy’s favor.' });
+    if (dyingParty.length > 0) {
+      const names = dyingParty.map((c) => c.name).join(', ');
+      narration.push({ actor: 'DM', content: `The last fighter still standing drops. ${names} ${dyingParty.length === 1 ? 'lies' : 'lie'} bleeding on the stone — dying, not yet dead. Without aid, the clock is running.` });
+    } else {
+      narration.push({ actor: 'DM', content: "The party is overwhelmed. The encounter is decided in the enemy's favor." });
+    }
     return { ended: true, narration };
   }
 
-  if (defender.character_id && refreshed.find((c) => c.id === defender.id)?.current_hp <= 0) {
-    narration.push({
-      actor: 'DM',
-      content: `${attacker?.name || 'The enemy'} drops ${defender.name}. The rest of the party suddenly has to decide whether this is still a fight or the start of a retreat.`,
-    });
-    const fracture = resolveCompanionFracture(db, encounterScene.campaign_id, encounterScene.scene_id, refreshed, companionMods, true);
-    narration.push(...fracture.narration);
+  const defenderRefreshed = refreshed.find((c) => c.id === defender.id);
+  if (defender.character_id && defenderRefreshed && defenderRefreshed.current_hp <= 0) {
+    const charRecord = get(db, 'SELECT * FROM characters WHERE id = ?', [defender.character_id]) as any;
+    const isDead = charRecord?.status === 'dead' || defenderRefreshed.current_hp <= -10;
+    if (isDead) {
+      // Record death
+      const scene = get(db, 'SELECT name FROM scenes WHERE id = ?', [encounterScene?.scene_id]) as any;
+      if (campaignId && charRecord) {
+        const state = getCampaignState(db, campaignId);
+        const campaign = get(db, 'SELECT session_number FROM campaigns WHERE id = ?', [campaignId]) as any;
+        recordDeath(state, {
+          characterName: charRecord.name,
+          charClass: charRecord.char_class,
+          level: charRecord.level,
+          cause: `Slain by ${attacker?.name || 'the enemy'} in combat`,
+          sceneName: scene?.name || 'the dungeon',
+          sessionNumber: campaign?.session_number || 1,
+        });
+        checkAndAwardMilestone(state, 'the_fallen');
+        // Faction heat: rivals may increase their activity
+        shiftFactionStanding(state, 'delvers', { heat: 1 }, 'Rival delvers heard a party member fell. The heat is up.');
+        saveCampaignState(db, campaignId, state);
+      }
+      narration.push({
+        actor: 'DM',
+        content: `${defender.name} is dead. Not downed — dead. The room is quieter for it in a way that has nothing to do with sound.`,
+      });
+      // Deep companion grief
+      const fracture = resolveCompanionFracture(db, campaignId, encounterScene?.scene_id, refreshed, companionMods, true);
+      narration.push(...fracture.narration);
+      if (companionMods.cohesion > 0) {
+        narration.push({ actor: 'DM', content: `The companions who are still standing fight on, but the loss of ${defender.name} has changed something. They will carry this.` });
+      }
+    } else {
+      // Dying (0 to -9 HP)
+      narration.push({
+        actor: 'DM',
+        content: `${attacker?.name || 'The enemy'} brings down ${defender.name}. Unconscious, bleeding — dying. Someone needs to reach them before the blood runs out.`,
+      });
+      const fracture = resolveCompanionFracture(db, campaignId, encounterScene?.scene_id, refreshed, companionMods, true);
+      narration.push(...fracture.narration);
+    }
+    // Bloodied milestone
+    if (campaignId) {
+      const state = getCampaignState(db, campaignId);
+      const milestone = checkAndAwardMilestone(state, 'bloodied');
+      if (milestone) {
+        narration.push({ actor: 'DM', content: milestone.narration });
+        saveCampaignState(db, campaignId, state);
+      }
+    }
   } else if (livingParty.length <= Math.ceil(party.length / 2)) {
     narration.push({ actor: 'DM', content: 'The party is bloodied now. Every exchanged blow is starting to cost campaign-level momentum.' });
-    const fracture = resolveCompanionFracture(db, encounterScene.campaign_id, encounterScene.scene_id, refreshed, companionMods, false);
+    const fracture = resolveCompanionFracture(db, campaignId, encounterScene?.scene_id, refreshed, companionMods, false);
     narration.push(...fracture.narration);
   }
 
@@ -1063,19 +1196,28 @@ function concludeEncounter(db: Database, encounterId: string, status: 'resolved'
   run(db, 'UPDATE encounters SET status = ? WHERE id = ?', [status, encounterId]);
 }
 
-function advanceEncounterTurn(db: Database, encounterId: string) {
+function advanceEncounterTurn(db: Database, encounterId: string): {
+  current: any;
+  prompt?: TurnPrompt;
+  bleedingNarration?: { actor: string; content: string }[];
+} {
   const encounter = get(db, 'SELECT * FROM encounters WHERE id = ?', [encounterId]) as any;
-  if (!encounter || encounter.status !== 'active') return { prompt: undefined, current: undefined };
+  if (!encounter || encounter.status !== 'active') return { current: undefined };
   const combatants = getEncounterCombatants(db, encounterId);
   const turnOrder: string[] = JSON.parse(encounter.turn_order || '[]');
   const aliveIds = new Set(combatants.filter((c) => c.current_hp > 0).map((c) => c.id));
-  if (!aliveIds.size) return { prompt: undefined, current: undefined };
+  if (!aliveIds.size) return { current: undefined };
 
   let index = Number(encounter.current_turn_index || 0);
   let round = Number(encounter.round || 1);
+  let bleedingNarration: { actor: string; content: string }[] | undefined;
+
   for (let steps = 0; steps < turnOrder.length; steps++) {
     index = (index + 1) % turnOrder.length;
-    if (index === 0) round += 1;
+    if (index === 0) {
+      round += 1;
+      bleedingNarration = processDyingCharacters(db, encounterId, combatants, encounter.campaign_id);
+    }
     const nextId = turnOrder[index];
     if (!aliveIds.has(nextId)) continue;
     const current = combatants.find((c) => c.id === nextId);
@@ -1085,9 +1227,49 @@ function advanceEncounterTurn(db: Database, encounterId: string) {
     return {
       current,
       prompt: { combatantId: current.id, name: current.name, round },
+      bleedingNarration,
     };
   }
-  return { prompt: undefined, current: undefined };
+  return { current: undefined, bleedingNarration };
+}
+
+function processDyingCharacters(db: Database, encounterId: string, combatants: any[], campaignId: string) {
+  const notes: { actor: string; content: string }[] = [];
+  const dying = combatants.filter((c) =>
+    c.side === 'party' && c.character_id && Number(c.current_hp) <= 0 && Number(c.current_hp) > -10,
+  );
+  for (const c of dying) {
+    const conditions = safeConditions(c.conditions);
+    if (conditions.includes('stabilised')) continue; // First aid held the bleeding
+    const newHp = Number(c.current_hp) - 1;
+    run(db, 'UPDATE combatants SET current_hp = ? WHERE id = ?', [newHp, c.id]);
+    if (newHp <= -10) {
+      // Crossed into death
+      run(db, 'UPDATE characters SET hp = ?, status = ? WHERE id = ?', [newHp, 'dead', c.character_id]);
+      notes.push({ actor: 'DM', content: `${c.name} bleeds out. The last breath goes, and does not return.` });
+      // Record death
+      const charRecord = get(db, 'SELECT * FROM characters WHERE id = ?', [c.character_id]) as any;
+      const state = getCampaignState(db, campaignId);
+      const campaign = get(db, 'SELECT session_number, current_scene_id FROM campaigns WHERE id = ?', [campaignId]) as any;
+      const scene = campaign?.current_scene_id
+        ? get(db, 'SELECT name FROM scenes WHERE id = ?', [campaign.current_scene_id]) as any
+        : null;
+      recordDeath(state, {
+        characterName: charRecord?.name || c.name,
+        charClass: charRecord?.char_class || 'unknown',
+        level: charRecord?.level || 1,
+        cause: 'Bled out — no one reached them in time',
+        sceneName: scene?.name || 'the dungeon',
+        sessionNumber: campaign?.session_number || 1,
+      });
+      checkAndAwardMilestone(state, 'the_fallen');
+      saveCampaignState(db, campaignId, state);
+    } else {
+      run(db, 'UPDATE characters SET hp = ? WHERE id = ?', [newHp, c.character_id]);
+      notes.push({ actor: 'DM', content: `${c.name} loses another HP to blood loss. ${Math.abs(newHp)} points below zero. ${-newHp >= 8 ? 'The end is close.' : 'Time is running out.'}` });
+    }
+  }
+  return notes.length > 0 ? notes : undefined;
 }
 
 function clearTransientConditions(db: Database, combatant: any) {
@@ -1109,18 +1291,36 @@ function awardVictorySpoils(db: Database, characterId: string, defender: any, en
   const xp = Math.max(15, Number(defender.max_hp || 1) * 10);
   const gold = Math.max(3, Math.floor(Number(defender.max_hp || 1) / 2) + inferMorale(defender));
   const item = inferLoot(defender);
-  const character = get(db, 'SELECT inventory FROM characters WHERE id = ?', [characterId]) as any;
+  const character = get(db, 'SELECT * FROM characters WHERE id = ?', [characterId]) as any;
+  if (!character) return '';
+  const campaignId: string = get(db, 'SELECT campaign_id FROM encounters WHERE id = ?', [encounterId])?.campaign_id || '';
   let inventory: any[] = [];
   try { inventory = JSON.parse(character?.inventory || '[]'); } catch {}
-  const existing = inventory.find((entry) => entry.item === item);
+  const existing = inventory.find((entry: any) => entry.item === item);
   if (existing) existing.quantity += 1;
   else inventory.push({ item, weight: 1, quantity: 1, equipped: false });
-  run(db, 'UPDATE characters SET xp = xp + ?, gold = gold + ?, inventory = ? WHERE id = ?',
-    [xp, gold, JSON.stringify(inventory), characterId]);
+  run(db, 'UPDATE characters SET gold = gold + ?, inventory = ? WHERE id = ?',
+    [gold, JSON.stringify(inventory), characterId]);
+  // Award kill XP through progression system (handles level-up)
+  const levelResult = awardXp(db, characterId, xp, 'kill', campaignId);
+  // First-blood milestone
+  if (campaignId) {
+    const state = getCampaignState(db, campaignId);
+    const milestone = checkAndAwardMilestone(state, 'first_blood');
+    if (milestone) {
+      run(db, 'INSERT INTO game_log (id, campaign_id, type, actor, content) VALUES (?, ?, ?, ?, ?)',
+        [uuid(), campaignId, 'milestone', 'DM', milestone.narration]);
+      saveCampaignState(db, campaignId, state);
+    }
+  }
   run(db,
-    'INSERT INTO game_log (id, campaign_id, type, actor, content) VALUES (?, (SELECT campaign_id FROM encounters WHERE id = ?), ?, ?, ?)',
-    [uuid(), encounterId, 'system', 'DM', `Spoils claimed: ${gold} gp value, ${xp} xp, and ${item}.`]);
-  return `Victory has weight: you strip ${gold} gp in useful value, learn ${xp} xp worth of hard lessons, and recover ${item}.`;
+    'INSERT INTO game_log (id, campaign_id, type, actor, content) VALUES (?, ?, ?, ?, ?)',
+    [uuid(), campaignId, 'system', 'DM', `Spoils claimed: ${gold} gp value, ${xp} xp, and ${item}.`]);
+  let reward = `Victory has weight: you strip ${gold} gp in useful value, learn ${xp} xp worth of hard lessons, and recover ${item}.`;
+  if (levelResult.levelled && levelResult.narration) {
+    reward += ` ${levelResult.narration}`;
+  }
+  return reward;
 }
 
 function inferLoot(defender: any) {

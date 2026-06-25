@@ -52,6 +52,23 @@ export interface NightlyGrowthData {
   nightlyLog: NightlyLogEntry[];
 }
 
+export interface DeathRecord {
+  characterName: string;
+  charClass: string;
+  level: number;
+  cause: string;
+  sceneName: string;
+  sessionNumber: number;
+  triggeredAt: string;
+}
+
+export interface MilestoneRecord {
+  id: string;
+  name: string;
+  narration: string;
+  triggeredAt: string;
+}
+
 export interface CampaignSimulationState {
   factions: Record<string, FactionStanding>;
   supply: {
@@ -66,6 +83,9 @@ export interface CampaignSimulationState {
   lastEncounterTurn: number;
   recentEvents: string[];
   nightlyGrowth: NightlyGrowthData;
+  // Progression
+  deaths: DeathRecord[];
+  milestones: MilestoneRecord[];
 }
 
 export interface CampaignStateSnapshot {
@@ -208,6 +228,8 @@ function createDefaultCampaignState(): CampaignSimulationState {
       pendingWorldEvents: [],
       nightlyLog: [],
     },
+    deaths: [],
+    milestones: [],
   };
 }
 
@@ -235,11 +257,94 @@ function normalizeCampaignState(raw: any): CampaignSimulationState {
         ? raw.nightlyGrowth.nightlyLog.slice(-5)
         : [],
     },
+    deaths: Array.isArray(raw?.deaths) ? raw.deaths : [],
+    milestones: Array.isArray(raw?.milestones) ? raw.milestones : [],
   };
 }
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
+}
+
+// ─── Death Records ───────────────────────────────────────────────────────────
+
+export function recordDeath(
+  state: CampaignSimulationState,
+  record: Omit<DeathRecord, 'triggeredAt'>,
+): void {
+  state.deaths.push({ ...record, triggeredAt: new Date().toISOString() });
+  noteCampaignEvent(state, `${record.characterName} (${record.charClass} level ${record.level}) fell: ${record.cause}`);
+}
+
+export function getDeaths(state: CampaignSimulationState): DeathRecord[] {
+  return state.deaths;
+}
+
+// ─── Milestones ──────────────────────────────────────────────────────────────
+
+export const MILESTONE_DEFS: Record<string, { name: string; narration: string }> = {
+  first_blood: {
+    name: 'First Blood',
+    narration: 'First blood is drawn. The dungeon is no longer a story — it\'s real.',
+  },
+  cleared: {
+    name: 'Area Cleared',
+    narration: 'The last enemy falls silent. A space that was hostile is now, for a moment, yours.',
+  },
+  bloodied: {
+    name: 'Bloodied',
+    narration: 'The party has fought hard enough to know this place means business.',
+  },
+  the_fallen: {
+    name: 'The Fallen',
+    narration: 'A companion has died. The party is smaller, quieter, and the weight of this place is heavier.',
+  },
+  rival: {
+    name: 'Rival Noticed',
+    narration: 'Word of the party\'s work has reached ears that prefer competition stayed buried.',
+  },
+  faction_standing: {
+    name: 'Known Quantity',
+    narration: 'The party has made enough of an impression that factions are starting to plan around them.',
+  },
+  revelation: {
+    name: 'Revelation',
+    narration: 'Something deeper has been uncovered. The picture is bigger than it first appeared.',
+  },
+  legendary: {
+    name: 'Legendary',
+    narration: 'Level 5. The party has moved past the threshold from unknown to formidable. Things that would have ignored them now pay attention.',
+  },
+  the_long_game: {
+    name: 'The Long Game',
+    narration: 'Ten sessions in. Most never make it this far. The dungeon knows you now.',
+  },
+};
+
+/**
+ * Check and award a milestone if not already granted.
+ * Returns the milestone record if newly awarded, null if already known.
+ */
+export function checkAndAwardMilestone(
+  state: CampaignSimulationState,
+  milestoneId: string,
+): MilestoneRecord | null {
+  if (state.milestones.find((m) => m.id === milestoneId)) return null;
+  const def = MILESTONE_DEFS[milestoneId];
+  if (!def) return null;
+  const record: MilestoneRecord = {
+    id: milestoneId,
+    name: def.name,
+    narration: def.narration,
+    triggeredAt: new Date().toISOString(),
+  };
+  state.milestones.push(record);
+  noteCampaignEvent(state, `Milestone reached: ${def.name}`);
+  return record;
+}
+
+export function getMilestones(state: CampaignSimulationState): MilestoneRecord[] {
+  return state.milestones;
 }
 
 // ─── Delve Pressure Functions ─────────────────────────────────────────────────
@@ -344,7 +449,7 @@ export function addLootWeight(state: CampaignSimulationState, gpWeight: number):
   }
   if (d.lootCarried >= ENCUMBRANCE_THRESHOLD * 2) {
     d.retreatPenalty = 2;
-    notes.push(`The haul is getting seriously heavy. A tactical retreat now would be slow and costly — ideal ambush conditions for anything following.`);
+    notes.push(`The haul is getting seriously heavy. A tactical retreat now would be slow and costly \u2014 ideal ambush conditions for anything following.`);
   }
   if (d.lootCarried >= ENCUMBRANCE_THRESHOLD * 3) {
     d.retreatPenalty = 3;
@@ -377,7 +482,7 @@ export function makeCamp(params: {
   if (fortified && rationsAvailable >= 1) {
     d.campQuality = 'fortified';
     d.tensionFromSupply = Math.max(0, d.tensionFromSupply - 2);
-    notes.push(`${leaderName}'s company makes a proper camp — barred door, rationed food, a proper watch rotation. Everyone wakes steadier.`);
+    notes.push(`${leaderName}'s company makes a proper camp \u2014 barred door, rationed food, a proper watch rotation. Everyone wakes steadier.`);
   } else if (rationsAvailable >= 1) {
     d.campQuality = 'good';
     d.tensionFromSupply = Math.max(0, d.tensionFromSupply - 1);
@@ -428,4 +533,3 @@ export function getLightModifiers(state: CampaignSimulationState): {
       return { scoutPenalty: 3, surprisePenalty: 3, mapPenalty: 3, description: 'Total darkness — scouting, mapping, and surprise are severely impaired.' };
   }
 }
-

@@ -165,6 +165,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
   const [sceneNpcs, setSceneNpcs] = useState<SceneNpc[]>([]);
   const [campaignState, setCampaignState] = useState<CampaignStateView | null>(null);
   const [openPanel, setOpenPanel] = useState<MobilePanel>(null);
+  const [showDeathModal, setShowDeathModal] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const headers = { Authorization: `Bearer ${player.token}`, 'Content-Type': 'application/json' };
@@ -214,7 +215,12 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
           id: l.id, type: l.type, actor: l.actor, content: l.content, timestamp: l.timestamp,
         })));
       } else if (data.type === 'character_update') {
-        setCharacter(data.payload);
+        setCharacter((prev: any) => {
+          if (prev?.status !== 'dead' && data.payload?.status === 'dead') {
+            setShowDeathModal(true);
+          }
+          return data.payload;
+        });
       } else if (data.type === 'scene_update') {
         setCurrentScene(prev => prev && prev.id === data.payload.id
           ? { ...prev, connections: data.payload.connections || prev.connections }
@@ -1015,6 +1021,41 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-2 backdrop-blur-sm sm:items-center" onClick={() => setShowSheet(false)}>
           <div className="max-h-[88vh] w-full max-w-2xl overflow-y-auto" onClick={e => e.stopPropagation()}>
             <CharacterSheet character={character} onClose={() => setShowSheet(false)} />
+          </div>
+        </div>
+      )}
+
+      {/* Death modal */}
+      {showDeathModal && character && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-ink/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-xl border border-blood/30 bg-parchment p-6 shadow-2xl text-center">
+            <div className="mb-4 text-blood text-4xl">✦</div>
+            <h2 className="text-xl font-heading font-bold text-leather-dark mb-2">
+              {character.name} is Dead
+            </h2>
+            <p className="text-sm font-body text-ink-faint mb-1">
+              Level {character.level} {character.char_class}. The dungeon took them.
+            </p>
+            <p className="text-sm font-body text-ink mb-6">
+              The company will remember them. Whether that changes anything is another matter.
+            </p>
+            <div className="space-y-2">
+              <button
+                onClick={() => {
+                  setShowDeathModal(false);
+                  onBack();
+                }}
+                className="w-full rounded-lg bg-leather px-4 py-3 text-sm font-heading font-bold text-parchment-light hover:bg-leather-dark transition-colors"
+              >
+                Continue with a new character
+              </button>
+              <button
+                onClick={() => setShowDeathModal(false)}
+                className="w-full rounded-lg border border-leather/20 px-4 py-2 text-sm font-body text-ink-faint hover:text-ink transition-colors"
+              >
+                Stay and watch the survivors
+              </button>
+            </div>
           </div>
         </div>
       )}
