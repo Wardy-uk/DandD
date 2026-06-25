@@ -8,8 +8,7 @@ import type { Server as SocketServer, Socket } from 'socket.io';
 import type { Database } from 'sql.js';
 import type { ServerToClientEvents, ClientToServerEvents } from '../shared/types.js';
 import { get, all, run } from './db/helpers.js';
-import { aiDirector } from './ai/director.js';
-import { storyReactionPrompt, DM_SYSTEM_PROMPT } from './ai/prompts.js';
+import { describeScene, findMovementTarget, resolveExplorationAction } from './game/deterministic.js';
 
 interface ConnectedPlayer {
   socketId: string;
@@ -100,7 +99,7 @@ export function setupSocketHandlers(
 
     // ─── Player Action (exploration/roleplay) ─────────────────────────
 
-    socket.on('game:action', async (data) => {
+    socket.on('game:action', (data) => {
       const { campaignId, action, details } = data;
       const player = connectedPlayers.get(socket.id);
       if (!player) return;
@@ -124,47 +123,79 @@ export function setupSocketHandlers(
         'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
         [logId, campaignId, 1, 'player_action', character.name, action]);
 
-      // Tell everyone the DM is thinking
-      io.to(`campaign:${campaignId}`).emit('game:dm_thinking', {
-        status: 'The DM considers your action...',
-      });
-
-      // Get context for the AI
       const campaign = get(db, 'SELECT * FROM campaigns WHERE id = ?', [campaignId]) as any;
       const scene = campaign?.current_scene_id
         ? get(db, 'SELECT * FROM scenes WHERE id = ?', [campaign.current_scene_id]) as any
         : null;
-      const recentLogs = all(db,
-        'SELECT content FROM game_log WHERE campaign_id = ? ORDER BY timestamp DESC LIMIT 10',
-        [campaignId]) as any[];
+      if (!scene) {
+        io.to(`campaign:${campaignId}`).emit('game:narration', {
+          actor: 'DM',
+          content: 'The campaign has no current scene yet. Enter or seed a location first so the adventure has somewhere concrete to happen.',
+        });
+        return;
+      }
 
-      // Ask the AI DM to respond
-      const prompt = storyReactionPrompt({
-        playerAction: action,
-        sceneContext: scene ? `${scene.name}: ${scene.brief}` : 'Unknown location',
-        partyContext: `${character.name}, level ${character.level} ${character.race} ${character.char_class}`,
-        recentEvents: recentLogs.map(l => l.content).reverse(),
-        campaignSetting: campaign?.setting || 'A classic fantasy world',
+      const movementTarget = findMovementTarget(action, scene);
+      if (movementTarget) {
+        const nextScene = get(db, 'SELECT * FROM scenes WHERE id = ? AND campaign_id = ?',
+          [movementTarget.targetSceneId, campaignId]) as any;
+        if (!nextScene) {
+          io.to(`campaign:${campaignId}`).emit('game:narration', {
+            actor: 'DM',
+            content: `The way ${movementTarget.direction} leads nowhere usable yet.`,
+          });
+          return;
+        }
+
+        run(db, 'UPDATE campaigns SET current_scene_id = ? WHERE id = ?', [nextScene.id, campaignId]);
+        run(db, 'UPDATE scenes SET visited = 1 WHERE id = ?', [nextScene.id]);
+
+        const npcsInScene = all(db,
+          'SELECT name, personality FROM npcs WHERE campaign_id = ? AND location_scene_id = ? AND alive = 1',
+          [campaignId, nextScene.id]) as any[];
+        const characters = all(db,
+          'SELECT name, level, race, char_class FROM characters WHERE campaign_id = ? AND status = "active"',
+          [campaignId]) as any[];
+        const description = describeScene({
+          scene: nextScene,
+          npcs: npcsInScene,
+          party: characters,
+        });
+        const connections = JSON.parse(nextScene.connections || '[]').filter((entry: any) => !entry.hidden);
+
+        run(db,
+          'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+          [crypto.randomUUID(), campaignId, 1, 'scene_enter', 'DM', description]);
+        io.to(`campaign:${campaignId}`).emit('game:scene_enter', {
+          scene: { ...nextScene, connections },
+          description,
+        });
+        return;
+      }
+
+      const npcsInScene = all(db,
+        'SELECT * FROM npcs WHERE campaign_id = ? AND location_scene_id = ? AND alive = 1',
+        [campaignId, scene.id]) as any[];
+      const outcome = resolveExplorationAction({
+        action,
+        scene,
+        character,
+        npcs: npcsInScene,
       });
 
-      aiDirector.enqueue({
-        campaignId,
-        type: 'story_react',
-        priority: 1,
-        prompt,
-        callback: (result) => {
-          // Log the DM response
-          const dmLogId = crypto.randomUUID();
-          run(db,
-            'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
-            [dmLogId, campaignId, 1, 'dm_response', 'DM', result]);
+      if (outcome.updatedConnections) {
+        run(db, 'UPDATE scenes SET connections = ? WHERE id = ?',
+          [JSON.stringify(outcome.updatedConnections), scene.id]);
+      }
 
-          // Broadcast to all players
-          io.to(`campaign:${campaignId}`).emit('game:narration', {
-            content: result,
-            actor: 'DM',
-          });
-        },
+      const dmLogId = crypto.randomUUID();
+      run(db,
+        'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+        [dmLogId, campaignId, 1, 'dm_response', 'DM', outcome.content]);
+
+      io.to(`campaign:${campaignId}`).emit('game:narration', {
+        content: outcome.content,
+        actor: outcome.actor,
       });
     });
 

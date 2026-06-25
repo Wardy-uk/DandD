@@ -12,7 +12,14 @@ export function createAiRoutes(): Router {
   // AI queue status
   router.get('/status', (_req, res) => {
     const status = aiDirector.getStatus();
-    res.json({ ok: true, data: status });
+    res.json({
+      ok: true,
+      data: {
+        ...status,
+        runtimeMode: 'deterministic',
+        aiUsage: 'nightly_growth_only',
+      },
+    });
   });
 
   // Ollama health

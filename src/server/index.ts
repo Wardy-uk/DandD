@@ -19,6 +19,7 @@ import { createAiRoutes } from './routes/ai.js';
 import { createAdminRoutes } from './routes/admin.js';
 import { setupSocketHandlers } from './socket.js';
 import { healthCheck as ollamaHealthCheck } from './ai/ollama.js';
+import { startNightlyGrowthScheduler } from './ai/scheduler.js';
 import type { ServerToClientEvents, ClientToServerEvents } from '../shared/types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -73,6 +74,8 @@ async function start() {
         server: true,
         database: true,
         ollama: ollamaOk,
+        runtimeMode: 'deterministic',
+        aiUsage: 'nightly_growth_only',
         version: process.env.npm_package_version || '0.1.0',
       },
     });
@@ -81,6 +84,7 @@ async function start() {
   // ─── Socket.IO ──────────────────────────────────────────────────────────────
 
   setupSocketHandlers(io, db);
+  startNightlyGrowthScheduler(db);
 
   // ─── Static Files (production) ──────────────────────────────────────────────
 

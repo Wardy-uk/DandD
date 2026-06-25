@@ -9,10 +9,6 @@ import type { Database } from 'sql.js';
 import type { Server as SocketServer } from 'socket.io';
 import { get, all, run } from '../db/helpers.js';
 import { authMiddleware, requireAuth } from './auth.js';
-import { aiDirector } from '../ai/director.js';
-import {
-  sceneDescriptionPrompt, npcDialoguePrompt, combatNarrationPrompt, rulingPrompt,
-} from '../ai/prompts.js';
 import {
   resolveAttack, resolveMissileAttack, rollGroupInitiative, rollIndividualInitiative,
   makeSavingThrow, checkMorale, turnUndead, rollSurpriseCheck,
@@ -20,6 +16,7 @@ import {
 } from '../engine/combat.js';
 import { roll, rollNotation, d20, d100, roll2d6 } from '../engine/dice.js';
 import type { SavingThrows } from '../engine/tables.js';
+import { describeScene, describeNpcResponse, describeCombatNarration } from '../game/deterministic.js';
 
 export function createGameRoutes(db: Database, io: SocketServer): Router {
   const router = Router();
@@ -28,7 +25,7 @@ export function createGameRoutes(db: Database, io: SocketServer): Router {
   // ─── Scene Management ───────────────────────────────────────────────
 
   // Enter a scene (move to a new location)
-  router.post('/scene/enter', requireAuth, async (req: any, res) => {
+  router.post('/scene/enter', requireAuth, (req: any, res) => {
     const { campaignId, sceneId } = req.body;
 
     const scene = get(db, 'SELECT * FROM scenes WHERE id = ? AND campaign_id = ?',
@@ -55,40 +52,11 @@ export function createGameRoutes(db: Database, io: SocketServer): Router {
       [campaignId]) as any[];
     const partyContext = characters.map(c => `${c.name} (Level ${c.level} ${c.race} ${c.char_class})`).join(', ');
 
-    // If scene already has an AI description, use it; otherwise generate
-    if (scene.ai_description) {
-      io.to(`campaign:${campaignId}`).emit('game:scene_enter', {
-        scene: { ...scene, connections },
-        description: scene.ai_description,
-      });
-      res.json({ ok: true, data: { scene, description: scene.ai_description } });
-      return;
-    }
-
-    // Generate description via AI
-    io.to(`campaign:${campaignId}`).emit('game:dm_thinking', {
-      status: 'The DM surveys the new location...',
+    const description = describeScene({
+      scene,
+      npcs: npcsInScene,
+      party: characters,
     });
-
-    const prompt = sceneDescriptionPrompt({
-      sceneName: scene.name,
-      sceneBrief: scene.brief,
-      lightLevel: scene.light_level,
-      terrainType: scene.terrain_type,
-      connections: connections.map((c: any) => c.direction),
-      npcsPresent: npcsInScene.map(n => `${n.name} (${n.personality})`),
-      partyContext,
-    });
-
-    const description = await aiDirector.enqueueAndWait({
-      campaignId,
-      type: 'scene',
-      priority: 1,
-      prompt,
-    });
-
-    // Cache the description
-    run(db, 'UPDATE scenes SET ai_description = ? WHERE id = ?', [description, sceneId]);
 
     // Log it
     run(db,
@@ -105,7 +73,7 @@ export function createGameRoutes(db: Database, io: SocketServer): Router {
 
   // ─── NPC Interaction ────────────────────────────────────────────────
 
-  router.post('/npc/talk', requireAuth, async (req: any, res) => {
+  router.post('/npc/talk', requireAuth, (req: any, res) => {
     const { campaignId, npcId, characterId, message } = req.body;
 
     const npc = get(db, 'SELECT * FROM npcs WHERE id = ?', [npcId]) as any;
@@ -119,27 +87,11 @@ export function createGameRoutes(db: Database, io: SocketServer): Router {
       'SELECT * FROM scenes WHERE id = (SELECT current_scene_id FROM campaigns WHERE id = ?)',
       [campaignId]) as any;
 
-    io.to(`campaign:${campaignId}`).emit('game:dm_thinking', {
-      status: `${npc.name} considers their response...`,
-    });
-
-    const prompt = npcDialoguePrompt({
-      npcName: npc.name,
-      npcPersonality: npc.personality,
-      npcAppearance: npc.appearance,
-      npcVoiceNotes: npc.voice_notes,
-      npcDisposition: npc.disposition,
-      npcMemory: JSON.parse(npc.memory || '[]'),
-      playerCharName: character.name,
-      playerSaid: message,
-      sceneContext: scene ? `${scene.name}: ${scene.brief}` : 'Unknown',
-    });
-
-    const response = await aiDirector.enqueueAndWait({
-      campaignId,
-      type: 'npc_dialogue',
-      priority: 1,
-      prompt,
+    const response = describeNpcResponse({
+      npc,
+      character,
+      message,
+      sceneName: scene?.name,
     });
 
     // Update NPC memory
@@ -272,7 +224,7 @@ export function createGameRoutes(db: Database, io: SocketServer): Router {
   });
 
   // Resolve a combat attack
-  router.post('/combat/attack', requireAuth, async (req: any, res) => {
+  router.post('/combat/attack', requireAuth, (req: any, res) => {
     const { campaignId, encounterId, attackerId, defenderId, ranged, range } = req.body;
 
     const attacker = get(db, 'SELECT * FROM combatants WHERE id = ?', [attackerId]) as any;
@@ -319,26 +271,12 @@ export function createGameRoutes(db: Database, io: SocketServer): Router {
       'INSERT INTO game_log (id, campaign_id, type, actor, content, mechanical_detail) VALUES (?, ?, ?, ?, ?, ?)',
       [uuid(), campaignId, 'combat', attacker.name, result.description, JSON.stringify(result)]);
 
-    // Get AI narration for the attack
     const scene = get(db,
       'SELECT * FROM scenes WHERE id = (SELECT scene_id FROM encounters WHERE id = ?)',
       [encounterId]) as any;
-
-    aiDirector.enqueue({
-      campaignId,
-      type: 'combat_narration',
-      priority: 2,
-      prompt: combatNarrationPrompt({
-        sceneContext: scene?.name || 'battlefield',
-        round: 1,
-        actionDescription: result.description,
-      }),
-      callback: (narration) => {
-        io.to(`campaign:${campaignId}`).emit('game:narration', {
-          content: narration,
-          actor: 'DM',
-        });
-      },
+    io.to(`campaign:${campaignId}`).emit('game:narration', {
+      content: describeCombatNarration(result.description, scene?.name),
+      actor: 'DM',
     });
 
     io.to(`campaign:${campaignId}`).emit('game:combat_result', { result });

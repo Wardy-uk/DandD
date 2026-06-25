@@ -7,6 +7,7 @@ import bcrypt from 'bcryptjs';
 import type { Database } from 'sql.js';
 import { get, all, run } from '../db/helpers.js';
 import { authMiddleware, requireAuth } from './auth.js';
+import { assessCampaignReadiness, runNightlyGrowth } from '../ai/nightlyGrowth.js';
 
 function requireAdmin(req: any, res: any, next: any) {
   if (!req.player) {
@@ -101,6 +102,65 @@ export function createAdminRoutes(db: Database): Router {
 
     run(db, 'UPDATE players SET role = "admin" WHERE id = ?', [req.player.id]);
     res.json({ ok: true, data: { message: 'You are now admin. Log out and back in.' } });
+  });
+
+  router.get('/campaigns/:id/growth', requireAuth, requireAdmin, (req: any, res) => {
+    const campaign = get(db, 'SELECT * FROM campaigns WHERE id = ?', [req.params.id]) as any;
+    if (!campaign) {
+      res.status(404).json({ ok: false, error: 'Campaign not found' });
+      return;
+    }
+
+    res.json({
+      ok: true,
+      data: {
+        campaign: {
+          id: campaign.id,
+          name: campaign.name,
+          aiGrowthEnabled: Boolean(campaign.ai_growth_enabled),
+          targetSceneBuffer: campaign.target_scene_buffer,
+          targetNpcBuffer: campaign.target_npc_buffer,
+          lastGrowthCheckAt: campaign.last_growth_check_at,
+          lastGrowthBuildAt: campaign.last_growth_build_at,
+        },
+        assessment: assessCampaignReadiness(db, req.params.id),
+      },
+    });
+  });
+
+  router.post('/campaigns/:id/growth/run', requireAuth, requireAdmin, async (req: any, res) => {
+    const campaign = get(db, 'SELECT * FROM campaigns WHERE id = ?', [req.params.id]) as any;
+    if (!campaign) {
+      res.status(404).json({ ok: false, error: 'Campaign not found' });
+      return;
+    }
+
+    const result = await runNightlyGrowth(db, req.params.id);
+    res.json({ ok: true, data: result });
+  });
+
+  router.patch('/campaigns/:id/growth', requireAuth, requireAdmin, (req: any, res) => {
+    const { aiGrowthEnabled, targetSceneBuffer, targetNpcBuffer } = req.body;
+    const campaign = get(db, 'SELECT id FROM campaigns WHERE id = ?', [req.params.id]) as any;
+    if (!campaign) {
+      res.status(404).json({ ok: false, error: 'Campaign not found' });
+      return;
+    }
+
+    run(db, `
+      UPDATE campaigns
+      SET ai_growth_enabled = COALESCE(?, ai_growth_enabled),
+          target_scene_buffer = COALESCE(?, target_scene_buffer),
+          target_npc_buffer = COALESCE(?, target_npc_buffer)
+      WHERE id = ?
+    `, [
+      typeof aiGrowthEnabled === 'boolean' ? (aiGrowthEnabled ? 1 : 0) : null,
+      Number.isFinite(targetSceneBuffer) ? targetSceneBuffer : null,
+      Number.isFinite(targetNpcBuffer) ? targetNpcBuffer : null,
+      req.params.id,
+    ]);
+
+    res.json({ ok: true, data: { message: 'Campaign growth settings updated' } });
   });
 
   return router;

@@ -88,6 +88,12 @@ function runMigrations() {
     )
   `);
 
+  try { db.run('ALTER TABLE campaigns ADD COLUMN ai_growth_enabled INTEGER DEFAULT 1'); } catch {}
+  try { db.run('ALTER TABLE campaigns ADD COLUMN target_scene_buffer INTEGER DEFAULT 6'); } catch {}
+  try { db.run('ALTER TABLE campaigns ADD COLUMN target_npc_buffer INTEGER DEFAULT 4'); } catch {}
+  try { db.run('ALTER TABLE campaigns ADD COLUMN last_growth_check_at TEXT'); } catch {}
+  try { db.run('ALTER TABLE campaigns ADD COLUMN last_growth_build_at TEXT'); } catch {}
+
   db.run(`
     CREATE TABLE IF NOT EXISTS campaign_players (
       campaign_id TEXT NOT NULL,
