@@ -27,7 +27,7 @@ export default function CharacterSheet({ character, onClose }: Props) {
             Player: {c.player_name || c.playerName}
           </p>
         </div>
-        <button onClick={onClose} className="text-ink-faint hover:text-ink text-xl leading-none">&times;</button>
+        <button onClick={onClose} className="text-ink-faint hover:text-ink text-2xl leading-none p-1 -mr-1 min-w-[2.5rem] min-h-[2.5rem] flex items-center justify-center">&times;</button>
       </div>
 
       <div className="h-px bg-gradient-to-r from-leather/30 via-leather/10 to-transparent mb-4" />

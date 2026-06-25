@@ -373,7 +373,7 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
 
       {/* Step 2: Choose Race */}
       {step === 2 && (
-        <div className="border border-leather/15 rounded-lg p-6 bg-parchment-light/40">
+        <div className="border border-leather/15 rounded-lg p-4 sm:p-6 bg-parchment-light/40">
           <h3 className="font-heading font-bold text-leather text-sm uppercase tracking-wider mb-3">
             II. Choose Race
           </h3>

@@ -124,6 +124,8 @@ const COMPANION_DUTIES = [
   { key: 'torch', label: 'Torch', command: 'to carry the torch' },
 ] as const;
 
+type MobilePanel = null | 'character' | 'company' | 'scene' | 'expedition' | 'map';
+
 interface Props {
   apiUrl: string;
   player: { id: string; token: string; displayName: string };
@@ -147,6 +149,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
   const [companions, setCompanions] = useState<Companion[]>([]);
   const [sceneNpcs, setSceneNpcs] = useState<SceneNpc[]>([]);
   const [campaignState, setCampaignState] = useState<CampaignStateView | null>(null);
+  const [openPanel, setOpenPanel] = useState<MobilePanel>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const headers = { Authorization: `Bearer ${player.token}`, 'Content-Type': 'application/json' };
@@ -154,10 +157,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
   // Join campaign socket room
   useEffect(() => {
     socket.emit('game:join', { campaignId, playerId: player.id });
-
-    return () => {
-      socket.emit('game:leave', { campaignId });
-    };
+    return () => { socket.emit('game:leave', { campaignId }); };
   }, [campaignId, player.id, socket]);
 
   // Fetch character data
@@ -184,7 +184,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
 
     const onSceneEnter = (data: { scene: Scene; description: string }) => {
       setCurrentScene(data.scene);
-       setEncounterActive(false);
+      setEncounterActive(false);
       setDmThinking('');
       addLogEntry('scene_enter', 'DM', data.description);
     };
@@ -202,9 +202,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
     };
 
     const onStateUpdate = (data: { type: string; payload: any }) => {
-      if (data.type === 'campaign') {
-        // Campaign state received
-      } else if (data.type === 'recent_logs') {
+      if (data.type === 'recent_logs') {
         setGameLog(data.payload.map((l: any) => ({
           id: l.id,
           type: l.type,
@@ -343,49 +341,31 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
   };
   const className = String(character?.char_class || '').toLowerCase();
   const classAction = encounterActive
-    ? className === 'paladin'
-      ? 'Lay on hands'
-      : className === 'cleric'
-        ? 'Turn undead'
-        : className === 'druid'
-          ? 'Lead a prayer'
-        : className === 'ranger'
-          ? 'Rally the line'
-          : className === 'thief'
-            ? 'Check supplies'
-            : className === 'fighter'
-              ? 'Rally the line'
-              : 'Take stock'
-    : className === 'paladin'
-      ? 'Lead a prayer'
-      : className === 'cleric' || className === 'druid'
-        ? 'Bless the company'
-        : className === 'ranger'
-          ? 'Read their intent'
-          : className === 'thief'
-            ? 'Check supplies'
-          : 'Take stock';
+    ? className === 'paladin' ? 'Lay on hands'
+      : className === 'cleric' ? 'Turn undead'
+      : className === 'druid' ? 'Lead a prayer'
+      : className === 'ranger' ? 'Rally the line'
+      : className === 'thief' ? 'Check supplies'
+      : className === 'fighter' ? 'Rally the line'
+      : 'Take stock'
+    : className === 'paladin' ? 'Lead a prayer'
+      : className === 'cleric' || className === 'druid' ? 'Bless the company'
+      : className === 'ranger' ? 'Read their intent'
+      : className === 'thief' ? 'Check supplies'
+      : 'Take stock';
   const classActionTwo = encounterActive
-    ? className === 'paladin'
-      ? 'Smite evil'
-      : className === 'cleric'
-        ? 'Call for quarter'
-        : className === 'thief'
-          ? 'Take cover and aim'
-          : className === 'ranger'
-            ? 'Take cover and aim'
-            : className === 'fighter'
-              ? 'Hold the doorway'
-              : null
-    : className === 'paladin'
-      ? 'Sense evil'
-      : className === 'cleric' || className === 'druid'
-        ? 'Lead a prayer'
-        : className === 'thief'
-          ? 'Share supplies'
-          : className === 'ranger'
-            ? 'Read their intent'
-            : null;
+    ? className === 'paladin' ? 'Smite evil'
+      : className === 'cleric' ? 'Call for quarter'
+      : className === 'thief' ? 'Take cover and aim'
+      : className === 'ranger' ? 'Take cover and aim'
+      : className === 'fighter' ? 'Hold the doorway'
+      : null
+    : className === 'paladin' ? 'Sense evil'
+      : className === 'cleric' || className === 'druid' ? 'Lead a prayer'
+      : className === 'thief' ? 'Share supplies'
+      : className === 'ranger' ? 'Read their intent'
+      : null;
+
   const quickActions = [
     'Look around',
     'Listen carefully',
@@ -411,477 +391,545 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
     encounterActive ? 'Brace and hold' : 'Rest',
   ].filter(Boolean) as string[];
 
+  // Mobile panel metadata
+  const joinedCompanions = companions.filter(c => c.joinedParty);
+  const mobilePanels = [
+    { key: 'character' as const, label: 'Chr', show: !!character, badge: 0 },
+    { key: 'company' as const, label: 'Cmp', show: joinedCompanions.length > 0, badge: joinedCompanions.length },
+    { key: 'scene' as const, label: 'Scn', show: sceneNpcs.length > 0 || !!battlefield, badge: sceneNpcs.length },
+    { key: 'expedition' as const, label: 'Exp', show: !!campaignState, badge: 0 },
+    { key: 'map' as const, label: 'Map', show: !!campaignMap, badge: 0 },
+  ].filter(p => p.show);
+
+  const panelTitle = openPanel === 'character' ? (character?.name || 'Character')
+    : openPanel === 'company' ? 'Company'
+    : openPanel === 'scene' ? 'In This Scene'
+    : openPanel === 'expedition' ? 'Expedition'
+    : 'Map';
+
+  // ── Log entry renderer (shared between mobile and desktop) ──
+  const renderLogEntries = () => (
+    <>
+      {gameLog.length === 0 && (
+        <div className="text-center py-16 text-ink-faint font-body italic">
+          <p>The adventure awaits...</p>
+          <p className="text-xs mt-2">Type an action below to begin.</p>
+        </div>
+      )}
+      {gameLog.map(entry => (
+        <div key={entry.id} className={`animate-fade-in ${getLogEntryClass(entry.type)}`}>
+          {entry.actor && entry.type !== 'system' && (
+            <span className={`font-heading font-bold text-xs uppercase tracking-wide ${
+              entry.type === 'narration' || entry.type === 'dm_response' || entry.type === 'scene_enter'
+                ? 'text-leather'
+                : entry.type === 'combat'
+                  ? 'text-blood'
+                  : 'text-ink-light'
+            }`}>
+              {entry.actor}
+            </span>
+          )}
+          <p className={`font-body text-sm leading-relaxed ${
+            entry.type === 'narration' || entry.type === 'dm_response' || entry.type === 'scene_enter'
+              ? 'text-ink-light italic'
+              : entry.type === 'combat'
+                ? 'text-ink font-mono text-xs'
+                : entry.type === 'roll'
+                  ? 'text-silver font-mono text-xs'
+                  : entry.type === 'system'
+                    ? 'text-ink-faint italic text-xs'
+                    : 'text-ink'
+          }`}>
+            {entry.content}
+          </p>
+        </div>
+      ))}
+      {dmThinking && (
+        <div className="animate-fade-in">
+          <p className="text-sm text-leather/60 font-body italic flex items-center gap-2">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-leather/40 animate-pulse" />
+            {dmThinking}
+          </p>
+        </div>
+      )}
+      <div ref={logEndRef} />
+    </>
+  );
+
+  // ── Quick actions renderer ──
+  const renderQuickActions = (wrap: boolean) => (
+    <div className={`mb-3 ${wrap ? '' : '-mx-3 px-3 overflow-x-auto'}`}>
+      <div className={`flex gap-2 ${wrap ? 'flex-wrap' : 'flex-nowrap'}`}>
+        {quickActions.map(action => (
+          <button key={action} onClick={() => quickAction(action)}
+            className={`${wrap ? '' : 'flex-shrink-0'} text-xs px-3 py-1.5 rounded-full border border-leather/15 text-leather font-heading hover:bg-leather/5 transition-colors whitespace-nowrap`}>
+            {action}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
   return (
-    <div className="flex min-h-[calc(100vh-8rem)] flex-col gap-3 lg:h-[calc(100vh-120px)] lg:flex-row lg:gap-4">
-      {/* Left Sidebar — Character Panel */}
-      <div className="flex w-full flex-col gap-3 lg:w-72 lg:flex-shrink-0">
-        <button onClick={onBack} className="text-xs text-leather hover:text-leather-dark font-body">
-          &larr; Leave Campaign
-        </button>
+    <div className="relative">
 
-        {character && (
-          <div className="rounded-lg border border-leather/15 bg-parchment-light/40 p-3 sm:p-4">
-            <button onClick={() => setShowSheet(!showSheet)} className="w-full text-left">
-              <h3 className="font-heading font-bold text-leather-dark text-lg tracking-wide">
-                {character.name}
-              </h3>
-              <p className="text-xs text-ink-faint font-body">
-                Level {character.level} {character.race} {character.char_class}
-              </p>
-            </button>
+      {/* ═══════════════════════════════════════════════════
+          SHARED LAYOUT: sidebar on desktop, hidden on mobile
+          Log panel fills full height on mobile
+          ═══════════════════════════════════════════════════ */}
+      <div className="flex flex-col lg:flex-row gap-0 lg:gap-4 lg:h-[calc(100vh-120px)]">
 
-            <div className="h-px bg-leather/10 my-3" />
+        {/* ─ Desktop Sidebar ─ */}
+        <div className="hidden lg:flex w-72 flex-shrink-0 flex-col gap-3 overflow-y-auto pr-1">
+          <button onClick={onBack} className="text-xs text-leather hover:text-leather-dark font-body">
+            &larr; Leave Campaign
+          </button>
 
-            {/* HP Bar */}
-            <div className="mb-3">
-              <div className="flex justify-between text-xs font-heading mb-1">
-                <span className="text-ink-faint">HP</span>
-                <span className={character.hp <= character.max_hp * 0.25 ? 'text-blood font-bold' : 'text-ink-light'}>
-                  {character.hp}/{character.max_hp}
-                </span>
-              </div>
-              <div className="h-2 bg-parchment-dark/30 rounded-full overflow-hidden">
-                <div
-                  className="h-full rounded-full transition-all"
-                  style={{
+          {character && (
+            <div className="rounded-lg border border-leather/15 bg-parchment-light/40 p-3 sm:p-4">
+              <button onClick={() => setShowSheet(!showSheet)} className="w-full text-left">
+                <h3 className="font-heading font-bold text-leather-dark text-lg tracking-wide">
+                  {character.name}
+                </h3>
+                <p className="text-xs text-ink-faint font-body">
+                  Level {character.level} {character.race} {character.char_class}
+                </p>
+              </button>
+
+              <div className="h-px bg-leather/10 my-3" />
+
+              <div className="mb-3">
+                <div className="flex justify-between text-xs font-heading mb-1">
+                  <span className="text-ink-faint">HP</span>
+                  <span className={character.hp <= character.max_hp * 0.25 ? 'text-blood font-bold' : 'text-ink-light'}>
+                    {character.hp}/{character.max_hp}
+                  </span>
+                </div>
+                <div className="h-2 bg-parchment-dark/30 rounded-full overflow-hidden">
+                  <div className="h-full rounded-full transition-all" style={{
                     width: `${(character.hp / character.max_hp) * 100}%`,
                     backgroundColor: character.hp > character.max_hp * 0.5 ? '#2d5a1e'
                       : character.hp > character.max_hp * 0.25 ? '#c49a2a' : '#8b1a1a',
-                  }}
-                />
+                  }} />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-1 text-center mb-3">
+                <div className="text-xs"><span className="text-ink-faint font-heading">AC</span> <span className="font-bold font-heading">{character.ac}</span></div>
+                <div className="text-xs"><span className="text-ink-faint font-heading">THAC0</span> <span className="font-bold font-heading">{character.thac0}</span></div>
+                <div className="text-xs"><span className="text-ink-faint font-heading">Mv</span> <span className="font-bold font-heading">{character.base_movement || character.baseMovement}</span></div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-1 text-center mb-3">
+                {[['STR', character.str], ['DEX', character.dex], ['CON', character.con],
+                  ['INT', character.int], ['WIS', character.wis], ['CHA', character.cha]].map(([label, val]) => (
+                  <div key={label as string} className="text-xs">
+                    <span className="text-ink-faint font-heading">{label}</span>{' '}
+                    <span className="font-heading font-semibold">{val}</span>
+                    {label === 'STR' && character.str_percentile && (
+                      <span className="text-ink-faint">/{character.str_percentile}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="text-xs space-y-0.5">
+                <div className="font-heading font-bold text-ink-faint uppercase tracking-wider text-[10px] mb-1">Saving Throws</div>
+                {[['PP', character.save_paralysis], ['RW', character.save_rod],
+                  ['Ptr', character.save_petrify], ['BW', character.save_breath], ['Sp', character.save_spell]]
+                  .map(([label, val]) => (
+                    <div key={label as string} className="flex justify-between">
+                      <span className="text-ink-faint">{label}</span>
+                      <span className="font-heading font-semibold">{val}</span>
+                    </div>
+                  ))}
+              </div>
+
+              <div className="h-px bg-leather/10 my-3" />
+              <div className="flex justify-between text-xs">
+                <span className="text-ink-faint font-heading">Gold</span>
+                <span className="font-heading font-bold text-gold">{character.gold}</span>
+              </div>
+              <div className="flex justify-between text-xs mt-1">
+                <span className="text-ink-faint font-heading">XP</span>
+                <span className="font-heading font-semibold">{character.xp}/{character.xp_next || character.xpNext}</span>
               </div>
             </div>
+          )}
 
-            {/* Stats */}
-            <div className="grid grid-cols-3 gap-1 text-center mb-3">
-              <div className="text-xs"><span className="text-ink-faint font-heading">AC</span> <span className="font-bold font-heading">{character.ac}</span></div>
-              <div className="text-xs"><span className="text-ink-faint font-heading">THAC0</span> <span className="font-bold font-heading">{character.thac0}</span></div>
-              <div className="text-xs"><span className="text-ink-faint font-heading">Mv</span> <span className="font-bold font-heading">{character.base_movement || character.baseMovement}</span></div>
-            </div>
-
-            {/* Abilities */}
-            <div className="grid grid-cols-3 gap-1 text-center mb-3">
-              {[['STR', character.str], ['DEX', character.dex], ['CON', character.con],
-                ['INT', character.int], ['WIS', character.wis], ['CHA', character.cha]].map(([label, val]) => (
-                <div key={label as string} className="text-xs">
-                  <span className="text-ink-faint font-heading">{label}</span>{' '}
-                  <span className="font-heading font-semibold">{val}</span>
-                  {label === 'STR' && character.str_percentile && (
-                    <span className="text-ink-faint">/{character.str_percentile}</span>
-                  )}
+          {onlinePlayers.length > 0 && (
+            <div className="border border-leather/15 rounded-lg p-3 bg-parchment-light/40">
+              <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">Adventurers Present</div>
+              {onlinePlayers.map(name => (
+                <div key={name} className="text-xs font-body text-ink-light flex items-center gap-1.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-heal" />
+                  {name}
                 </div>
               ))}
             </div>
+          )}
 
-            {/* Saves */}
-            <div className="text-xs space-y-0.5">
-              <div className="font-heading font-bold text-ink-faint uppercase tracking-wider text-[10px] mb-1">Saving Throws</div>
-              {[['PP', character.save_paralysis], ['RW', character.save_rod],
-                ['Ptr', character.save_petrify], ['BW', character.save_breath], ['Sp', character.save_spell]]
-                .map(([label, val]) => (
-                  <div key={label as string} className="flex justify-between">
-                    <span className="text-ink-faint">{label}</span>
-                    <span className="font-heading font-semibold">{val}</span>
-                  </div>
+          {battlefield && (
+            <div className="border border-leather/15 rounded-lg p-3 bg-parchment-light/40">
+              <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">Battlefield Read</div>
+              <p className="text-xs font-body italic text-ink-light leading-relaxed">{battlefield.summary}</p>
+              <div className="grid grid-cols-2 gap-1 mt-3 text-[11px] font-body text-ink-faint">
+                <div>Sight: <span className="text-ink-light">{battlefield.visibility}</span></div>
+                <div>Footing: <span className="text-ink-light">{battlefield.footing}</span></div>
+                <div>Cover: <span className="text-ink-light">{battlefield.cover ? 'usable' : 'poor'}</span></div>
+                <div>Line: <span className="text-ink-light">{battlefield.chokepoint ? 'narrow' : 'open'}</span></div>
+              </div>
+              {battlefield.hazard && (
+                <div className="mt-2 text-[11px] font-body text-blood">Hazard: {battlefield.hazard}</div>
+              )}
+              <div className="mt-3 space-y-1">
+                {battlefield.tacticalAdvice.slice(0, 3).map((tip) => (
+                  <p key={tip} className="text-[11px] font-body text-ink-faint">{tip}</p>
                 ))}
-            </div>
-
-            {/* Gold */}
-            <div className="h-px bg-leather/10 my-3" />
-            <div className="flex justify-between text-xs">
-              <span className="text-ink-faint font-heading">Gold</span>
-              <span className="font-heading font-bold text-gold">{character.gold}</span>
-            </div>
-
-            {/* XP */}
-            <div className="flex justify-between text-xs mt-1">
-              <span className="text-ink-faint font-heading">XP</span>
-              <span className="font-heading font-semibold">{character.xp}/{character.xp_next || character.xpNext}</span>
-            </div>
-          </div>
-        )}
-
-        {/* Online Players */}
-        {onlinePlayers.length > 0 && (
-          <div className="border border-leather/15 rounded-lg p-3 bg-parchment-light/40">
-            <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">
-              Adventurers Present
-            </div>
-            {onlinePlayers.map(name => (
-              <div key={name} className="text-xs font-body text-ink-light flex items-center gap-1.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-heal" />
-                {name}
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          )}
 
-        {battlefield && (
-          <div className="border border-leather/15 rounded-lg p-3 bg-parchment-light/40">
-            <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">
-              Battlefield Read
-            </div>
-            <p className="text-xs font-body italic text-ink-light leading-relaxed">
-              {battlefield.summary}
-            </p>
-            <div className="grid grid-cols-2 gap-1 mt-3 text-[11px] font-body text-ink-faint">
-              <div>Sight: <span className="text-ink-light">{battlefield.visibility}</span></div>
-              <div>Footing: <span className="text-ink-light">{battlefield.footing}</span></div>
-              <div>Cover: <span className="text-ink-light">{battlefield.cover ? 'usable' : 'poor'}</span></div>
-              <div>Line: <span className="text-ink-light">{battlefield.chokepoint ? 'narrow' : 'open'}</span></div>
-            </div>
-            {battlefield.hazard && (
-              <div className="mt-2 text-[11px] font-body text-blood">
-                Hazard: {battlefield.hazard}
-              </div>
-            )}
-            <div className="mt-3 space-y-1">
-              {battlefield.tacticalAdvice.slice(0, 3).map((tip) => (
-                <p key={tip} className="text-[11px] font-body text-ink-faint">
-                  {tip}
-                </p>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {campaignState && (
-          <div className="border border-leather/15 rounded-lg p-3 bg-parchment-light/40">
-            <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">
-              Expedition State
-            </div>
-            <div className="mb-2">
-              <div className="flex justify-between text-[11px] font-body text-ink-faint">
-                <span>Pressure</span>
-                <span className="text-ink-light">{campaignState.encounterPressure}/10</span>
-              </div>
-              <div className="mt-1 h-2 rounded-full bg-parchment-dark/30 overflow-hidden">
-                <div
-                  className="h-full rounded-full transition-all"
-                  style={{
+          {campaignState && (
+            <div className="border border-leather/15 rounded-lg p-3 bg-parchment-light/40">
+              <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">Expedition State</div>
+              <div className="mb-2">
+                <div className="flex justify-between text-[11px] font-body text-ink-faint">
+                  <span>Pressure</span>
+                  <span className="text-ink-light">{campaignState.encounterPressure}/10</span>
+                </div>
+                <div className="mt-1 h-2 rounded-full bg-parchment-dark/30 overflow-hidden">
+                  <div className="h-full rounded-full transition-all" style={{
                     width: `${Math.min(100, campaignState.encounterPressure * 10)}%`,
                     backgroundColor: campaignState.encounterPressure >= 7 ? '#8b1a1a'
                       : campaignState.encounterPressure >= 4 ? '#c49a2a' : '#2d5a1e',
-                  }}
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-1 text-[11px] font-body text-ink-faint">
-              <div>Torches: <span className="text-ink-light">{carriedSupplies.torches} on hand</span></div>
-              <div>Rations: <span className="text-ink-light">{carriedSupplies.rations} on hand</span></div>
-              <div>Arrows: <span className="text-ink-light">{carriedSupplies.arrows} on hand</span></div>
-              <div>Bandages: <span className="text-ink-light">{carriedSupplies.bandages} on hand</span></div>
-              <div>Spent torches: <span className="text-ink-light">{campaignState.supply.torchesBurned}</span></div>
-              <div>Spent rations: <span className="text-ink-light">{campaignState.supply.rationsSpent}</span></div>
-              <div>Spent arrows: <span className="text-ink-light">{campaignState.supply.arrowsSpent}</span></div>
-              <div>Used bandages: <span className="text-ink-light">{campaignState.supply.bandagesUsed}</span></div>
-            </div>
-            <div className="mt-3 space-y-2">
-              {campaignState.factions.slice(0, 4).map((faction) => (
-                <div key={faction.key} className="rounded-lg border border-leather/10 bg-parchment/60 p-2">
-                  <div className="flex items-center justify-between text-[11px] font-heading">
-                    <span className="text-leather-dark">{faction.name}</span>
-                    <span className="text-ink-faint">Rep {faction.reputation} • Heat {faction.heat}</span>
-                  </div>
-                  <div className="mt-1 text-[11px] font-body text-ink-faint">{faction.summary}</div>
+                  }} />
                 </div>
-              ))}
-            </div>
-            {campaignState.recentEvents.length > 0 && (
-              <div className="mt-3 space-y-1">
-                {campaignState.recentEvents.slice(0, 3).map((event) => (
-                  <p key={event} className="text-[11px] font-body text-ink-faint italic">
-                    {event}
-                  </p>
+              </div>
+              <div className="grid grid-cols-2 gap-1 text-[11px] font-body text-ink-faint">
+                <div>Torches: <span className="text-ink-light">{carriedSupplies.torches} on hand</span></div>
+                <div>Rations: <span className="text-ink-light">{carriedSupplies.rations} on hand</span></div>
+                <div>Arrows: <span className="text-ink-light">{carriedSupplies.arrows} on hand</span></div>
+                <div>Bandages: <span className="text-ink-light">{carriedSupplies.bandages} on hand</span></div>
+                <div>Spent torches: <span className="text-ink-light">{campaignState.supply.torchesBurned}</span></div>
+                <div>Spent rations: <span className="text-ink-light">{campaignState.supply.rationsSpent}</span></div>
+                <div>Spent arrows: <span className="text-ink-light">{campaignState.supply.arrowsSpent}</span></div>
+                <div>Used bandages: <span className="text-ink-light">{campaignState.supply.bandagesUsed}</span></div>
+              </div>
+              <div className="mt-3 space-y-2">
+                {campaignState.factions.slice(0, 4).map((faction) => (
+                  <div key={faction.key} className="rounded-lg border border-leather/10 bg-parchment/60 p-2">
+                    <div className="flex items-center justify-between text-[11px] font-heading">
+                      <span className="text-leather-dark">{faction.name}</span>
+                      <span className="text-ink-faint">Rep {faction.reputation} · Heat {faction.heat}</span>
+                    </div>
+                    <div className="mt-1 text-[11px] font-body text-ink-faint">{faction.summary}</div>
+                  </div>
                 ))}
               </div>
-            )}
-          </div>
-        )}
-
-        {companions.length > 0 && (
-          <div className="border border-leather/15 rounded-lg p-3 bg-parchment-light/40">
-            <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">
-              Company
-            </div>
-            <div className="space-y-2">
-              {companions.filter((companion) => companion.joinedParty).map((companion) => (
-                <div key={companion.id} className="rounded-lg border border-leather/10 bg-parchment/60 p-2">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="font-heading text-xs font-bold text-leather-dark">{companion.name}</div>
-                      <div className="text-[11px] font-body text-ink-faint italic">
-                        {companion.race} {companion.charClass} • {companion.companionRole} • {companion.relationshipLabel}
-                      </div>
-                    </div>
-                    <div className="text-[11px] font-heading text-ink-light">
-                      {companion.hp}/{companion.maxHp} HP
-                    </div>
-                  </div>
-                  <div className="mt-1 text-[11px] font-body text-ink-light">
-                    Duty: {companion.duty || 'unset'}
-                  </div>
-                  <div className="mt-1 text-[11px] font-body text-ink-faint">
-                    Trust {companion.relationship.trust} • Bond {companion.relationship.bond} • Tension {companion.relationship.tension}
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    <button
-                      type="button"
-                      onClick={() => quickAction(`Put ${companion.name} first in the marching order`)}
-                      className="rounded-full border border-leather/15 px-2 py-1 text-[10px] font-heading text-leather hover:bg-leather/5"
-                    >
-                      Forward
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => quickAction(`Put ${companion.name} last in the marching order`)}
-                      className="rounded-full border border-leather/15 px-2 py-1 text-[10px] font-heading text-leather hover:bg-leather/5"
-                    >
-                      Back
-                    </button>
-                    {COMPANION_DUTIES.map((duty) => (
-                      <button
-                        key={duty.key}
-                        type="button"
-                        onClick={() => quickAction(`Tell ${companion.name} ${duty.command}`)}
-                        className={`rounded-full border px-2 py-1 text-[10px] font-heading transition-colors ${
-                          companion.duty === duty.key
-                            ? 'border-leather bg-leather/10 text-leather-dark'
-                            : 'border-leather/15 text-leather hover:bg-leather/5'
-                        }`}
-                      >
-                        {duty.label}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="mt-1 text-[11px] font-body text-ink-faint">
-                    Wants: {companion.aspiration}
-                  </div>
-                  <div className="mt-1 text-[11px] font-body text-ink-faint">
-                    Resents: {companion.grievance}
-                  </div>
-                  <div className="mt-1 text-[11px] font-body text-ink-light">
-                    Lead: {companion.personalQuestTitle} {companion.personalQuestResolved ? '(resolved)' : `(${Math.min(companion.personalQuestProgress, 3)}/3)`}
-                  </div>
-                  <div className="mt-1 text-[11px] font-body text-ink-faint">
-                    {companion.personalQuestNeed}
-                  </div>
-                  {companion.relationship.lastBeat && (
-                    <p className="mt-1 text-[11px] font-body text-ink-faint">
-                      {companion.relationship.lastBeat}
-                    </p>
-                  )}
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    <button
-                      type="button"
-                      onClick={() => quickAction(`Comfort ${companion.name}`)}
-                      className="rounded-full border border-leather/15 px-2 py-1 text-[10px] font-heading text-leather hover:bg-leather/5"
-                    >
-                      Comfort
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => quickAction(`Share food with ${companion.name}`)}
-                      className="rounded-full border border-leather/15 px-2 py-1 text-[10px] font-heading text-leather hover:bg-leather/5"
-                    >
-                      Share Food
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => quickAction(`Share 10 gp with ${companion.name}`)}
-                      className="rounded-full border border-leather/15 px-2 py-1 text-[10px] font-heading text-leather hover:bg-leather/5"
-                    >
-                      Gift Coin
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => quickAction(`Dismiss ${companion.name} from the company`)}
-                      className="rounded-full border border-blood/20 px-2 py-1 text-[10px] font-heading text-blood hover:bg-blood/5"
-                    >
-                      Dismiss
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {sceneNpcs.length > 0 && (
-          <div className="border border-leather/15 rounded-lg p-3 bg-parchment-light/40">
-            <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">
-              In This Scene
-            </div>
-            <div className="space-y-2">
-              {sceneNpcs.map((npc) => (
-                <div key={npc.id} className="rounded-lg border border-leather/10 bg-parchment/60 p-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="font-heading text-xs font-bold text-leather-dark">{npc.name}</div>
-                      <div className="text-[11px] font-body text-ink-faint italic">
-                        {npc.race} {npc.charClass} • {npc.joinedParty ? `${npc.companionRole} • ${npc.duty}` : npc.disposition}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => quickAction(npc.joinedParty ? `Talk to ${npc.name}` : `Ask ${npc.name} to join us`)}
-                      className="rounded-full border border-leather/15 px-2 py-1 text-[10px] font-heading text-leather hover:bg-leather/5"
-                    >
-                      {npc.joinedParty ? 'Talk' : 'Recruit'}
-                    </button>
-                  </div>
-                  <div className="mt-1 text-[11px] font-body text-ink-faint">
-                    {npc.personality}
-                  </div>
-                  <div className="mt-1 text-[11px] font-body text-ink-light">
-                    {npc.relationshipLabel} • {npc.recruitHint}
-                  </div>
-                  {!npc.joinedParty && (
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      <button
-                        type="button"
-                        onClick={() => quickAction(`Ask ${npc.name} to join us`)}
-                        className="rounded-full border border-leather/15 px-2 py-1 text-[10px] font-heading text-leather hover:bg-leather/5"
-                      >
-                        Recruit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => quickAction(`Talk to ${npc.name}`)}
-                        className="rounded-full border border-leather/15 px-2 py-1 text-[10px] font-heading text-leather hover:bg-leather/5"
-                      >
-                        Talk
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => quickAction(`Read ${npc.name}'s intent`)}
-                        className="rounded-full border border-leather/15 px-2 py-1 text-[10px] font-heading text-leather hover:bg-leather/5"
-                      >
-                        Read Intent
-                      </button>
-                    </div>
-                  )}
-                  {npc.joinedParty && (
-                    <>
-                      <div className="mt-1 text-[11px] font-body text-ink-faint">
-                        Wants: {npc.aspiration}
-                      </div>
-                      <div className="mt-1 text-[11px] font-body text-ink-light">
-                        Lead: {npc.personalQuestTitle} {npc.personalQuestResolved ? '(resolved)' : `(${Math.min(npc.personalQuestProgress, 3)}/3)`}
-                      </div>
-                    </>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <CampaignMap mapData={campaignMap} />
-      </div>
-
-      {/* Main Panel — Game Log & Input */}
-      <div className="flex min-h-[60vh] flex-1 flex-col overflow-hidden rounded-lg border border-leather/15 bg-parchment-light/30">
-        {/* Scene Header */}
-        {currentScene && (
-          <div className="border-b border-leather/10 bg-parchment-light/40 px-3 py-3 sm:px-5">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <h2 className="font-heading font-bold tracking-wide text-leather-dark">
-                {currentScene.name}
-              </h2>
-              {currentScene.connections.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {currentScene.connections.map((c, i) => (
-                    <button key={i} onClick={() => quickAction(`I go ${c.direction}`)}
-                      className="text-xs px-2 py-1 rounded border border-leather/15 text-leather font-heading hover:bg-leather/5">
-                      {c.direction}
-                    </button>
+              {campaignState.recentEvents.length > 0 && (
+                <div className="mt-3 space-y-1">
+                  {campaignState.recentEvents.slice(0, 3).map((event) => (
+                    <p key={event} className="text-[11px] font-body text-ink-faint italic">{event}</p>
                   ))}
                 </div>
               )}
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Game Log */}
-        <div className="flex-1 space-y-3 overflow-y-auto px-3 py-4 sm:px-5">
-          {gameLog.length === 0 && (
-            <div className="text-center py-16 text-ink-faint font-body italic">
-              <p>The adventure awaits...</p>
-              <p className="text-xs mt-2">Type an action below to begin.</p>
+          {companions.length > 0 && (
+            <div className="border border-leather/15 rounded-lg p-3 bg-parchment-light/40">
+              <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">Company</div>
+              <div className="space-y-2">
+                {companions.filter((c) => c.joinedParty).map((companion) => (
+                  <CompanionCard key={companion.id} companion={companion} quickAction={quickAction} />
+                ))}
+              </div>
             </div>
           )}
 
-          {gameLog.map(entry => (
-            <div key={entry.id} className={`animate-fade-in ${getLogEntryClass(entry.type)}`}>
-              {entry.actor && entry.type !== 'system' && (
-                <span className={`font-heading font-bold text-xs uppercase tracking-wide ${
-                  entry.type === 'narration' || entry.type === 'dm_response' || entry.type === 'scene_enter'
-                    ? 'text-leather'
-                    : entry.type === 'combat'
-                      ? 'text-blood'
-                      : 'text-ink-light'
-                }`}>
-                  {entry.actor}
-                </span>
-              )}
-              <p className={`font-body text-sm leading-relaxed ${
-                entry.type === 'narration' || entry.type === 'dm_response' || entry.type === 'scene_enter'
-                  ? 'text-ink-light italic'
-                  : entry.type === 'combat'
-                    ? 'text-ink font-mono text-xs'
-                    : entry.type === 'roll'
-                      ? 'text-silver font-mono text-xs'
-                      : entry.type === 'system'
-                        ? 'text-ink-faint italic text-xs'
-                        : 'text-ink'
-              }`}>
-                {entry.content}
-              </p>
-            </div>
-          ))}
-
-          {/* DM Thinking indicator */}
-          {dmThinking && (
-            <div className="animate-fade-in">
-              <p className="text-sm text-leather/60 font-body italic flex items-center gap-2">
-                <span className="inline-block w-1.5 h-1.5 rounded-full bg-leather/40 animate-pulse" />
-                {dmThinking}
-              </p>
+          {sceneNpcs.length > 0 && (
+            <div className="border border-leather/15 rounded-lg p-3 bg-parchment-light/40">
+              <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">In This Scene</div>
+              <div className="space-y-2">
+                {sceneNpcs.map((npc) => (
+                  <SceneNpcCard key={npc.id} npc={npc} quickAction={quickAction} />
+                ))}
+              </div>
             </div>
           )}
 
-          <div ref={logEndRef} />
+          <CampaignMap mapData={campaignMap} />
         </div>
 
-        {/* Input Area */}
-        <div className="border-t border-leather/10 bg-parchment-light/40 p-3 sm:p-4">
-          {/* Quick Actions */}
-          <div className="mb-3 flex flex-wrap gap-2">
-            {quickActions.map(action => (
-              <button key={action} onClick={() => quickAction(action)}
-                className="text-xs px-3 py-1.5 rounded-full border border-leather/15 text-leather font-heading hover:bg-leather/5 transition-colors">
-                {action}
-              </button>
-            ))}
+        {/* ─ Main Log Panel ─ */}
+        <div className="game-log-panel flex flex-col overflow-hidden rounded-lg border border-leather/15 bg-parchment-light/30">
+
+          {/* Mobile top bar */}
+          <div className="lg:hidden flex-shrink-0 flex items-center gap-2 border-b border-leather/15 bg-parchment-light/60 px-3 py-2">
+            <button onClick={onBack} className="text-sm text-leather font-body flex-shrink-0 pr-1">←</button>
+
+            {character ? (
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="font-heading text-sm font-bold text-leather-dark truncate">{character.name}</span>
+                  {encounterActive && (
+                    <span className="flex-shrink-0 text-[9px] font-heading font-bold bg-blood text-parchment-light px-1.5 py-0.5 rounded uppercase tracking-wide">
+                      Combat
+                    </span>
+                  )}
+                  <span className={`flex-shrink-0 text-xs font-heading font-bold ${character.hp <= character.max_hp * 0.25 ? 'text-blood' : 'text-ink-faint'}`}>
+                    {character.hp}/{character.max_hp}
+                  </span>
+                </div>
+                <div className="mt-0.5 h-1 rounded-full bg-parchment-dark/30 overflow-hidden">
+                  <div className="h-full rounded-full transition-all" style={{
+                    width: `${Math.min(100, (character.hp / character.max_hp) * 100)}%`,
+                    backgroundColor: character.hp > character.max_hp * 0.5 ? '#2d5a1e'
+                      : character.hp > character.max_hp * 0.25 ? '#c49a2a' : '#8b1a1a',
+                  }} />
+                </div>
+              </div>
+            ) : (
+              <div className="flex-1" />
+            )}
+
+            {/* Panel toggle pills */}
+            <div className="flex gap-1 flex-shrink-0">
+              {mobilePanels.map(({ key, label, badge }) => (
+                <button
+                  key={key}
+                  onClick={() => setOpenPanel(openPanel === key ? null : key)}
+                  className={`relative px-2 py-1 rounded text-[10px] font-heading uppercase tracking-wide border transition-colors ${
+                    openPanel === key
+                      ? 'border-leather bg-leather/10 text-leather-dark'
+                      : 'border-leather/25 text-ink-faint hover:border-leather/50 hover:text-ink-light'
+                  }`}
+                >
+                  {label}
+                  {badge > 0 && openPanel !== key && (
+                    <span className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full bg-leather text-parchment-light text-[8px] font-bold flex items-center justify-center leading-none">
+                      {badge}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="flex flex-col gap-3 sm:flex-row">
-            <input
-              type="text"
-              value={inputText}
-              onChange={e => setInputText(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="What do you do?"
-              className="flex-1 px-4 py-3 rounded-lg border border-leather/20 bg-parchment font-body text-sm text-ink placeholder:text-ink-faint/50 focus:outline-none focus:border-leather/50 focus:ring-1 focus:ring-leather/20"
-            />
-            <button onClick={sendAction} disabled={!inputText.trim()}
-              className="rounded-lg bg-leather px-6 py-3 text-sm font-heading font-semibold text-parchment-light transition-colors hover:bg-leather-dark disabled:opacity-30 sm:self-auto">
-              Act
-            </button>
+          {/* Scene header */}
+          {currentScene && (
+            <div className="flex-shrink-0 border-b border-leather/10 bg-parchment-light/40 px-3 py-2 sm:px-5 sm:py-3">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="font-heading font-bold tracking-wide text-leather-dark text-sm sm:text-base truncate min-w-0">
+                  {currentScene.name}
+                </h2>
+                {currentScene.connections.length > 0 && (
+                  <div className="flex-shrink-0 flex gap-1.5 overflow-x-auto max-w-[55%]">
+                    {currentScene.connections.map((c, i) => (
+                      <button key={i} onClick={() => quickAction(`I go ${c.direction}`)}
+                        className="flex-shrink-0 text-xs px-2 py-1 rounded border border-leather/15 text-leather font-heading hover:bg-leather/5 whitespace-nowrap">
+                        {c.direction}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Game log */}
+          <div className="flex-1 min-h-0 overflow-y-auto px-3 py-4 sm:px-5 space-y-3">
+            {renderLogEntries()}
+          </div>
+
+          {/* Input area */}
+          <div className="flex-shrink-0 border-t border-leather/10 bg-parchment-light/40 px-3 pt-2 pb-3 sm:p-4"
+               style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom, 0.75rem))' }}>
+            {/* Quick actions: horizontal scroll on mobile, wrap on desktop */}
+            <div className="mb-2 -mx-3 px-3 sm:mx-0 sm:px-0 overflow-x-auto sm:overflow-visible">
+              <div className="flex gap-2 flex-nowrap sm:flex-wrap">
+                {quickActions.map(action => (
+                  <button key={action} onClick={() => quickAction(action)}
+                    className="flex-shrink-0 text-xs px-3 py-1.5 rounded-full border border-leather/15 text-leather font-heading hover:bg-leather/5 transition-colors whitespace-nowrap">
+                    {action}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex gap-2 mt-1">
+              <input
+                type="text"
+                value={inputText}
+                onChange={e => setInputText(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="What do you do?"
+                className="flex-1 px-4 py-3 rounded-lg border border-leather/20 bg-parchment font-body text-sm text-ink placeholder:text-ink-faint/50 focus:outline-none focus:border-leather/50 focus:ring-1 focus:ring-leather/20"
+              />
+              <button onClick={sendAction} disabled={!inputText.trim()}
+                className="rounded-lg bg-leather px-5 py-3 text-sm font-heading font-semibold text-parchment-light transition-colors hover:bg-leather-dark disabled:opacity-30 flex-shrink-0">
+                Act
+              </button>
+            </div>
           </div>
         </div>
       </div>
+
+      {/* ═══════════════════════════════════════════════════
+          MOBILE PANEL DRAWER (bottom sheet)
+          ═══════════════════════════════════════════════════ */}
+      {openPanel && (
+        <div className="fixed inset-0 z-50 lg:hidden" aria-modal="true">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-ink/40 backdrop-blur-sm"
+            onClick={() => setOpenPanel(null)}
+          />
+          {/* Sheet */}
+          <div
+            className="absolute inset-x-0 bottom-0 flex flex-col bg-parchment rounded-t-2xl shadow-2xl"
+            style={{ maxHeight: '82vh', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Sheet header */}
+            <div className="flex-shrink-0 flex items-center justify-between border-b border-leather/15 px-4 py-3">
+              <h3 className="font-heading font-bold text-leather-dark">{panelTitle}</h3>
+              <button
+                onClick={() => setOpenPanel(null)}
+                className="text-xs font-heading text-ink-faint hover:text-ink px-3 py-1.5 rounded border border-leather/15 hover:border-leather/30 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+
+            {/* Sheet content */}
+            <div className="flex-1 min-h-0 overflow-y-auto">
+              {openPanel === 'character' && character && (
+                <MobileCharacterPanel
+                  character={character}
+                  onOpenSheet={() => { setOpenPanel(null); setShowSheet(true); }}
+                />
+              )}
+              {openPanel === 'company' && (
+                <div className="p-4 space-y-3">
+                  {joinedCompanions.length === 0 ? (
+                    <p className="text-sm font-body text-ink-faint italic">No companions in your company yet.</p>
+                  ) : (
+                    joinedCompanions.map(c => (
+                      <CompanionCard key={c.id} companion={c} quickAction={(a) => { quickAction(a); setOpenPanel(null); }} />
+                    ))
+                  )}
+                </div>
+              )}
+              {openPanel === 'scene' && (
+                <div className="p-4 space-y-3">
+                  {battlefield && (
+                    <div className="rounded-lg border border-leather/15 bg-parchment-light/40 p-3">
+                      <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">Battlefield Read</div>
+                      <p className="text-sm font-body italic text-ink-light leading-relaxed">{battlefield.summary}</p>
+                      <div className="grid grid-cols-2 gap-1 mt-3 text-xs font-body text-ink-faint">
+                        <div>Sight: <span className="text-ink-light">{battlefield.visibility}</span></div>
+                        <div>Footing: <span className="text-ink-light">{battlefield.footing}</span></div>
+                        <div>Cover: <span className="text-ink-light">{battlefield.cover ? 'usable' : 'poor'}</span></div>
+                        <div>Line: <span className="text-ink-light">{battlefield.chokepoint ? 'narrow' : 'open'}</span></div>
+                      </div>
+                      {battlefield.hazard && (
+                        <div className="mt-2 text-xs font-body text-blood">Hazard: {battlefield.hazard}</div>
+                      )}
+                      {battlefield.tacticalAdvice.length > 0 && (
+                        <div className="mt-3 space-y-1">
+                          {battlefield.tacticalAdvice.slice(0, 3).map(tip => (
+                            <p key={tip} className="text-xs font-body text-ink-faint">{tip}</p>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {sceneNpcs.length === 0 && !battlefield && (
+                    <p className="text-sm font-body text-ink-faint italic">No notable figures in this scene.</p>
+                  )}
+                  {sceneNpcs.map(npc => (
+                    <SceneNpcCard key={npc.id} npc={npc} quickAction={(a) => { quickAction(a); setOpenPanel(null); }} />
+                  ))}
+                </div>
+              )}
+              {openPanel === 'expedition' && campaignState && (
+                <div className="p-4 space-y-4">
+                  {/* Pressure */}
+                  <div>
+                    <div className="flex justify-between text-sm font-heading text-ink-faint mb-1">
+                      <span>Encounter Pressure</span>
+                      <span className="text-ink-light font-bold">{campaignState.encounterPressure}/10</span>
+                    </div>
+                    <div className="h-3 rounded-full bg-parchment-dark/30 overflow-hidden">
+                      <div className="h-full rounded-full transition-all" style={{
+                        width: `${Math.min(100, campaignState.encounterPressure * 10)}%`,
+                        backgroundColor: campaignState.encounterPressure >= 7 ? '#8b1a1a'
+                          : campaignState.encounterPressure >= 4 ? '#c49a2a' : '#2d5a1e',
+                      }} />
+                    </div>
+                  </div>
+                  {/* Supplies */}
+                  <div>
+                    <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">Supplies</div>
+                    <div className="grid grid-cols-2 gap-2 text-sm font-body text-ink-faint">
+                      <div>Torches: <span className="text-ink-light font-semibold">{carriedSupplies.torches}</span></div>
+                      <div>Rations: <span className="text-ink-light font-semibold">{carriedSupplies.rations}</span></div>
+                      <div>Arrows: <span className="text-ink-light font-semibold">{carriedSupplies.arrows}</span></div>
+                      <div>Bandages: <span className="text-ink-light font-semibold">{carriedSupplies.bandages}</span></div>
+                      <div>Rope: <span className="text-ink-light font-semibold">{carriedSupplies.rope}</span></div>
+                    </div>
+                  </div>
+                  {/* Spent */}
+                  <div>
+                    <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">Spent This Run</div>
+                    <div className="grid grid-cols-2 gap-2 text-sm font-body text-ink-faint">
+                      <div>Torches: <span className="text-ink-light">{campaignState.supply.torchesBurned}</span></div>
+                      <div>Rations: <span className="text-ink-light">{campaignState.supply.rationsSpent}</span></div>
+                      <div>Arrows: <span className="text-ink-light">{campaignState.supply.arrowsSpent}</span></div>
+                      <div>Bandages: <span className="text-ink-light">{campaignState.supply.bandagesUsed}</span></div>
+                    </div>
+                  </div>
+                  {/* Factions */}
+                  {campaignState.factions.length > 0 && (
+                    <div>
+                      <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">Factions</div>
+                      <div className="space-y-2">
+                        {campaignState.factions.map((faction) => (
+                          <div key={faction.key} className="rounded-lg border border-leather/10 bg-parchment/60 p-3">
+                            <div className="flex items-center justify-between text-sm font-heading">
+                              <span className="text-leather-dark font-bold">{faction.name}</span>
+                              <span className="text-ink-faint text-xs">Rep {faction.reputation} · Heat {faction.heat}</span>
+                            </div>
+                            <p className="mt-1 text-xs font-body text-ink-faint">{faction.summary}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {/* Recent events */}
+                  {campaignState.recentEvents.length > 0 && (
+                    <div>
+                      <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">Recent Events</div>
+                      <div className="space-y-1">
+                        {campaignState.recentEvents.slice(0, 5).map((event) => (
+                          <p key={event} className="text-xs font-body text-ink-faint italic">{event}</p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              {openPanel === 'map' && (
+                <div className="p-3">
+                  <CampaignMap mapData={campaignMap} />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Character Sheet Modal */}
       {showSheet && character && (
@@ -890,6 +938,207 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
             <CharacterSheet character={character} onClose={() => setShowSheet(false)} />
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// Sub-components
+
+function MobileCharacterPanel({ character, onOpenSheet }: { character: any; onOpenSheet: () => void }) {
+  return (
+    <div className="p-4 space-y-4">
+      <div>
+        <p className="text-sm font-body text-ink-faint">
+          Level {character.level} {character.race} {character.char_class}
+        </p>
+        <button onClick={onOpenSheet} className="mt-2 text-xs font-heading text-leather underline underline-offset-2">
+          Open full character sheet →
+        </button>
+      </div>
+      <div>
+        <div className="flex justify-between text-sm font-heading mb-1">
+          <span className="text-ink-faint">HP</span>
+          <span className={character.hp <= character.max_hp * 0.25 ? 'text-blood font-bold' : 'text-ink-light font-semibold'}>
+            {character.hp} / {character.max_hp}
+          </span>
+        </div>
+        <div className="h-3 bg-parchment-dark/30 rounded-full overflow-hidden">
+          <div className="h-full rounded-full transition-all" style={{
+            width: `${(character.hp / character.max_hp) * 100}%`,
+            backgroundColor: character.hp > character.max_hp * 0.5 ? '#2d5a1e'
+              : character.hp > character.max_hp * 0.25 ? '#c49a2a' : '#8b1a1a',
+          }} />
+        </div>
+      </div>
+      <div className="grid grid-cols-3 gap-2 text-center">
+        {[['AC', character.ac], ['THAC0', character.thac0], ['Move', character.base_movement || character.baseMovement]].map(([label, val]) => (
+          <div key={label as string} className="rounded-lg border border-leather/10 bg-parchment/60 p-2">
+            <div className="text-[10px] font-heading text-ink-faint uppercase tracking-wide">{label}</div>
+            <div className="text-lg font-heading font-bold text-leather-dark">{val}</div>
+          </div>
+        ))}
+      </div>
+      <div>
+        <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">Ability Scores</div>
+        <div className="grid grid-cols-3 gap-2">
+          {[['STR', character.str], ['DEX', character.dex], ['CON', character.con],
+            ['INT', character.int], ['WIS', character.wis], ['CHA', character.cha]].map(([label, val]) => (
+            <div key={label as string} className="flex items-center justify-between rounded border border-leather/10 bg-parchment/60 px-2 py-1.5">
+              <span className="text-xs font-heading text-ink-faint">{label}</span>
+              <span className="text-sm font-heading font-bold text-ink">
+                {val}{label === 'STR' && character.str_percentile ? `/${character.str_percentile}` : ''}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div>
+        <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">Saving Throws</div>
+        <div className="grid grid-cols-2 gap-1.5">
+          {[['Paralysis/Poison', character.save_paralysis], ['Rod/Staff/Wand', character.save_rod],
+            ['Petrify/Polymorph', character.save_petrify], ['Breath Weapon', character.save_breath],
+            ['Spell', character.save_spell]].map(([label, val]) => (
+            <div key={label as string} className="flex justify-between rounded border border-leather/10 bg-parchment/60 px-2 py-1">
+              <span className="text-ink-faint text-xs">{label}</span>
+              <span className="font-heading font-bold text-ink text-xs">{val}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="rounded-lg border border-leather/10 bg-parchment/60 p-2 text-center">
+          <div className="text-[10px] font-heading text-ink-faint uppercase tracking-wide">Gold</div>
+          <div className="text-base font-heading font-bold text-gold">{character.gold}</div>
+        </div>
+        <div className="rounded-lg border border-leather/10 bg-parchment/60 p-2 text-center">
+          <div className="text-[10px] font-heading text-ink-faint uppercase tracking-wide">XP</div>
+          <div className="text-base font-heading font-bold text-ink-light">{character.xp}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CompanionCard({ companion, quickAction }: { companion: Companion; quickAction: (a: string) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="rounded-lg border border-leather/10 bg-parchment/60 p-3">
+      <button className="w-full text-left" onClick={() => setExpanded(!expanded)}>
+        <div className="flex items-center justify-between">
+          <div className="min-w-0">
+            <div className="font-heading text-sm font-bold text-leather-dark">{companion.name}</div>
+            <div className="text-xs font-body text-ink-faint italic">
+              {companion.race} {companion.charClass} · {companion.companionRole} · {companion.relationshipLabel}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+            <span className={`text-xs font-heading font-bold ${companion.hp <= companion.maxHp * 0.25 ? 'text-blood' : 'text-ink-faint'}`}>
+              {companion.hp}/{companion.maxHp}
+            </span>
+            <span className="text-ink-faint text-xs">{expanded ? '▲' : '▼'}</span>
+          </div>
+        </div>
+        <div className="mt-1 text-xs font-body text-ink-faint">
+          Trust {companion.relationship.trust} · Bond {companion.relationship.bond} · Tension {companion.relationship.tension}
+        </div>
+      </button>
+      {expanded && (
+        <div className="mt-3 space-y-3 border-t border-leather/10 pt-3">
+          <div className="text-xs font-body text-ink-faint">
+            <span className="font-heading text-ink-light">Duty:</span> {companion.duty || 'unset'}
+          </div>
+          {companion.aspiration && (
+            <div className="text-xs font-body text-ink-faint">
+              <span className="font-heading text-ink-light">Wants:</span> {companion.aspiration}
+            </div>
+          )}
+          {companion.grievance && (
+            <div className="text-xs font-body text-ink-faint">
+              <span className="font-heading text-ink-light">Resents:</span> {companion.grievance}
+            </div>
+          )}
+          {companion.personalQuestTitle && (
+            <div className="text-xs font-body text-ink-faint">
+              <span className="font-heading text-ink-light">Quest:</span> {companion.personalQuestTitle}{' '}
+              {companion.personalQuestResolved ? '(resolved)' : `(${Math.min(companion.personalQuestProgress, 3)}/3)`}
+            </div>
+          )}
+          {companion.relationship.lastBeat && (
+            <p className="text-xs font-body text-ink-faint italic">{companion.relationship.lastBeat}</p>
+          )}
+          <div className="flex flex-wrap gap-1.5">
+            <button type="button" onClick={() => quickAction(`Put ${companion.name} first in the marching order`)}
+              className="rounded-full border border-leather/15 px-2.5 py-1 text-xs font-heading text-leather hover:bg-leather/5">Forward</button>
+            <button type="button" onClick={() => quickAction(`Put ${companion.name} last in the marching order`)}
+              className="rounded-full border border-leather/15 px-2.5 py-1 text-xs font-heading text-leather hover:bg-leather/5">Back</button>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {COMPANION_DUTIES.map(duty => (
+              <button key={duty.key} type="button"
+                onClick={() => quickAction(`Tell ${companion.name} ${duty.command}`)}
+                className={`rounded-full border px-2.5 py-1 text-xs font-heading transition-colors ${
+                  companion.duty === duty.key
+                    ? 'border-leather bg-leather/10 text-leather-dark'
+                    : 'border-leather/15 text-leather hover:bg-leather/5'
+                }`}>
+                {duty.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            <button type="button" onClick={() => quickAction(`Comfort ${companion.name}`)}
+              className="rounded-full border border-leather/15 px-2.5 py-1 text-xs font-heading text-leather hover:bg-leather/5">Comfort</button>
+            <button type="button" onClick={() => quickAction(`Share food with ${companion.name}`)}
+              className="rounded-full border border-leather/15 px-2.5 py-1 text-xs font-heading text-leather hover:bg-leather/5">Share Food</button>
+            <button type="button" onClick={() => quickAction(`Share 10 gp with ${companion.name}`)}
+              className="rounded-full border border-leather/15 px-2.5 py-1 text-xs font-heading text-leather hover:bg-leather/5">Gift Coin</button>
+            <button type="button" onClick={() => quickAction(`Dismiss ${companion.name} from the company`)}
+              className="rounded-full border border-blood/20 px-2.5 py-1 text-xs font-heading text-blood hover:bg-blood/5">Dismiss</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SceneNpcCard({ npc, quickAction }: { npc: SceneNpc; quickAction: (a: string) => void }) {
+  return (
+    <div className="rounded-lg border border-leather/10 bg-parchment/60 p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="font-heading text-sm font-bold text-leather-dark">{npc.name}</div>
+          <div className="text-xs font-body text-ink-faint italic">
+            {npc.race} {npc.charClass} · {npc.joinedParty ? `${npc.companionRole} · ${npc.duty}` : npc.disposition}
+          </div>
+        </div>
+        <button type="button"
+          onClick={() => quickAction(npc.joinedParty ? `Talk to ${npc.name}` : `Ask ${npc.name} to join us`)}
+          className="flex-shrink-0 rounded-full border border-leather/15 px-2.5 py-1 text-xs font-heading text-leather hover:bg-leather/5">
+          {npc.joinedParty ? 'Talk' : 'Recruit'}
+        </button>
+      </div>
+      {npc.personality && (
+        <p className="mt-1.5 text-xs font-body text-ink-faint">{npc.personality}</p>
+      )}
+      <p className="mt-1 text-xs font-body text-ink-light">{npc.relationshipLabel} · {npc.recruitHint}</p>
+      {!npc.joinedParty && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          <button type="button" onClick={() => quickAction(`Ask ${npc.name} to join us`)}
+            className="rounded-full border border-leather/15 px-2.5 py-1 text-xs font-heading text-leather hover:bg-leather/5">Recruit</button>
+          <button type="button" onClick={() => quickAction(`Talk to ${npc.name}`)}
+            className="rounded-full border border-leather/15 px-2.5 py-1 text-xs font-heading text-leather hover:bg-leather/5">Talk</button>
+          <button type="button" onClick={() => quickAction(`Read ${npc.name}s intent`)}
+            className="rounded-full border border-leather/15 px-2.5 py-1 text-xs font-heading text-leather hover:bg-leather/5">Read Intent</button>
+        </div>
+      )}
+      {npc.joinedParty && npc.aspiration && (
+        <p className="mt-1.5 text-xs font-body text-ink-faint">Wants: {npc.aspiration}</p>
+      )}
+      {npc.joinedParty && npc.personalQuestTitle && (
+        <p className="mt-1 text-xs font-body text-ink-light">
+          Quest: {npc.personalQuestTitle} {npc.personalQuestResolved ? '(resolved)' : `(${Math.min(npc.personalQuestProgress, 3)}/3)`}
+        </p>
       )}
     </div>
   );

@@ -207,7 +207,7 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
       {/* Create Campaign Modal */}
       {showCreate && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-3 backdrop-blur-sm sm:items-center">
-          <div className="w-full max-w-md rounded-lg border border-leather/20 bg-parchment p-4 shadow-xl sm:p-8">
+          <div className="w-full max-w-md rounded-t-2xl sm:rounded-lg border border-leather/20 bg-parchment p-4 shadow-xl sm:p-8 max-h-[92vh] overflow-y-auto">
             <h3 className="text-xl font-heading font-bold text-leather-dark mb-4">New Campaign</h3>
             <div className="space-y-4">
               <div>
@@ -287,7 +287,7 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
       {/* Join Campaign Modal */}
       {showJoin && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-3 backdrop-blur-sm sm:items-center">
-          <div className="w-full max-w-md rounded-lg border border-leather/20 bg-parchment p-4 shadow-xl sm:p-8">
+          <div className="w-full max-w-md rounded-t-2xl sm:rounded-lg border border-leather/20 bg-parchment p-4 shadow-xl sm:p-8 max-h-[92vh] overflow-y-auto">
             <h3 className="text-xl font-heading font-bold text-leather-dark mb-4">Join a Campaign</h3>
 
             {browseLoading ? (

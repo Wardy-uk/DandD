@@ -59,7 +59,7 @@ export default function Login({ apiUrl, onLogin }: Props) {
         </div>
 
         {/* Form */}
-        <div className="border border-leather/20 rounded-lg bg-parchment-light/50 p-8 shadow-lg">
+        <div className="border border-leather/20 rounded-lg bg-parchment-light/50 p-5 sm:p-8 shadow-lg">
           <div className="flex gap-4 mb-6">
             <button
               onClick={() => setMode('login')}
@@ -94,7 +94,8 @@ export default function Login({ apiUrl, onLogin }: Props) {
                   value={displayName}
                   onChange={e => setDisplayName(e.target.value)}
                   placeholder="How shall we address thee?"
-                  className="w-full px-4 py-2.5 rounded-lg border border-leather/20 bg-parchment font-body text-sm text-ink focus:outline-none focus:border-leather/50 focus:ring-1 focus:ring-leather/20"
+                  autoComplete="name"
+                  className="w-full px-4 py-3 rounded-lg border border-leather/20 bg-parchment font-body text-sm text-ink focus:outline-none focus:border-leather/50 focus:ring-1 focus:ring-leather/20"
                 />
               </div>
             )}
@@ -108,7 +109,8 @@ export default function Login({ apiUrl, onLogin }: Props) {
                 value={username}
                 onChange={e => setUsername(e.target.value)}
                 required
-                className="w-full px-4 py-2.5 rounded-lg border border-leather/20 bg-parchment font-body text-sm text-ink focus:outline-none focus:border-leather/50 focus:ring-1 focus:ring-leather/20"
+                autoComplete="username"
+                className="w-full px-4 py-3 rounded-lg border border-leather/20 bg-parchment font-body text-sm text-ink focus:outline-none focus:border-leather/50 focus:ring-1 focus:ring-leather/20"
               />
             </div>
 
@@ -122,7 +124,8 @@ export default function Login({ apiUrl, onLogin }: Props) {
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   required
-                  className="w-full px-4 py-2.5 pr-16 rounded-lg border border-leather/20 bg-parchment font-body text-sm text-ink focus:outline-none focus:border-leather/50 focus:ring-1 focus:ring-leather/20"
+                  autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                  className="w-full px-4 py-3 pr-16 rounded-lg border border-leather/20 bg-parchment font-body text-sm text-ink focus:outline-none focus:border-leather/50 focus:ring-1 focus:ring-leather/20"
                 />
                 <button
                   type="button"

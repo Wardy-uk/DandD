@@ -111,18 +111,18 @@ export default function App() {
     <div className="min-h-screen overflow-x-hidden">
       {/* Header */}
       <header className="border-b border-leather/20 bg-parchment-dark/30">
-        <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-3 sm:px-6 md:flex-row md:items-center md:justify-between">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-3 py-2 sm:px-6 sm:py-3">
           <div className="min-w-0">
-            <span className="block text-xl font-heading font-bold tracking-wide text-leather-dark sm:text-2xl">
+            <span className="block text-base font-heading font-bold tracking-wide text-leather-dark sm:text-xl md:text-2xl">
               QUEST
             </span>
-            <span className="block text-[11px] text-ink-faint font-body italic sm:text-xs">
+            <span className="hidden sm:block text-[11px] text-ink-faint font-body italic sm:text-xs">
               AI Dungeon Master &mdash; AD&D 2nd Edition
             </span>
           </div>
           {player && (
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-              <span className="max-w-full truncate text-sm text-ink-faint font-body">
+            <div className="flex items-center gap-3 text-sm">
+              <span className="hidden sm:inline max-w-[12rem] truncate text-sm text-ink-faint font-body">
                 {player.displayName}
               </span>
               {player.role === 'admin' && (
@@ -145,7 +145,7 @@ export default function App() {
       </header>
 
       {/* Main Content */}
-      <main className="mx-auto max-w-7xl px-4 py-4 sm:px-6 sm:py-6">
+      <main className="mx-auto max-w-7xl px-3 py-3 sm:px-6 sm:py-6">
         <PwaPrompt />
         {view === 'login' && (
           <Login apiUrl={API_URL} onLogin={handleLogin} />
