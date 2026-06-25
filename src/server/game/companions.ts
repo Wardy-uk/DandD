@@ -507,6 +507,7 @@ export function progressCompanionArcs(params: {
         state.loyalty += 2;
         state.morale += 2;
         state.lastBeat = `${leaderName} helped resolve ${row.name}'s personal concern: ${state.personalQuestTitle}.`;
+        realizeCompanionWorldHook(db, campaignId, sceneId, row, state);
         notes.push(`${row.name} sees one of their private concerns finally answered. The loyalty that follows feels real.`);
       } else {
         notes.push(`${row.name} notices the company moving closer to what they quietly wanted all along.`);
@@ -833,6 +834,142 @@ function parseInventory(raw: string | null | undefined) {
 function sharpenGrievance(grievance: string, name: string) {
   if (grievance.includes('again')) return grievance;
   return `${grievance} ${name} is starting to think it may happen again.`;
+}
+
+function realizeCompanionWorldHook(
+  db: Database,
+  campaignId: string,
+  sceneId: string,
+  row: CompanionRow,
+  state: CompanionRelationshipState,
+) {
+  const existingLore = get(db,
+    'SELECT id FROM world_lore WHERE campaign_id = ? AND title = ?',
+    [campaignId, state.personalQuestTitle]) as any;
+  if (!existingLore) {
+    run(db,
+      'INSERT INTO world_lore (id, campaign_id, category, title, content) VALUES (?, ?, ?, ?, ?)',
+      [
+        uuid(),
+        campaignId,
+        'companion',
+        state.personalQuestTitle,
+        `${row.name}'s concern was answered through play: ${state.personalQuestNeed}`,
+      ]);
+  }
+
+  const scene = get(db, 'SELECT * FROM scenes WHERE id = ?', [sceneId]) as any;
+  if (!scene) return;
+  const connections = safeJsonArray(scene.connections);
+
+  if (/map a safer road/i.test(state.personalQuestTitle)) {
+    ensureHookScene(db, campaignId, scene, connections, {
+      name: `${row.name}'s Quiet Way`,
+      brief: `A safer route marked by ${row.name}'s eye for angles and caution.`,
+      direction: 'through the quiet way',
+      backDirection: 'back to the main route',
+      terrainType: 'ruins',
+      lightLevel: 'dim',
+      notes: `${row.name} helped identify this route as a safer passage.`,
+    });
+  } else if (/make camp mean something/i.test(state.personalQuestTitle)) {
+    ensureHookScene(db, campaignId, scene, connections, {
+      name: `${row.name}'s Shelter`,
+      brief: `A defensible nook that can serve as a genuine camp rather than a desperate pause.`,
+      direction: 'toward the shelter',
+      backDirection: 'back to the main chamber',
+      terrainType: 'indoor',
+      lightLevel: 'normal',
+      notes: `${row.name} shaped this place into a camp-worthy refuge.`,
+    });
+  } else if (/hold the line cleanly/i.test(state.personalQuestTitle)) {
+    ensureHookScene(db, campaignId, scene, connections, {
+      name: `${row.name}'s Stand`,
+      brief: `A hard little killing ground where a determined company can hold without panic.`,
+      direction: 'toward the stand',
+      backDirection: 'back to the safer rear',
+      terrainType: 'dungeon',
+      lightLevel: 'normal',
+      notes: `${row.name} identified this position as a place to meet violence on better terms.`,
+    });
+  } else if (/earn a place/i.test(state.personalQuestTitle)) {
+    ensureHookScene(db, campaignId, scene, connections, {
+      name: `${row.name}'s Find`,
+      brief: `A small annex or stash-space proving ${row.name} can uncover value the company would otherwise miss.`,
+      direction: 'into the side-find',
+      backDirection: 'back to the main route',
+      terrainType: 'ruins',
+      lightLevel: 'dim',
+      notes: `${row.name} proved their place by discovering this useful side pocket.`,
+    });
+  }
+}
+
+function ensureHookScene(
+  db: Database,
+  campaignId: string,
+  parentScene: any,
+  parentConnections: any[],
+  hook: {
+    name: string;
+    brief: string;
+    direction: string;
+    backDirection: string;
+    terrainType: string;
+    lightLevel: string;
+    notes: string;
+  },
+) {
+  const existing = get(db, 'SELECT id FROM scenes WHERE campaign_id = ? AND name = ?', [campaignId, hook.name]) as any;
+  const targetSceneId = existing?.id || uuid();
+  if (!existing) {
+    run(db, `
+      INSERT INTO scenes (id, campaign_id, name, brief, light_level, terrain_type, connections, visited, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
+    `, [
+      targetSceneId,
+      campaignId,
+      hook.name,
+      hook.brief,
+      hook.lightLevel,
+      hook.terrainType,
+      '[]',
+      hook.notes,
+    ]);
+  }
+
+  if (!parentConnections.some((entry) => entry.targetSceneId === targetSceneId)) {
+    parentConnections.push({
+      direction: hook.direction,
+      targetSceneId,
+      description: hook.brief,
+      locked: false,
+      hidden: false,
+    });
+    run(db, 'UPDATE scenes SET connections = ? WHERE id = ?', [JSON.stringify(parentConnections), parentScene.id]);
+  }
+
+  const child = get(db, 'SELECT connections FROM scenes WHERE id = ?', [targetSceneId]) as any;
+  const childConnections = safeJsonArray(child?.connections);
+  if (!childConnections.some((entry) => entry.targetSceneId === parentScene.id)) {
+    childConnections.push({
+      direction: hook.backDirection,
+      targetSceneId: parentScene.id,
+      description: `The way back to ${parentScene.name}.`,
+      locked: false,
+      hidden: false,
+    });
+    run(db, 'UPDATE scenes SET connections = ? WHERE id = ?', [JSON.stringify(childConnections), targetSceneId]);
+  }
+}
+
+function safeJsonArray(raw?: string) {
+  try {
+    const parsed = JSON.parse(raw || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 function hashValue(value: string) {
