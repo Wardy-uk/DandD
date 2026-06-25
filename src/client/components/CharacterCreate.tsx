@@ -183,11 +183,11 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
         setEligibleClasses(data.data.singleClasses);
         setAvailableClasses(data.data.availableClasses || []);
         if (data.data.singleClasses.includes(chosenPath)) {
-          setCharClass(chosenPath);
+          await selectClass(chosenPath, 4);
         } else {
           setCharClass('');
+          setStep(3);
         }
-        setStep(3);
       }
     } catch {
       setError('Failed to check classes');
@@ -196,7 +196,7 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
     }
   };
 
-  const selectClass = async (c: string) => {
+  const selectClass = async (c: string, nextStep = 4) => {
     setCharClass(c);
     setError('');
     try {
@@ -204,7 +204,7 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
       const data = await res.json();
       if (data.ok) {
         setValidAlignments(data.data);
-        setStep(4);
+        setStep(nextStep);
       }
     } catch {
       setError('Failed to fetch alignments');

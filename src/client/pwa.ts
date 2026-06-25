@@ -20,10 +20,10 @@ export function registerQuestPwa() {
 }
 
 export async function fullRefreshQuestPwa() {
+  // Prefer a guaranteed hard refresh path over relying on an update being available.
   if (triggerSwUpdate) {
     try {
-      await triggerSwUpdate(true);
-      return;
+      await triggerSwUpdate(false);
     } catch {
       // Fall through to the manual refresh path below.
     }
@@ -40,7 +40,7 @@ export async function fullRefreshQuestPwa() {
   }
 
   const cacheBuster = `refresh=${Date.now()}`;
-  const baseUrl = window.location.pathname;
+  const baseUrl = `${window.location.origin}${window.location.pathname}`;
   const query = window.location.search ? `${window.location.search}&${cacheBuster}` : `?${cacheBuster}`;
   window.location.replace(`${baseUrl}${query}${window.location.hash}`);
 }
