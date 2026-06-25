@@ -240,7 +240,7 @@ export function updateCompanionRelationships(params: {
       FROM npcs WHERE id = ?
     `, [npcId]) as CompanionRow | undefined;
     if (!npc) continue;
-    const state = hydrateRelationshipState(npc);
+    const state = normalizeRelationshipState(JSON.parse(npc.relationship_state || '{}'));
     switch (kind) {
       case 'victory':
         state.respect += 1;
@@ -602,7 +602,7 @@ export function resolveCompanionDrama(params: {
   const eventSeed = hashValue(`${campaignId}:${sceneId}:${turn}:${lowered}`);
 
   for (const npc of joined) {
-    const state = hydrateRelationshipState(npc);
+    const state = normalizeRelationshipState(JSON.parse(npc.relationship_state || '{}'));
     if (state.tension >= 7 && state.trust <= 0 && state.bond <= 1) {
       state.companionStatus = 'departed';
       state.lastBeat = `${npc.name} walked away from the company after one strain too many.`;
@@ -746,7 +746,7 @@ export function checkCompanionRefusals(params: {
   const refusals: Array<{ companion: string; reason: string }> = [];
 
   for (const npc of joined) {
-    const state = hydrateRelationshipState(npc);
+    const state = normalizeRelationshipState(JSON.parse(npc.relationship_state || '{}'));
     for (const cat of RISKY_ACTION_PATTERNS) {
       if (!cat.pattern.test(action)) continue;
       if (!willRefuse(state, cat.slug)) continue;
@@ -796,7 +796,7 @@ export function recordRiskyDecision(params: {
   const notes: string[] = [];
 
   for (const npc of joined) {
-    const state = hydrateRelationshipState(npc);
+    const state = normalizeRelationshipState(JSON.parse(npc.relationship_state || '{}'));
     state.riskyDecisionCount += 1;
     const count = state.riskyDecisionCount;
 
@@ -851,7 +851,7 @@ export function logCompanionDisagreement(params: {
   const notes: string[] = [];
 
   for (const npc of joined) {
-    const state = hydrateRelationshipState(npc);
+    const state = normalizeRelationshipState(JSON.parse(npc.relationship_state || '{}'));
     const role = String(npc.companion_role || inferCompanionRole(npc.char_class)).toLowerCase();
 
     let disagreement = '';
@@ -903,7 +903,7 @@ export function checkJealousyTriggers(params: {
   const notes: string[] = [];
 
   for (const npc of others) {
-    const state = hydrateRelationshipState(npc);
+    const state = normalizeRelationshipState(JSON.parse(npc.relationship_state || '{}'));
     if (state.romance < 2) continue;  // no investment, no jealousy
 
     state.tension += 1;
@@ -946,7 +946,7 @@ export function checkRecruitmentFriction(params: {
   const newRole = inferCompanionRole(newNpcClass);
 
   for (const npc of existing) {
-    const state = hydrateRelationshipState(npc);
+    const state = normalizeRelationshipState(JSON.parse(npc.relationship_state || '{}'));
     const existingRole = String(npc.companion_role || inferCompanionRole(npc.char_class)).toLowerCase();
     const roleConflict = existingRole === newRole;
 
@@ -1328,3 +1328,93 @@ function hashValue(value: string) {
   }
   return Math.abs(hash);
 }
+
+// ─── Town Downtime ───────────────────────────────────────────────────────────
+
+/**
+ * Process companion downtime in town.
+ * Called once per town visit. Returns narration notes for each companion.
+ */
+export function processTownDowntime(db: Database, campaignId: string, leaderName: string): string[] {
+  const joined = getPartyCompanions(db, campaignId).filter(c => c.joinedParty);
+  const notes: string[] = [];
+
+  for (const comp of joined) {
+    const npc = get(db, 'SELECT id, name, char_class, relationship_state FROM npcs WHERE id = ?', [comp.id]) as any;
+    if (!npc) continue;
+
+    const state = normalizeRelationshipState(JSON.parse(npc.relationship_state || '{}'));
+    let changed = false;
+
+    // ── High-trust companions bond further ─────────────────────────
+    if (state.trust >= 3 && state.morale >= 1) {
+      state.bond += 1;
+      state.morale += 1;
+      state.lastBeat = `Spent downtime with ${leaderName} in town — trust deepening.`;
+      changed = true;
+      notes.push(`${comp.name} finds ${leaderName} in the common room after supper. They share a drink and say almost nothing. It's the kind of silence that means something. Bond grows stronger.`);
+    }
+
+    // ── Low-morale companions seek distraction ─────────────────────
+    if (state.morale <= -1 && state.trust < 2) {
+      state.tension += 1;
+      state.morale -= 1;
+      state.lastBeat = 'Town downtime went poorly — drinking and distance.';
+      changed = true;
+      notes.push(`${comp.name} spends the night apart. Word gets back that they've been drinking at the other end of the bar. Something is wearing on them — the kind of thing town doesn't fix.`);
+    }
+
+    // ── Personal quest beat ────────────────────────────────────────
+    if (state.personalQuestTitle && !state.personalQuestResolved && state.personalQuestProgress >= 2) {
+      state.personalQuestProgress += 1;
+      changed = true;
+      notes.push(`${comp.name} disappears for a few hours. They come back quieter than they left. The thing they've been carrying — ${state.personalQuestNeed || 'their own business'} — has moved a step forward, or backward. They don't say which.`);
+      if (state.personalQuestProgress >= 4) {
+        state.personalQuestResolved = true;
+        state.loyalty += 2;
+        state.bond += 1;
+        notes.push(`${comp.name} returns with something settled in their face. Whatever they needed from this town, they found it. Personal quest resolved. The weight is off — you can see it in how they hold themselves.`);
+      }
+    }
+
+    // ── Romance / jealousy dynamics ────────────────────────────────
+    if (state.romance >= 3 && state.tension <= 1) {
+      state.bond += 1;
+      changed = true;
+      notes.push(`${comp.name} and ${leaderName} find time away from the others. Nothing is said directly, but something shifts — a steadiness that wasn't quite there before.`);
+    } else if (state.romance >= 2 && state.tension >= 3) {
+      state.tension += 1;
+      state.morale -= 1;
+      changed = true;
+      notes.push(`${comp.name} is distant tonight. They're polite when pressed. Whatever is between them and ${leaderName} is tangled, and town hasn't untangled it.`);
+    }
+
+    // ── Loyalty warning — may leave ───────────────────────────────
+    if (state.loyalty <= -2 && state.tension >= 4) {
+      changed = true;
+      notes.push(`${comp.name} pulls ${leaderName} aside before the night is out. "I've been thinking," they say. The rest of it is quiet and direct: they're not sure they're going back in. If this is going to change, it needs to change now.`);
+    }
+
+    // Apply clamp limits
+    state.bond = Math.max(-5, Math.min(10, state.bond));
+    state.trust = Math.max(-5, Math.min(10, state.trust));
+    state.morale = Math.max(-5, Math.min(10, state.morale));
+    state.tension = Math.max(0, Math.min(10, state.tension));
+    state.loyalty = Math.max(-5, Math.min(10, state.loyalty));
+
+    if (changed) {
+      const nextDisposition = deriveDisposition(state);
+      run(db, 'UPDATE npcs SET relationship_state = ?, disposition = ? WHERE id = ?',
+        [JSON.stringify(state), nextDisposition, npc.id]);
+    }
+  }
+
+  if (notes.length === 0 && joined.length > 0) {
+    notes.push(`The company settles in for the night. Food, a roof, no monsters. It does what it can.`);
+  } else if (joined.length === 0) {
+    notes.push(`You're alone tonight. The common room is full enough, but it's not company. You drink your drink and turn in early.`);
+  }
+
+  return notes;
+}
+
