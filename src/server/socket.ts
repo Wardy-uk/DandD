@@ -10,6 +10,7 @@ import type { ServerToClientEvents, ClientToServerEvents } from '../shared/types
 import { get, all, run } from './db/helpers.js';
 import { describeScene, findMovementTarget } from './game/deterministic.js';
 import { resolveRichExploration } from './game/adventure.js';
+import { getCampaignState, getCampaignStateSnapshot } from './game/campaignState.js';
 import { createEncounterRecord, describeBattlefield, emitEncounterStart, getActiveEncounter, resolveEncounterAction } from './game/encounters.js';
 import { buildCampaignMapIntel } from './game/mapIntel.js';
 import {
@@ -33,6 +34,13 @@ interface ConnectedPlayer {
 }
 
 const connectedPlayers = new Map<string, ConnectedPlayer>();
+
+function emitCampaignState(io: SocketServer<ClientToServerEvents, ServerToClientEvents>, db: Database, campaignId: string) {
+  io.to(`campaign:${campaignId}`).emit('game:state_update', {
+    type: 'campaign_state',
+    payload: getCampaignStateSnapshot(getCampaignState(db, campaignId)),
+  });
+}
 
 export function setupSocketHandlers(
   io: SocketServer<ClientToServerEvents, ServerToClientEvents>,
@@ -91,6 +99,10 @@ export function setupSocketHandlers(
         socket.emit('game:state_update', {
           type: 'companions_update',
           payload: getPartyCompanions(db, campaignId),
+        });
+        socket.emit('game:state_update', {
+          type: 'campaign_state',
+          payload: getCampaignStateSnapshot(getCampaignState(db, campaignId)),
         });
         if (campaign.current_scene_id) {
           socket.emit('game:state_update', {
@@ -233,6 +245,7 @@ export function setupSocketHandlers(
           type: 'map_update',
           payload: buildCampaignMapIntel(db, campaignId),
         });
+        emitCampaignState(io, db, campaignId);
         if (resolution.encounterUpdate?.status === 'resolved' && campaign.current_scene_id) {
           const companionIds = getJoinedCompanionIdsInScene(db, campaignId, campaign.current_scene_id);
           updateCompanionRelationships({
@@ -320,6 +333,7 @@ export function setupSocketHandlers(
           type: 'scene_npcs_update',
           payload: getSceneNpcRoster(db, campaignId, scene.id),
         });
+        emitCampaignState(io, db, campaignId);
         return;
       }
 
@@ -335,6 +349,7 @@ export function setupSocketHandlers(
           type: 'scene_npcs_update',
           payload: getSceneNpcRoster(db, campaignId, scene.id),
         });
+        emitCampaignState(io, db, campaignId);
         return;
       }
 
@@ -393,6 +408,7 @@ export function setupSocketHandlers(
           type: 'scene_npcs_update',
           payload: getSceneNpcRoster(db, campaignId, nextScene.id),
         });
+        emitCampaignState(io, db, campaignId);
         return;
       }
       const outcome = resolveRichExploration({
@@ -438,6 +454,7 @@ export function setupSocketHandlers(
         type: 'map_update',
         payload: buildCampaignMapIntel(db, campaignId),
       });
+      emitCampaignState(io, db, campaignId);
 
       const companionIds = getJoinedCompanionIdsInScene(db, campaignId, scene.id);
       if (/rest|camp|secure|fallback|mark fallback point|parley|negotiate/.test(action.toLowerCase())) {
@@ -478,6 +495,7 @@ export function setupSocketHandlers(
         type: 'scene_npcs_update',
         payload: getSceneNpcRoster(db, campaignId, scene.id),
       });
+      emitCampaignState(io, db, campaignId);
 
       const updatedCharacter = get(db, 'SELECT * FROM characters WHERE id = ?', [character.id]) as any;
       if (updatedCharacter) {

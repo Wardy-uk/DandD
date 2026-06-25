@@ -22,6 +22,20 @@ export interface CampaignSimulationState {
   recentEvents: string[];
 }
 
+export interface CampaignStateSnapshot {
+  encounterPressure: number;
+  supply: CampaignSimulationState['supply'];
+  factions: Array<{
+    key: string;
+    name: string;
+    reputation: number;
+    heat: number;
+    summary: string;
+    notes: string;
+  }>;
+  recentEvents: string[];
+}
+
 const DEFAULT_FACTIONS: Array<[string, string]> = [
   ['locals', 'townsfolk, guides, and the ordinary people living near the danger'],
   ['delvers', 'rival treasure-seekers and opportunists working the same frontier'],
@@ -86,6 +100,22 @@ export function describeFactionStanding(faction: FactionStanding): string {
   if (faction.reputation <= -3) return `${faction.name} are openly hostile to the party.`;
   if (faction.reputation <= -1) return `${faction.name} distrust the party and watch for weakness.`;
   return `${faction.name} are still deciding what the party means to them.`;
+}
+
+export function getCampaignStateSnapshot(state: CampaignSimulationState): CampaignStateSnapshot {
+  return {
+    encounterPressure: state.encounterPressure,
+    supply: { ...state.supply },
+    factions: Object.entries(state.factions).map(([key, faction]) => ({
+      key,
+      name: faction.name,
+      reputation: faction.reputation,
+      heat: faction.heat,
+      summary: describeFactionStanding(faction),
+      notes: faction.notes,
+    })),
+    recentEvents: [...state.recentEvents].slice(-5).reverse(),
+  };
 }
 
 function createDefaultCampaignState(): CampaignSimulationState {

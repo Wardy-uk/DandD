@@ -501,6 +501,66 @@ export function resolveRichExploration(params: {
     }, turn, campaignState, blueprint, action);
   }
 
+  if (/check supplies|count supplies|take stock|inventory check|share supplies|redistribute gear/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    const torches = getItemQuantity(inventory, 'Torch');
+    const rations = getItemQuantity(inventory, 'Ration');
+    const bandages = getItemQuantity(inventory, 'Bandage Roll');
+    const arrows = getItemQuantity(inventory, 'Arrow');
+    const supportText = /share supplies|redistribute gear/.test(lowered)
+      ? 'The company shifts weight and essentials around so nobody is carrying panic in their pack.'
+      : 'You pause long enough to count what will matter when the delve gets meaner.';
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: `${supportText} On hand: ${torches} torches, ${rations} rations, ${bandages} bandages, ${arrows} arrows, and ${character.gold} gp. The expedition has already burned ${campaignState.supply.torchesBurned} torches and spent ${campaignState.supply.rationsSpent} rations this run.`,
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
+  if (/lead a prayer|offer a prayer|pray|invoke.*oath|call on.*oath|bless the company/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    const divineClass = /paladin|cleric|druid/.test(character.char_class);
+    const lawfulHeart = character.char_class === 'paladin' || character.wis >= 13;
+    const relief = divineClass ? 1 : 0;
+    const heal = divineClass ? Math.min(character.max_hp - character.hp, character.char_class === 'paladin' ? 2 : 1) : 0;
+    if (relief > 0) {
+      campaignState.encounterPressure = Math.max(0, campaignState.encounterPressure - relief);
+    }
+    if (heal > 0) {
+      applyHp(db, character.id, character.hp + heal);
+    }
+    if (lawfulHeart) {
+      shiftFactionStanding(campaignState, 'watch', { reputation: 1 }, `${character.name} projected discipline and purpose under pressure.`);
+      shiftFactionStanding(campaignState, 'locals', { reputation: 1 }, `${character.name} kept the expedition steady instead of desperate.`);
+    }
+    noteCampaignEvent(campaignState, `${character.name} steadied the company with prayer in ${scene.name}.`);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: divineClass
+        ? `${character.name} gathers the company, sets fear in order, and leads a hard little prayer fit for dangerous ground. The mood steadies, pressure eases, and ${heal > 0 ? `${heal} hit point${heal === 1 ? '' : 's'} return with the renewed resolve.` : 'the company finds its nerve again.'}`
+        : `${character.name} takes a quiet moment to center the group. It is more discipline than miracle, but even that matters in a place like this.`,
+      hpDelta: heal,
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
+  if (/sense evil|read their intent|judge their intent|test their intent/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    const talent = character.char_class === 'paladin' || character.wis >= 14;
+    const factionStanding = campaignState.factions[blueprint.faction];
+    const npcHint = npcs[0]
+      ? `${npcs[0].name} feels ${npcs[0].disposition || 'guarded'}, with the emotional weight of someone tied to ${blueprint.faction}.`
+      : `The scene itself carries the fingerprints of ${blueprint.faction}.`;
+    const deeper = talent
+      ? `Your instincts separate surface manner from underlying motive: ${blueprint.clue} ${describeFactionResult(campaignState, blueprint.faction)}`
+      : `You catch only broad emotional weather, but it is enough to tell this place is not morally blank.`;
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: `${npcHint} ${deeper}`,
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
   if ((/talk|parley|hail|negotiate|bargain/.test(lowered) || npcs.length > 0) && npcs.length > 0) {
     const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
     const factionStanding = campaignState.factions[blueprint.faction];
@@ -767,6 +827,12 @@ function consumeItem(db: Database, characterId: string, inventory: InventoryItem
   }
   saveInventory(db, characterId, inventory);
   return true;
+}
+
+function getItemQuantity(inventory: InventoryItem[], itemName: string): number {
+  return inventory
+    .filter((item) => item.item === itemName)
+    .reduce((total, item) => total + Number(item.quantity || 0), 0);
 }
 
 function decrementInventory(db: Database, characterId: string, inventory: InventoryItem[], itemName: string, quantity: number) {

@@ -67,6 +67,26 @@ interface Companion {
   };
 }
 
+interface CampaignStateView {
+  encounterPressure: number;
+  supply: {
+    torchesBurned: number;
+    rationsSpent: number;
+    lockpicksBroken: number;
+    arrowsSpent: number;
+    bandagesUsed: number;
+  };
+  factions: Array<{
+    key: string;
+    name: string;
+    reputation: number;
+    heat: number;
+    summary: string;
+    notes: string;
+  }>;
+  recentEvents: string[];
+}
+
 interface SceneNpc {
   id: string;
   name: string;
@@ -110,6 +130,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
   const [campaignMap, setCampaignMap] = useState<CampaignMapData | null>(null);
   const [companions, setCompanions] = useState<Companion[]>([]);
   const [sceneNpcs, setSceneNpcs] = useState<SceneNpc[]>([]);
+  const [campaignState, setCampaignState] = useState<CampaignStateView | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const headers = { Authorization: `Bearer ${player.token}`, 'Content-Type': 'application/json' };
@@ -189,6 +210,8 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
         setCompanions(data.payload || []);
       } else if (data.type === 'scene_npcs_update') {
         setSceneNpcs(data.payload || []);
+      } else if (data.type === 'campaign_state') {
+        setCampaignState(data.payload || null);
       }
     };
 
@@ -288,10 +311,31 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
 
   const recruitableNpc = sceneNpcs.find((npc) => !npc.joinedParty);
   const leadCompanion = companions.find((companion) => companion.joinedParty);
+  const className = String(character?.char_class || '').toLowerCase();
+  const classAction = encounterActive
+    ? className === 'paladin'
+      ? 'Call on your oath'
+      : className === 'cleric' || className === 'druid'
+        ? 'Lead a prayer'
+        : className === 'ranger'
+          ? 'Read their intent'
+          : className === 'thief'
+            ? 'Check supplies'
+            : 'Take stock'
+    : className === 'paladin'
+      ? 'Lead a prayer'
+      : className === 'cleric' || className === 'druid'
+        ? 'Bless the company'
+        : className === 'ranger'
+          ? 'Read their intent'
+          : className === 'thief'
+            ? 'Check supplies'
+            : 'Take stock';
   const quickActions = [
     'Look around',
     'Listen carefully',
     'Read the battlefield',
+    classAction,
     leadCompanion && !leadCompanion.personalQuestResolved
       ? leadCompanion.personalQuestNeed
       : (leadCompanion ? `Ask ${leadCompanion.name} to scout ahead` : (recruitableNpc ? `Ask ${recruitableNpc.name} to join us` : (encounterActive ? 'Hold the doorway' : 'Search for traps'))),
@@ -434,6 +478,56 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                 </p>
               ))}
             </div>
+          </div>
+        )}
+
+        {campaignState && (
+          <div className="border border-leather/15 rounded-lg p-3 bg-parchment-light/40">
+            <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">
+              Expedition State
+            </div>
+            <div className="mb-2">
+              <div className="flex justify-between text-[11px] font-body text-ink-faint">
+                <span>Pressure</span>
+                <span className="text-ink-light">{campaignState.encounterPressure}/10</span>
+              </div>
+              <div className="mt-1 h-2 rounded-full bg-parchment-dark/30 overflow-hidden">
+                <div
+                  className="h-full rounded-full transition-all"
+                  style={{
+                    width: `${Math.min(100, campaignState.encounterPressure * 10)}%`,
+                    backgroundColor: campaignState.encounterPressure >= 7 ? '#8b1a1a'
+                      : campaignState.encounterPressure >= 4 ? '#c49a2a' : '#2d5a1e',
+                  }}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-1 text-[11px] font-body text-ink-faint">
+              <div>Torches: <span className="text-ink-light">{campaignState.supply.torchesBurned} burned</span></div>
+              <div>Rations: <span className="text-ink-light">{campaignState.supply.rationsSpent} spent</span></div>
+              <div>Arrows: <span className="text-ink-light">{campaignState.supply.arrowsSpent} spent</span></div>
+              <div>Bandages: <span className="text-ink-light">{campaignState.supply.bandagesUsed} used</span></div>
+            </div>
+            <div className="mt-3 space-y-2">
+              {campaignState.factions.slice(0, 4).map((faction) => (
+                <div key={faction.key} className="rounded-lg border border-leather/10 bg-parchment/60 p-2">
+                  <div className="flex items-center justify-between text-[11px] font-heading">
+                    <span className="text-leather-dark">{faction.name}</span>
+                    <span className="text-ink-faint">Rep {faction.reputation} • Heat {faction.heat}</span>
+                  </div>
+                  <div className="mt-1 text-[11px] font-body text-ink-faint">{faction.summary}</div>
+                </div>
+              ))}
+            </div>
+            {campaignState.recentEvents.length > 0 && (
+              <div className="mt-3 space-y-1">
+                {campaignState.recentEvents.slice(0, 3).map((event) => (
+                  <p key={event} className="text-[11px] font-body text-ink-faint italic">
+                    {event}
+                  </p>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
