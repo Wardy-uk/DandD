@@ -64,10 +64,10 @@ export default function CampaignMap({ mapData }: Props) {
     );
   }
 
-  const nodeWidth = 124;
+  const nodeWidth = 112;
   const nodeHeight = 56;
-  const colGap = 170;
-  const rowGap = 108;
+  const colGap = 150;
+  const rowGap = 100;
   const positioned = mapData.nodes.map((node) => ({
     ...node,
     x: 24 + node.depth * colGap,
@@ -80,7 +80,7 @@ export default function CampaignMap({ mapData }: Props) {
 
   return (
     <div className="border border-leather/15 rounded-lg p-3 bg-parchment-light/40">
-      <div className="flex items-center justify-between mb-2">
+      <div className="mb-2 flex items-center justify-between gap-3">
         <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider">
           Delver Map
         </div>
@@ -89,7 +89,7 @@ export default function CampaignMap({ mapData }: Props) {
         </div>
       </div>
 
-      <div className="overflow-x-auto overflow-y-hidden rounded-lg border border-leather/10 bg-parchment/70">
+      <div className="overflow-x-auto overflow-y-hidden rounded-lg border border-leather/10 bg-parchment/70 [-webkit-overflow-scrolling:touch]">
         <div style={{ width: maxX, height: maxY, position: 'relative' }}>
           <svg width={maxX} height={maxY} className="absolute inset-0">
             {mapData.edges.map((edge) => {
@@ -127,7 +127,7 @@ export default function CampaignMap({ mapData }: Props) {
           {positioned.map((node) => (
             <div
               key={node.id}
-              className={`absolute rounded-lg border px-3 py-2 shadow-sm ${
+              className={`absolute rounded-lg border px-2.5 py-2 shadow-sm ${
                 node.current
                   ? 'border-gold bg-gold/15'
                   : node.discovered
@@ -168,7 +168,7 @@ export default function CampaignMap({ mapData }: Props) {
           {focus.battlefield?.summary || 'The party has only partial intel on this location.'}
         </div>
         {focus.discovered && (
-          <div className="mt-2 grid grid-cols-2 gap-1 text-[11px] font-body text-ink-faint">
+          <div className="mt-2 grid grid-cols-1 gap-1 text-[11px] font-body text-ink-faint sm:grid-cols-2">
             <div>Faction: <span className="text-ink-light">{focus.faction || 'unknown'}</span></div>
             <div>Threat: <span className="text-ink-light">{focus.encounterTheme || 'unknown'}</span></div>
             <div>Visibility: <span className="text-ink-light">{focus.battlefield?.visibility || 'unknown'}</span></div>

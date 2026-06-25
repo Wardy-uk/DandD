@@ -238,12 +238,12 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
   const abilityKeys = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
 
   return (
-    <div className="max-w-xl mx-auto">
+    <div className="mx-auto max-w-3xl">
       <button onClick={onBack} className="text-sm text-leather hover:text-leather-dark font-body mb-4 inline-block">
         &larr; Back to campaigns
       </button>
 
-      <h2 className="text-2xl font-heading font-bold text-leather-dark tracking-wide mb-2">
+      <h2 className="mb-2 text-2xl font-heading font-bold tracking-wide text-leather-dark sm:text-3xl">
         Create Your Character
       </h2>
       <p className="text-sm text-ink-faint font-body italic mb-6">
@@ -254,7 +254,7 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
 
       {/* Step 1: Choose Calling + Roll Abilities */}
       {step === 1 && (
-        <div className="border border-leather/15 rounded-lg p-6 bg-parchment-light/40">
+        <div className="rounded-lg border border-leather/15 bg-parchment-light/40 p-4 sm:p-6">
           <h3 className="font-heading font-bold text-leather text-sm uppercase tracking-wider mb-3">
             I. Choose Your Calling
           </h3>
@@ -322,11 +322,11 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
               <p className="text-sm text-ink-light font-body mb-3">
                 The dice have spoken. These rolls have been arranged for a {CLASS_LABELS[chosenPath]} build:
               </p>
-              <div className="grid grid-cols-6 gap-2 mb-3">
+              <div className="mb-3 grid grid-cols-3 gap-2 sm:grid-cols-6">
                 {abilityKeys.map((key, i) => (
-                  <div key={key} className="text-center border border-leather/10 rounded-lg p-3 bg-parchment/50">
+                  <div key={key} className="rounded-lg border border-leather/10 bg-parchment/50 p-2 text-center sm:p-3">
                     <div className="text-xs font-heading font-bold text-ink-faint uppercase">{abilityNames[i]}</div>
-                    <div className="text-2xl font-heading font-bold text-leather-dark mt-1">{scores?.[key]}</div>
+                    <div className="mt-1 text-xl font-heading font-bold text-leather-dark sm:text-2xl">{scores?.[key]}</div>
                     <div className="text-xs text-ink-faint font-body mt-0.5">
                       {(() => {
                         const total = scores?.[key];
@@ -356,7 +356,7 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
                   })()}
                 </p>
               </div>
-              <div className="flex gap-3">
+              <div className="flex flex-col gap-3 sm:flex-row">
                 <button onClick={() => { setAbilityRolls(null); setScores(null); setRace(''); setAdjustedScores(null); setCharClass(''); }}
                   className="flex-1 py-2 rounded-lg border border-leather/20 text-sm font-heading text-ink-faint hover:bg-parchment-dark/20">
                   Re-roll
@@ -404,7 +404,7 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
 
       {/* Step 3: Choose Class */}
       {step === 3 && (
-        <div className="border border-leather/15 rounded-lg p-6 bg-parchment-light/40">
+        <div className="rounded-lg border border-leather/15 bg-parchment-light/40 p-4 sm:p-6">
           <h3 className="font-heading font-bold text-leather text-sm uppercase tracking-wider mb-3">
             III. Adjust Your Calling
           </h3>
@@ -428,7 +428,7 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
 
           {/* Show adjusted scores */}
           {adjustedScores && (
-            <div className="flex gap-2 mb-4 bg-parchment-dark/10 rounded-lg p-2">
+            <div className="mb-4 grid grid-cols-3 gap-2 rounded-lg bg-parchment-dark/10 p-2 sm:flex">
               {abilityKeys.map((k, i) => {
                 const orig = (scores as any)?.[k];
                 const adj = (adjustedScores as any)[k];
@@ -493,7 +493,7 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
 
       {/* Step 4: Choose Alignment */}
       {step === 4 && (
-        <div className="border border-leather/15 rounded-lg p-6 bg-parchment-light/40">
+        <div className="rounded-lg border border-leather/15 bg-parchment-light/40 p-4 sm:p-6">
           <h3 className="font-heading font-bold text-leather text-sm uppercase tracking-wider mb-3">
             IV. Choose Alignment
           </h3>
@@ -531,7 +531,7 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
 
       {/* Step 5: Name */}
       {step === 5 && (
-        <div className="border border-leather/15 rounded-lg p-6 bg-parchment-light/40">
+        <div className="rounded-lg border border-leather/15 bg-parchment-light/40 p-4 sm:p-6">
           <h3 className="font-heading font-bold text-leather text-sm uppercase tracking-wider mb-3">
             V. Name Your Character
           </h3>
@@ -564,7 +564,7 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
 
       {/* Step 6: Confirm */}
       {step === 6 && (
-        <div className="border border-leather/15 rounded-lg p-6 bg-parchment-light/40">
+        <div className="rounded-lg border border-leather/15 bg-parchment-light/40 p-4 sm:p-6">
           <h3 className="font-heading font-bold text-leather text-sm uppercase tracking-wider mb-4">
             VI. Confirm Your Character
           </h3>
@@ -576,7 +576,7 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
               </p>
               <p className="text-xs text-ink-faint font-body italic">{alignment}</p>
             </div>
-            <div className="grid grid-cols-6 gap-2">
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
               {abilityKeys.map((k, i) => (
                 <div key={k} className="text-center border border-leather/10 rounded p-2 bg-parchment/50">
                   <div className="text-xs font-heading text-ink-faint">{abilityNames[i]}</div>
@@ -588,7 +588,7 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
               Hit points, THAC0, saving throws, and starting gold will be rolled when you confirm.
             </p>
           </div>
-          <div className="flex gap-3 mt-6">
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row">
             <button onClick={() => setStep(1)}
               className="flex-1 py-2.5 rounded-lg border border-leather/20 text-sm font-heading text-ink-faint hover:bg-parchment-dark/20">
               Start Over

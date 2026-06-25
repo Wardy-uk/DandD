@@ -142,12 +142,12 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
   };
 
   return (
-    <div className="max-w-2xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-heading font-bold text-leather-dark tracking-wide">
+    <div className="mx-auto max-w-3xl">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className="text-2xl font-heading font-bold text-leather-dark tracking-wide sm:text-3xl">
           Your Campaigns
         </h2>
-        <div className="flex gap-2">
+        <div className="grid grid-cols-2 gap-2 sm:flex">
           <button
             onClick={() => { setShowJoin(true); fetchBrowseCampaigns(); }}
             className="px-4 py-2 rounded-lg border border-leather/20 text-sm font-heading font-semibold text-leather hover:bg-leather/5 transition-colors"
@@ -177,11 +177,11 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
             <button
               key={c.id}
               onClick={() => enterCampaign(c.id)}
-              className="w-full text-left border border-leather/15 rounded-lg p-5 bg-parchment-light/40 hover:bg-parchment-light/70 hover:border-leather/30 transition-all group"
+            className="group w-full rounded-lg border border-leather/15 bg-parchment-light/40 p-4 text-left transition-all hover:border-leather/30 hover:bg-parchment-light/70 sm:p-5"
             >
-              <div className="flex items-start justify-between">
-                <div>
-                  <h3 className="font-heading font-bold text-lg text-leather-dark group-hover:text-leather tracking-wide">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <h3 className="truncate font-heading text-base font-bold tracking-wide text-leather-dark group-hover:text-leather sm:text-lg">
                     {c.name}
                   </h3>
                   {c.setting && (
@@ -194,7 +194,7 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
                   {c.status}
                 </span>
               </div>
-              <div className="flex gap-4 mt-3 text-xs text-ink-faint font-body">
+              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-faint font-body">
                 <span>Session {c.session_number}</span>
                 <span>{c.player_count} player{c.player_count !== 1 ? 's' : ''}</span>
                 <span>{c.character_count} character{c.character_count !== 1 ? 's' : ''}</span>
@@ -206,8 +206,8 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
 
       {/* Create Campaign Modal */}
       {showCreate && (
-        <div className="fixed inset-0 bg-ink/40 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-parchment border border-leather/20 rounded-lg p-8 w-full max-w-md shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-3 backdrop-blur-sm sm:items-center">
+          <div className="w-full max-w-md rounded-lg border border-leather/20 bg-parchment p-4 shadow-xl sm:p-8">
             <h3 className="text-xl font-heading font-bold text-leather-dark mb-4">New Campaign</h3>
             <div className="space-y-4">
               <div>
@@ -272,7 +272,7 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
                 )}
               </div>
             </div>
-            <div className="flex gap-3 mt-6">
+            <div className="mt-6 flex gap-3">
               <button onClick={() => setShowCreate(false)} className="flex-1 py-2.5 rounded-lg border border-leather/20 text-sm font-heading text-ink-faint hover:bg-parchment-dark/30">
                 Cancel
               </button>
@@ -286,8 +286,8 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
 
       {/* Join Campaign Modal */}
       {showJoin && (
-        <div className="fixed inset-0 bg-ink/40 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-parchment border border-leather/20 rounded-lg p-8 w-full max-w-md shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-3 backdrop-blur-sm sm:items-center">
+          <div className="w-full max-w-md rounded-lg border border-leather/20 bg-parchment p-4 shadow-xl sm:p-8">
             <h3 className="text-xl font-heading font-bold text-leather-dark mb-4">Join a Campaign</h3>
 
             {browseLoading ? (

@@ -269,7 +269,7 @@ export default function AdminPanel({ apiUrl, player }: Props) {
   };
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="mx-auto max-w-6xl">
       <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <h2 className="text-2xl font-heading font-bold text-leather-dark tracking-wide">
@@ -307,8 +307,8 @@ export default function AdminPanel({ apiUrl, player }: Props) {
       ) : (
         <>
           {activeTab === 'users' && (
-            <div className="overflow-hidden rounded-lg border border-leather/15 bg-parchment-light/40">
-              <table className="w-full">
+            <div className="overflow-x-auto rounded-lg border border-leather/15 bg-parchment-light/40">
+              <table className="min-w-[760px] w-full">
                 <thead>
                   <tr className="border-b border-leather/15 bg-parchment-dark/20">
                     <th className="px-4 py-3 text-left text-xs font-heading font-bold uppercase tracking-wider text-ink-faint">User</th>
@@ -530,8 +530,8 @@ export default function AdminPanel({ apiUrl, player }: Props) {
       )}
 
       {resetId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 backdrop-blur-sm">
-          <div className="w-full max-w-sm rounded-lg border border-leather/20 bg-parchment p-6 shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-3 backdrop-blur-sm sm:items-center">
+          <div className="w-full max-w-sm rounded-lg border border-leather/20 bg-parchment p-4 shadow-xl sm:p-6">
             <h3 className="mb-4 text-lg font-heading font-bold text-leather-dark">Reset Password</h3>
             <p className="mb-3 text-xs font-body text-ink-faint">
               For: {users.find((u) => u.id === resetId)?.username}

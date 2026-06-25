@@ -412,15 +412,15 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
   ].filter(Boolean) as string[];
 
   return (
-    <div className="flex gap-4 h-[calc(100vh-120px)]">
+    <div className="flex min-h-[calc(100vh-8rem)] flex-col gap-3 lg:h-[calc(100vh-120px)] lg:flex-row lg:gap-4">
       {/* Left Sidebar — Character Panel */}
-      <div className="w-64 flex-shrink-0 flex flex-col gap-3">
+      <div className="flex w-full flex-col gap-3 lg:w-72 lg:flex-shrink-0">
         <button onClick={onBack} className="text-xs text-leather hover:text-leather-dark font-body">
           &larr; Leave Campaign
         </button>
 
         {character && (
-          <div className="border border-leather/15 rounded-lg p-4 bg-parchment-light/40">
+          <div className="rounded-lg border border-leather/15 bg-parchment-light/40 p-3 sm:p-4">
             <button onClick={() => setShowSheet(!showSheet)} className="w-full text-left">
               <h3 className="font-heading font-bold text-leather-dark text-lg tracking-wide">
                 {character.name}
@@ -781,16 +781,16 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
       </div>
 
       {/* Main Panel — Game Log & Input */}
-      <div className="flex-1 flex flex-col border border-leather/15 rounded-lg bg-parchment-light/30 overflow-hidden">
+      <div className="flex min-h-[60vh] flex-1 flex-col overflow-hidden rounded-lg border border-leather/15 bg-parchment-light/30">
         {/* Scene Header */}
         {currentScene && (
-          <div className="px-5 py-3 border-b border-leather/10 bg-parchment-light/40">
-            <div className="flex items-center justify-between">
-              <h2 className="font-heading font-bold text-leather-dark tracking-wide">
+          <div className="border-b border-leather/10 bg-parchment-light/40 px-3 py-3 sm:px-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <h2 className="font-heading font-bold tracking-wide text-leather-dark">
                 {currentScene.name}
               </h2>
               {currentScene.connections.length > 0 && (
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   {currentScene.connections.map((c, i) => (
                     <button key={i} onClick={() => quickAction(`I go ${c.direction}`)}
                       className="text-xs px-2 py-1 rounded border border-leather/15 text-leather font-heading hover:bg-leather/5">
@@ -804,7 +804,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
         )}
 
         {/* Game Log */}
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+        <div className="flex-1 space-y-3 overflow-y-auto px-3 py-4 sm:px-5">
           {gameLog.length === 0 && (
             <div className="text-center py-16 text-ink-faint font-body italic">
               <p>The adventure awaits...</p>
@@ -855,9 +855,9 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
         </div>
 
         {/* Input Area */}
-        <div className="border-t border-leather/10 p-4 bg-parchment-light/40">
+        <div className="border-t border-leather/10 bg-parchment-light/40 p-3 sm:p-4">
           {/* Quick Actions */}
-          <div className="flex gap-2 mb-3 flex-wrap">
+          <div className="mb-3 flex flex-wrap gap-2">
             {quickActions.map(action => (
               <button key={action} onClick={() => quickAction(action)}
                 className="text-xs px-3 py-1.5 rounded-full border border-leather/15 text-leather font-heading hover:bg-leather/5 transition-colors">
@@ -866,7 +866,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
             ))}
           </div>
 
-          <div className="flex gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row">
             <input
               type="text"
               value={inputText}
@@ -876,7 +876,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
               className="flex-1 px-4 py-3 rounded-lg border border-leather/20 bg-parchment font-body text-sm text-ink placeholder:text-ink-faint/50 focus:outline-none focus:border-leather/50 focus:ring-1 focus:ring-leather/20"
             />
             <button onClick={sendAction} disabled={!inputText.trim()}
-              className="px-6 py-3 rounded-lg bg-leather text-parchment-light font-heading font-semibold text-sm hover:bg-leather-dark disabled:opacity-30 transition-colors">
+              className="rounded-lg bg-leather px-6 py-3 text-sm font-heading font-semibold text-parchment-light transition-colors hover:bg-leather-dark disabled:opacity-30 sm:self-auto">
               Act
             </button>
           </div>
@@ -885,8 +885,8 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
 
       {/* Character Sheet Modal */}
       {showSheet && character && (
-        <div className="fixed inset-0 bg-ink/40 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => setShowSheet(false)}>
-          <div className="max-w-2xl w-full max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-2 backdrop-blur-sm sm:items-center" onClick={() => setShowSheet(false)}>
+          <div className="max-h-[88vh] w-full max-w-2xl overflow-y-auto" onClick={e => e.stopPropagation()}>
             <CharacterSheet character={character} onClose={() => setShowSheet(false)} />
           </div>
         </div>

@@ -15,11 +15,11 @@ export default function CharacterSheet({ character, onClose }: Props) {
   const c = character;
 
   return (
-    <div className="border border-leather/20 rounded-lg bg-parchment p-6 shadow-2xl">
+    <div className="rounded-lg border border-leather/20 bg-parchment p-4 shadow-2xl sm:p-6">
       {/* Header */}
-      <div className="flex items-start justify-between mb-4">
+      <div className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-3xl font-heading font-bold text-leather-dark tracking-wide">{c.name}</h2>
+          <h2 className="text-2xl font-heading font-bold tracking-wide text-leather-dark sm:text-3xl">{c.name}</h2>
           <p className="text-sm text-ink-faint font-body">
             Level {c.level} {c.race} {c.char_class} &mdash; {c.alignment}
           </p>
@@ -32,7 +32,7 @@ export default function CharacterSheet({ character, onClose }: Props) {
 
       <div className="h-px bg-gradient-to-r from-leather/30 via-leather/10 to-transparent mb-4" />
 
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2 lg:gap-6">
         {/* Left Column */}
         <div className="space-y-4">
           {/* Ability Scores */}
@@ -61,7 +61,7 @@ export default function CharacterSheet({ character, onClose }: Props) {
           {/* Combat */}
           <div>
             <h3 className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">Combat</h3>
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {[
                 ['THAC0', c.thac0],
                 ['AC', c.ac],
@@ -112,7 +112,7 @@ export default function CharacterSheet({ character, onClose }: Props) {
           {/* Wealth */}
           <div>
             <h3 className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">Wealth</h3>
-            <div className="grid grid-cols-5 gap-1 text-center">
+            <div className="grid grid-cols-3 gap-2 text-center sm:grid-cols-5">
               {[
                 ['PP', c.platinum, '#8a8a8a'],
                 ['GP', c.gold, '#c49a2a'],
@@ -166,7 +166,7 @@ export default function CharacterSheet({ character, onClose }: Props) {
           {(c.spellSlots || c.spell_slots) && (
             <div>
               <h3 className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">Spell Slots</h3>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {Object.entries(c.spellSlots || JSON.parse(c.spell_slots || '{}')).map(([level, count]) => (
                   <div key={level} className="text-center border border-magic/20 rounded px-2 py-1 bg-magic/5">
                     <div className="text-[10px] text-magic font-heading">Lvl {level}</div>
