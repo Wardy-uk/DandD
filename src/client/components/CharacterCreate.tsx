@@ -113,6 +113,17 @@ interface AvailableClassOption {
   missingRequirements: string[];
 }
 
+const CLASS_BUILD_PRIORITY: Record<string, string[]> = {
+  fighter: ['str', 'con', 'dex', 'wis', 'cha', 'int'],
+  paladin: ['cha', 'wis', 'str', 'con', 'dex', 'int'],
+  ranger: ['wis', 'con', 'dex', 'str', 'int', 'cha'],
+  cleric: ['wis', 'str', 'con', 'cha', 'dex', 'int'],
+  druid: ['wis', 'cha', 'con', 'dex', 'int', 'str'],
+  thief: ['dex', 'int', 'cha', 'con', 'wis', 'str'],
+  bard: ['cha', 'dex', 'int', 'con', 'wis', 'str'],
+  mage: ['int', 'dex', 'con', 'wis', 'cha', 'str'],
+};
+
 interface Props {
   apiUrl: string;
   player: { id: string; token: string };
@@ -124,6 +135,7 @@ interface Props {
 export default function CharacterCreate({ apiUrl, player, campaignId, onCreated, onBack }: Props) {
   const [step, setStep] = useState(1);
   const [abilityRolls, setAbilityRolls] = useState<AbilityRoll[] | null>(null);
+  const [chosenPath, setChosenPath] = useState('paladin');
   const [scores, setScores] = useState<Record<string, number> | null>(null);
   const [adjustedScores, setAdjustedScores] = useState<Record<string, number> | null>(null);
   const [race, setRace] = useState('');
@@ -140,6 +152,7 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
 
   const rollAbilities = async (method: '3d6' | '4d6kh3') => {
     setLoading(true);
+    setError('');
     try {
       const res = await fetch(`${apiUrl}/api/characters/roll-abilities`, {
         method: 'POST', headers, body: JSON.stringify({ method }),
@@ -147,7 +160,7 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
       const data = await res.json();
       if (data.ok) {
         setAbilityRolls(data.data.rolls);
-        setScores(data.data.scores);
+        setScores(arrangeScoresForClass(data.data.rolls, chosenPath));
       }
     } catch {
       setError('Failed to roll abilities');
@@ -159,6 +172,7 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
   const selectRace = async (r: string) => {
     setRace(r);
     setLoading(true);
+    setError('');
     try {
       const res = await fetch(`${apiUrl}/api/characters/eligible-classes`, {
         method: 'POST', headers, body: JSON.stringify({ race: r, scores }),
@@ -168,6 +182,11 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
         setAdjustedScores(data.data.adjustedScores);
         setEligibleClasses(data.data.singleClasses);
         setAvailableClasses(data.data.availableClasses || []);
+        if (data.data.singleClasses.includes(chosenPath)) {
+          setCharClass(chosenPath);
+        } else {
+          setCharClass('');
+        }
         setStep(3);
       }
     } catch {
@@ -179,6 +198,7 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
 
   const selectClass = async (c: string) => {
     setCharClass(c);
+    setError('');
     try {
       const res = await fetch(`${apiUrl}/api/characters/alignments/${c}`, { headers });
       const data = await res.json();
@@ -232,19 +252,40 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
 
       {error && <p className="text-blood text-sm font-body mb-4">{error}</p>}
 
-      {/* Step 1: Roll Abilities */}
+      {/* Step 1: Choose Calling + Roll Abilities */}
       {step === 1 && (
         <div className="border border-leather/15 rounded-lg p-6 bg-parchment-light/40">
           <h3 className="font-heading font-bold text-leather text-sm uppercase tracking-wider mb-3">
-            I. Roll Ability Scores
+            I. Choose Your Calling
           </h3>
 
           {!abilityRolls ? (
             <div className="space-y-4">
               <p className="text-sm text-ink-light font-body leading-relaxed">
-                Your character has six abilities that define their strengths and weaknesses.
-                These are determined by rolling dice &mdash; the luck of the draw shapes your destiny.
+                Start with the hero you actually want to play. The creator will roll six scores, then arrange them to best suit that class before racial adjustments.
               </p>
+
+              <div className="space-y-2">
+                {Object.keys(CLASS_LABELS).map(c => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setChosenPath(c)}
+                    className={`w-full py-3 px-4 rounded-lg border text-left transition-all ${
+                      chosenPath === c
+                        ? 'border-leather/40 bg-parchment-light/80 shadow-sm'
+                        : 'border-leather/15 hover:bg-parchment-light/70 hover:border-leather/30'
+                    }`}
+                  >
+                    <div className="flex items-baseline justify-between">
+                      <span className="font-heading font-bold text-leather-dark">{CLASS_LABELS[c]}</span>
+                      <span className="text-xs text-ink-faint font-body">{CLASS_HELP[c]?.prime}</span>
+                    </div>
+                    <p className="text-xs text-ink-faint font-body mt-0.5">{CLASS_HELP[c]?.desc}</p>
+                    <p className="text-xs text-ink-light font-body mt-1 italic">{CLASS_HELP[c]?.role}</p>
+                  </button>
+                ))}
+              </div>
 
               <div className="bg-parchment-dark/15 rounded-lg p-4 space-y-2">
                 {abilityNames.map(name => (
@@ -262,41 +303,48 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
               <div className="space-y-2">
                 <button onClick={() => rollAbilities('4d6kh3')} disabled={loading}
                   className="w-full py-3 rounded-lg bg-leather text-parchment-light font-heading font-semibold text-sm hover:bg-leather-dark disabled:opacity-50">
-                  Roll 4d6, Drop Lowest
+                  Roll For {CLASS_LABELS[chosenPath]}
                 </button>
                 <p className="text-xs text-ink-faint font-body text-center italic">
-                  Recommended &mdash; roll four six-sided dice, keep the best three. Tends to produce heroic characters.
+                  Recommended &mdash; heroic rolls, then assigned to suit your chosen calling.
                 </p>
                 <button onClick={() => rollAbilities('3d6')} disabled={loading}
                   className="w-full py-3 rounded-lg border border-leather/20 text-leather font-heading font-semibold text-sm hover:bg-leather/5 disabled:opacity-50">
-                  Roll 3d6 Straight
+                  Roll Old School
                 </button>
                 <p className="text-xs text-ink-faint font-body text-center italic">
-                  Old school &mdash; roll three six-sided dice per ability. Harder, but more authentic.
+                  Old school &mdash; still arranged toward your chosen path, but with harsher raw numbers.
                 </p>
               </div>
             </div>
           ) : (
             <div>
               <p className="text-sm text-ink-light font-body mb-3">
-                The dice have spoken. Here are your ability scores:
+                The dice have spoken. These rolls have been arranged for a {CLASS_LABELS[chosenPath]} build:
               </p>
               <div className="grid grid-cols-6 gap-2 mb-3">
-                {abilityRolls.map((r, i) => (
-                  <div key={r.ability} className="text-center border border-leather/10 rounded-lg p-3 bg-parchment/50">
+                {abilityKeys.map((key, i) => (
+                  <div key={key} className="text-center border border-leather/10 rounded-lg p-3 bg-parchment/50">
                     <div className="text-xs font-heading font-bold text-ink-faint uppercase">{abilityNames[i]}</div>
-                    <div className="text-2xl font-heading font-bold text-leather-dark mt-1">{r.result.total}</div>
+                    <div className="text-2xl font-heading font-bold text-leather-dark mt-1">{scores?.[key]}</div>
                     <div className="text-xs text-ink-faint font-body mt-0.5">
-                      [{r.result.rolls.join(', ')}]
+                      {(() => {
+                        const total = scores?.[key];
+                        const source = abilityRolls.find((roll) => roll.result.total === total && !usedRollIndices(scores || {}, abilityKeys, abilityRolls, key).includes(abilityRolls.indexOf(roll)));
+                        return source ? `[${source.result.rolls.join(', ')}]` : '';
+                      })()}
                     </div>
                   </div>
                 ))}
               </div>
+              <p className="text-xs text-ink-faint font-body italic mb-3 text-center">
+                Priority for this build: {CLASS_HELP[chosenPath]?.prime}
+              </p>
               {/* Quick assessment */}
               <div className="bg-parchment-dark/15 rounded-lg p-3 mb-4">
                 <p className="text-xs text-ink-faint font-body italic">
                   {(() => {
-                    const vals = abilityRolls.map(r => r.result.total);
+                    const vals = Object.values(scores || {});
                     const max = Math.max(...vals);
                     const min = Math.min(...vals);
                     const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
@@ -309,7 +357,7 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
                 </p>
               </div>
               <div className="flex gap-3">
-                <button onClick={() => { setAbilityRolls(null); setScores(null); }}
+                <button onClick={() => { setAbilityRolls(null); setScores(null); setRace(''); setAdjustedScores(null); setCharClass(''); }}
                   className="flex-1 py-2 rounded-lg border border-leather/20 text-sm font-heading text-ink-faint hover:bg-parchment-dark/20">
                   Re-roll
                 </button>
@@ -333,6 +381,9 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
             Your race determines your character's heritage and natural abilities.
             Non-human races gain special powers but have class and level restrictions.
             Humans are the only race with no limits.
+          </p>
+          <p className="text-xs text-ink-faint font-body italic mb-4">
+            Chosen path: {CLASS_LABELS[chosenPath]}. Pick a race and we’ll see whether the build survives the racial adjustments.
           </p>
           <div className="space-y-2">
             {RACES.map(r => (
@@ -361,6 +412,16 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
             Your class is your profession &mdash; how you fight, what you can do, and how you grow.
             Every class open to a {RACE_LABELS[race]} is shown below. Some are ready now, and some require more heroic rolls.
           </p>
+          {charClass === chosenPath && (
+            <p className="text-xs text-green-700 font-body italic mb-3">
+              Your planned {CLASS_LABELS[chosenPath]} build qualifies with this race.
+            </p>
+          )}
+          {charClass !== chosenPath && (
+            <p className="text-xs text-blood font-body italic mb-3">
+              Your planned {CLASS_LABELS[chosenPath]} build does not qualify after racial adjustments, so you’ll need a different class or a re-roll.
+            </p>
+          )}
           <p className="text-xs text-ink-faint font-body italic mb-4">
             Paladin is the rare knightly ideal in AD&amp;D: hard to qualify for, but absolutely supported here when the dice smile on you.
           </p>
@@ -392,13 +453,15 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
               <button key={c} onClick={() => option.eligible && selectClass(c)} disabled={!option.eligible}
                 className={`w-full py-3 px-4 rounded-lg border text-left transition-all ${
                   option.eligible
-                    ? 'border-leather/15 hover:bg-parchment-light/70 hover:border-leather/30'
+                    ? c === chosenPath
+                      ? 'border-green-700/40 bg-green-50/40 hover:bg-green-50/60'
+                      : 'border-leather/15 hover:bg-parchment-light/70 hover:border-leather/30'
                     : 'border-leather/10 bg-parchment-dark/10 opacity-75 cursor-not-allowed'
                 }`}>
                 <div className="flex items-baseline justify-between">
                   <span className="font-heading font-bold text-leather-dark">{CLASS_LABELS[c] || c}</span>
                   <span className={`text-xs font-body ${option.eligible ? 'text-green-700' : 'text-ink-faint'}`}>
-                    {option.eligible ? 'Ready to play' : CLASS_HELP[c]?.prime}
+                    {option.eligible ? (c === chosenPath ? 'Your planned path' : 'Ready to play') : CLASS_HELP[c]?.prime}
                   </span>
                 </div>
                 <p className="text-xs text-ink-faint font-body mt-0.5">{CLASS_HELP[c]?.desc}</p>
@@ -548,4 +611,38 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
       </div>
     </div>
   );
+}
+
+function arrangeScoresForClass(rolls: AbilityRoll[], chosenClass: string) {
+  const totals = rolls.map((roll) => roll.result.total).sort((a, b) => b - a);
+  const priority = CLASS_BUILD_PRIORITY[chosenClass] || ['str', 'dex', 'con', 'int', 'wis', 'cha'];
+  const assigned: Record<string, number> = {
+    str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0,
+  };
+
+  priority.forEach((ability, index) => {
+    assigned[ability] = totals[index] ?? 0;
+  });
+
+  return assigned;
+}
+
+function usedRollIndices(
+  currentScores: Record<string, number>,
+  abilityKeys: string[],
+  rolls: AbilityRoll[],
+  upToKey: string,
+) {
+  const indices: number[] = [];
+  const taken = new Set<number>();
+  for (const key of abilityKeys) {
+    const score = currentScores[key];
+    const index = rolls.findIndex((roll, rollIndex) => roll.result.total === score && !taken.has(rollIndex));
+    if (index >= 0) {
+      taken.add(index);
+      indices.push(index);
+    }
+    if (key === upToKey) break;
+  }
+  return indices.slice(0, -1);
 }
