@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import type { Socket } from 'socket.io-client';
 import CharacterSheet from './CharacterSheet.js';
+import CampaignMap from './CampaignMap.js';
 
 interface LogEntry {
   id: string;
@@ -28,6 +29,12 @@ interface BattlefieldProfile {
   tacticalAdvice: string[];
 }
 
+interface CampaignMapData {
+  currentSceneId: string;
+  nodes: any[];
+  edges: any[];
+}
+
 interface Props {
   apiUrl: string;
   player: { id: string; token: string; displayName: string };
@@ -47,6 +54,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
   const [onlinePlayers, setOnlinePlayers] = useState<string[]>([]);
   const [battlefield, setBattlefield] = useState<BattlefieldProfile | null>(null);
   const [encounterActive, setEncounterActive] = useState(false);
+  const [campaignMap, setCampaignMap] = useState<CampaignMapData | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const headers = { Authorization: `Bearer ${player.token}`, 'Content-Type': 'application/json' };
@@ -67,6 +75,13 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
       .then(r => r.json())
       .then(data => { if (data.ok) setCharacter(data.data); });
   }, [characterId]);
+
+  useEffect(() => {
+    fetch(`${apiUrl}/api/campaigns/${campaignId}/map`, { headers })
+      .then(r => r.json())
+      .then(data => { if (data.ok) setCampaignMap(data.data); })
+      .catch(() => {});
+  }, [campaignId]);
 
   // Socket listeners
   useEffect(() => {
@@ -113,6 +128,8 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
           : prev);
       } else if (data.type === 'battlefield_update') {
         setBattlefield(data.payload.profile || null);
+      } else if (data.type === 'map_update') {
+        setCampaignMap(data.payload || null);
       }
     };
 
@@ -343,6 +360,8 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
             </div>
           </div>
         )}
+
+        <CampaignMap mapData={campaignMap} />
       </div>
 
       {/* Main Panel — Game Log & Input */}

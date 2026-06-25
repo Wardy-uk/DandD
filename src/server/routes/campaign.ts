@@ -14,6 +14,7 @@ import {
   DEFAULT_CAMPAIGN_SETTING_ID,
   findCampaignSettingOption,
 } from '../../shared/campaignSettings.js';
+import { buildCampaignMapIntel } from '../game/mapIntel.js';
 
 export function createCampaignRoutes(db: Database, io: SocketServer): Router {
   const router = Router();
@@ -116,6 +117,23 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
         players,
       },
     });
+  });
+
+  router.get('/:id/map', requireAuth, (req: any, res) => {
+    const campaign = get(db, 'SELECT id FROM campaigns WHERE id = ?', [req.params.id]) as any;
+    if (!campaign) {
+      res.json({ ok: false, error: 'Campaign not found' });
+      return;
+    }
+    const membership = get(db,
+      'SELECT * FROM campaign_players WHERE campaign_id = ? AND player_id = ?',
+      [req.params.id, req.player.id]);
+    if (!membership) {
+      res.json({ ok: false, error: 'Not a member of this campaign' });
+      return;
+    }
+
+    res.json({ ok: true, data: buildCampaignMapIntel(db, req.params.id) });
   });
 
   // Create campaign

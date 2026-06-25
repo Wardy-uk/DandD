@@ -11,6 +11,7 @@ import { get, all, run } from './db/helpers.js';
 import { describeScene, findMovementTarget } from './game/deterministic.js';
 import { resolveRichExploration } from './game/adventure.js';
 import { createEncounterRecord, describeBattlefield, emitEncounterStart, getActiveEncounter, resolveEncounterAction } from './game/encounters.js';
+import { buildCampaignMapIntel } from './game/mapIntel.js';
 
 interface ConnectedPlayer {
   socketId: string;
@@ -106,6 +107,10 @@ export function setupSocketHandlers(
             });
           }
         }
+        socket.emit('game:state_update', {
+          type: 'map_update',
+          payload: buildCampaignMapIntel(db, campaignId),
+        });
 
         // If there's an active encounter, send it
         const encounter = getActiveEncounter(db, campaignId);
@@ -192,6 +197,10 @@ export function setupSocketHandlers(
         if (resolution.encounterUpdate) {
           io.to(`campaign:${campaignId}`).emit('game:encounter_update', resolution.encounterUpdate);
         }
+        io.to(`campaign:${campaignId}`).emit('game:state_update', {
+          type: 'map_update',
+          payload: buildCampaignMapIntel(db, campaignId),
+        });
         if (resolution.turnPrompt) {
           io.to(`campaign:${campaignId}`).emit('game:turn_prompt', resolution.turnPrompt);
         }
@@ -205,6 +214,21 @@ export function setupSocketHandlers(
         io.to(`campaign:${campaignId}`).emit('game:narration', {
           actor: 'DM',
           content: 'The campaign has no current scene yet. Enter or seed a location first so the adventure has somewhere concrete to happen.',
+        });
+        return;
+      }
+
+      if (/read the battlefield|survey the battlefield|tactical read|read the room for a fight/.test(action.toLowerCase())) {
+        io.to(`campaign:${campaignId}`).emit('game:narration', {
+          actor: 'DM',
+          content: describeBattlefield(scene).summary,
+        });
+        io.to(`campaign:${campaignId}`).emit('game:state_update', {
+          type: 'battlefield_update',
+          payload: {
+            sceneId: scene.id,
+            profile: describeBattlefield(scene),
+          },
         });
         return;
       }
@@ -251,6 +275,10 @@ export function setupSocketHandlers(
             profile: describeBattlefield(nextScene),
           },
         });
+        io.to(`campaign:${campaignId}`).emit('game:state_update', {
+          type: 'map_update',
+          payload: buildCampaignMapIntel(db, campaignId),
+        });
         return;
       }
 
@@ -295,6 +323,10 @@ export function setupSocketHandlers(
           sceneId: scene.id,
           profile: describeBattlefield(scene),
         },
+      });
+      io.to(`campaign:${campaignId}`).emit('game:state_update', {
+        type: 'map_update',
+        payload: buildCampaignMapIntel(db, campaignId),
       });
 
       const updatedCharacter = get(db, 'SELECT * FROM characters WHERE id = ?', [character.id]) as any;
