@@ -2,6 +2,8 @@ import { v4 as uuid } from 'uuid';
 import type { Database } from 'sql.js';
 import type { Server as SocketServer } from 'socket.io';
 import { all, get, run } from '../db/helpers.js';
+import { getCampaignState, noteCampaignEvent, saveCampaignState, shiftFactionStanding } from './campaignState.js';
+import { getCompanionPartyModifiers } from './companions.js';
 import {
   checkMorale,
   resolveAttack,
@@ -328,7 +330,7 @@ export function resolveEncounterAction(params: {
       const enemyActor = advanced.current;
       const refreshedCombatants = getEncounterCombatants(db, encounter.id);
       const target = enemyActor.side === 'enemy'
-        ? chooseEnemyTarget(refreshedCombatants)
+        ? chooseEnemyTarget(enemyActor, refreshedCombatants, battlefield)
         : chooseTargetFromAction('', refreshedCombatants, 'enemy');
       if (!target) break;
       const enemyAction = enemyActor.side === 'enemy'
@@ -398,7 +400,7 @@ export function resolveEncounterAction(params: {
     const enemyActor = advanced.current;
     const refreshedCombatants = getEncounterCombatants(db, encounter.id);
     const target = enemyActor.side === 'enemy'
-      ? chooseEnemyTarget(refreshedCombatants)
+      ? chooseEnemyTarget(enemyActor, refreshedCombatants, battlefield)
       : chooseTargetFromAction('', refreshedCombatants, 'enemy');
     if (!target) break;
     const enemyAction = enemyActor.side === 'enemy'
@@ -477,7 +479,7 @@ function autoResolveNonPlayerTurns(
   while (active && loopGuard < 8 && ((active.side === 'enemy') || (active.side === 'party' && active.npc_id && !active.character_id))) {
     const combatants = getEncounterCombatants(db, encounter.id);
     const target = active.side === 'enemy'
-      ? chooseEnemyTarget(combatants)
+      ? chooseEnemyTarget(active, combatants, battlefield)
       : chooseTargetFromAction('', combatants, 'enemy');
     if (!target) return { ended: true, prompt };
     const action = active.side === 'enemy' ? inferEnemyAction(active, battlefield) : inferCompanionAction(active, battlefield);
@@ -510,11 +512,20 @@ function chooseTargetFromAction(action: string, combatants: any[], side: 'enemy'
   return exact || living[0];
 }
 
-function chooseEnemyTarget(combatants: any[]) {
-  const party = combatants
-    .filter((c) => c.side === 'party' && c.current_hp > 0)
-    .sort((a, b) => a.current_hp - b.current_hp || a.ac - b.ac);
-  return party[0] || null;
+function chooseEnemyTarget(enemyActor: any, combatants: any[], battlefield: BattlefieldProfile) {
+  const party = combatants.filter((c) => c.side === 'party' && c.current_hp > 0);
+  if (!party.length) return null;
+
+  const role = inferEnemyRole(enemyActor.name);
+  const wounded = [...party].sort((a, b) =>
+    (a.current_hp / Math.max(1, a.max_hp)) - (b.current_hp / Math.max(1, b.max_hp)) || a.ac - b.ac);
+  const lightlyArmoured = [...party].sort((a, b) => b.ac - a.ac || a.current_hp - b.current_hp);
+  const sturdy = [...party].sort((a, b) => a.ac - b.ac || b.current_hp - a.current_hp);
+
+  if (role === 'skirmisher') return lightlyArmoured[0] || wounded[0] || party[0];
+  if (role === 'zealot') return wounded[0] || lightlyArmoured[0] || party[0];
+  if (role === 'brute') return battlefield.chokepoint ? sturdy[0] || wounded[0] : wounded[0] || sturdy[0];
+  return wounded[0] || party[0];
 }
 
 function chooseAllyTargetFromAction(action: string, combatants: any[], current: any) {
@@ -775,6 +786,7 @@ function applyAttackAdjustments(
   const attackerConditions = safeConditions(attacker.conditions);
   const defenderConditions = safeConditions(defender.conditions);
   if (attackerConditions.includes('off_balance')) shift += 1;
+  if (attackerConditions.includes('shaken')) shift += 1;
   if (defenderConditions.includes('off_balance')) shift -= 1;
   if (defenderConditions.includes('wounded')) shift -= 1;
 
@@ -793,6 +805,7 @@ function applyDefenseAdjustments(
   if (battlefield.chokepoint && conditions.includes('holding_choke')) adjusted.ac -= 1;
   if (conditions.includes('braced')) adjusted.ac -= 1;
   if (conditions.includes('off_balance')) adjusted.ac += 2;
+  if (conditions.includes('shaken')) adjusted.ac += 1;
   if (battlefield.footing === 'treacherous') adjusted.ac += 1;
   return adjusted;
 }
@@ -952,9 +965,11 @@ function evaluateEnemyState(db: Database, encounter: any, defender: any, attacke
   const enemies = refreshed.filter((c) => c.side === 'enemy');
   const livingEnemies = enemies.filter((c) => c.current_hp > 0);
   const fallenEnemies = enemies.length - livingEnemies.length;
+  const campaignState = getCampaignState(db, encounter.campaign_id);
 
   if (livingEnemies.length === 0) {
     concludeEncounter(db, encounter.id, 'resolved');
+    rewardFactionAfterEncounter(db, encounter.campaign_id, enemies, 'defeated');
     narration.push({ actor: 'DM', content: 'The last of the opposition falls. The room belongs to the party, for the moment.' });
     return { ended: true, narration };
   }
@@ -964,13 +979,17 @@ function evaluateEnemyState(db: Database, encounter: any, defender: any, attacke
     && /guard|handler|wight|acolyte/i.test(defender.name);
   const shouldTestMorale = fallenEnemies >= Math.ceil(enemies.length / 2) || leaderDropped;
   if (shouldTestMorale) {
-    const moraleBase = averageEnemyMorale(enemies);
-    const morale = checkMorale(moraleBase, fallenEnemies >= Math.ceil(enemies.length / 2) ? -2 : -1);
+    const moraleBase = averageEnemyMorale(enemies, campaignState.factions);
+    const moralePenalty = fallenEnemies >= Math.ceil(enemies.length / 2) ? -2 : -1;
+    const morale = checkMorale(moraleBase, moralePenalty);
     if (!morale.holds) {
-      const outcome = attacker.side === 'party' && /parley|quarter|yield/i.test(attacker.name)
-        ? 'resolved'
-        : 'fled';
+      const outcome = /rival delver|treasure hunter|skirmisher|scout/i.test(enemies.map((enemy) => enemy.name).join(' '))
+        ? 'fled'
+        : attacker.side === 'party' && /parley|quarter|yield/i.test(attacker.name)
+          ? 'resolved'
+          : 'fled';
       concludeEncounter(db, encounter.id, outcome);
+      rewardFactionAfterEncounter(db, encounter.campaign_id, enemies, outcome === 'resolved' ? 'routed' : 'bloodied');
       narration.push({
         actor: 'DM',
         content: outcome === 'fled'
@@ -990,6 +1009,8 @@ function evaluatePartyState(db: Database, encounter: any, defender: any, attacke
   const refreshed = getEncounterCombatants(db, encounter.id);
   const party = refreshed.filter((c) => c.side === 'party');
   const livingParty = party.filter((c) => c.current_hp > 0);
+  const encounterScene = get(db, 'SELECT scene_id, campaign_id FROM encounters WHERE id = ?', [encounter.id]) as any;
+  const companionMods = getCompanionPartyModifiers(db, encounterScene.campaign_id, encounterScene.scene_id);
   if (livingParty.length === 0) {
     concludeEncounter(db, encounter.id, 'resolved');
     narration.push({ actor: 'DM', content: 'The party is overwhelmed. The encounter is decided in the enemy’s favor.' });
@@ -1001,24 +1022,31 @@ function evaluatePartyState(db: Database, encounter: any, defender: any, attacke
       actor: 'DM',
       content: `${attacker?.name || 'The enemy'} drops ${defender.name}. The rest of the party suddenly has to decide whether this is still a fight or the start of a retreat.`,
     });
+    const fracture = resolveCompanionFracture(db, encounterScene.campaign_id, encounterScene.scene_id, refreshed, companionMods, true);
+    narration.push(...fracture.narration);
   } else if (livingParty.length <= Math.ceil(party.length / 2)) {
     narration.push({ actor: 'DM', content: 'The party is bloodied now. Every exchanged blow is starting to cost campaign-level momentum.' });
+    const fracture = resolveCompanionFracture(db, encounterScene.campaign_id, encounterScene.scene_id, refreshed, companionMods, false);
+    narration.push(...fracture.narration);
   }
 
   return { ended: false, narration };
 }
 
-function averageEnemyMorale(enemies: any[]) {
-  const values = enemies.map((enemy) => inferMorale(enemy));
+function averageEnemyMorale(enemies: any[], factions?: Record<string, { heat?: number; reputation?: number }>) {
+  const values = enemies.map((enemy) => inferMorale(enemy, factions?.[inferEnemyFactionKey(enemy)]));
   return Math.max(4, Math.min(11, Math.round(values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length))));
 }
 
-function inferMorale(enemy: any) {
+function inferMorale(enemy: any, faction?: { heat?: number; reputation?: number }) {
   const name = String(enemy.name || '').toLowerCase();
-  if (/wight|fanatic|guard/.test(name)) return 9;
-  if (/scout|skirmisher|hunter|goblin/.test(name)) return 6;
-  if (/swarm|rat|lizard/.test(name)) return 7;
-  return 7;
+  let morale = 7;
+  if (/wight|fanatic|guard/.test(name)) morale = 9;
+  else if (/scout|skirmisher|hunter|goblin/.test(name)) morale = 6;
+  else if (/swarm|rat|lizard/.test(name)) morale = 7;
+  if (faction?.heat && faction.heat >= 6) morale += 1;
+  if (faction?.reputation && faction.reputation <= -4) morale += 1;
+  return Math.max(4, Math.min(11, morale));
 }
 
 function concludeEncounter(db: Database, encounterId: string, status: 'resolved' | 'fled') {
@@ -1108,7 +1136,7 @@ function attemptRetreat(db: Database, encounter: any, combatants: any[], current
   const enemies = combatants.filter((c) => c.side === 'enemy' && c.current_hp > 0);
   const scene = get(db, 'SELECT * FROM scenes WHERE id = ?', [encounter.scene_id]) as any;
   const battlefield = buildBattlefieldProfile(scene);
-  const enemyPressure = enemies.length + averageEnemyMorale(enemies);
+  const enemyPressure = enemies.length + averageEnemyMorale(enemies, getCampaignState(db, encounter.campaign_id).factions);
   const terrainTax = battlefield.chokepoint ? 1 : battlefield.footing === 'treacherous' ? 2 : 0;
   const partyPressure = combatants.filter((c) => c.side === 'party' && c.current_hp > 0).length + Math.max(0, current.current_hp) - terrainTax;
   if (partyPressure >= enemyPressure - 1) {
@@ -1120,7 +1148,7 @@ function attemptRetreat(db: Database, encounter: any, combatants: any[], current
 
 function attemptQuarter(db: Database, encounter: any, combatants: any[], current: any) {
   const enemies = combatants.filter((c) => c.side === 'enemy' && c.current_hp > 0);
-  const morale = checkMorale(averageEnemyMorale(enemies), -3);
+  const morale = checkMorale(averageEnemyMorale(enemies, getCampaignState(db, encounter.campaign_id).factions), -3);
   if (!morale.holds) {
     concludeEncounter(db, encounter.id, 'resolved');
     return { narration: [{ actor: 'DM', content: 'The offer of quarter lands on shaken nerves. Weapons lower, curses replace lunges, and the combat breaks apart into surrender.' }] };
@@ -1150,17 +1178,98 @@ function describeRolePressure(combatant: any, attacking: boolean) {
     : `${combatant.name} adds weight to the room simply by being willing to close.`;
 }
 
+function inferEnemyRole(name: string) {
+  const lowered = String(name || '').toLowerCase();
+  if (/scout|skirmisher|crossbow|hunter|goblin/.test(lowered)) return 'skirmisher';
+  if (/guard|handler|wolf|wight/.test(lowered)) return 'brute';
+  if (/acolyte|fanatic|cult/.test(lowered)) return 'zealot';
+  return 'raider';
+}
+
+function inferEnemyFactionKey(enemy: any) {
+  const direct = String(enemy?.faction || '').toLowerCase();
+  if (direct) return direct;
+  const lowered = String(enemy?.name || '').toLowerCase();
+  if (/acolyte|fanatic|wight|shadow/.test(lowered)) return 'shadows';
+  if (/treasure|delver|skirmisher/.test(lowered)) return 'delvers';
+  if (/guard|watch/.test(lowered)) return 'watch';
+  return 'locals';
+}
+
+function resolveCompanionFracture(
+  db: Database,
+  campaignId: string,
+  sceneId: string,
+  combatants: any[],
+  companionMods: ReturnType<typeof getCompanionPartyModifiers>,
+  leaderDropped: boolean,
+) {
+  if (companionMods.volatileCount <= 0 && companionMods.fractureRisk <= 2) {
+    return { narration: [] as Array<{ actor: string; content: string }> };
+  }
+
+  const companions = combatants.filter((combatant) => combatant.side === 'party' && combatant.npc_id && combatant.current_hp > 0);
+  if (!companions.length) {
+    return { narration: [] as Array<{ actor: string; content: string }> };
+  }
+
+  const shaky = companions.find((combatant) => /thief|bard|scout|retainer/i.test(String(combatant.name || ''))) || companions[0];
+  const currentConditions = safeConditions(shaky.conditions);
+  if (leaderDropped && companionMods.fractureRisk >= 4 && !currentConditions.includes('off_balance')) {
+    setCombatantConditions(db, shaky, appendConditionList(currentConditions, ['off_balance']));
+    return {
+      narration: [{
+        actor: 'DM',
+        content: `${shaky.name} visibly cracks for a moment when the line loses someone important. The hesitation costs the party shape as much as courage.`,
+      }],
+    };
+  }
+
+  if (!leaderDropped && companionMods.cohesion <= 2 && companionMods.volatileCount >= 1 && !currentConditions.includes('shaken')) {
+    setCombatantConditions(db, shaky, appendConditionList(currentConditions, ['off_balance', 'shaken']));
+    return {
+      narration: [{
+        actor: 'DM',
+        content: `${shaky.name} is still physically in the fight, but not emotionally in step with the company. The fracture shows in the way they give ground and second-guess.`,
+      }],
+    };
+  }
+
+  return { narration: [] as Array<{ actor: string; content: string }> };
+}
+
+function rewardFactionAfterEncounter(
+  db: Database,
+  campaignId: string,
+  enemies: any[],
+  outcome: 'defeated' | 'bloodied' | 'routed',
+) {
+  if (!enemies.length) return;
+  const factionKey = inferEnemyFactionKey(enemies[0]);
+  const state = getCampaignState(db, campaignId);
+  if (outcome === 'defeated') {
+    shiftFactionStanding(state, factionKey, { heat: 1, reputation: -1 }, `${factionKey} lost people to the party and will remember it.`);
+  } else if (outcome === 'bloodied') {
+    shiftFactionStanding(state, factionKey, { heat: 2 }, `${factionKey} survivors escaped and are spreading alarm.`);
+  } else {
+    shiftFactionStanding(state, factionKey, { heat: 1 }, `${factionKey} retreated and will regroup warier than before.`);
+  }
+  noteCampaignEvent(state, `Encounter with ${factionKey} ended ${outcome}.`);
+  saveCampaignState(db, campaignId, state);
+}
+
 function inferEnemyAction(enemy: any, battlefield: BattlefieldProfile) {
   const name = String(enemy.name || '').toLowerCase();
-  if (/scout|skirmisher|crossbow/.test(name)) {
+  const role = inferEnemyRole(name);
+  if (role === 'skirmisher') {
     if (battlefield.cover) return 'steadying shot from cover';
     if (!battlefield.chokepoint) return 'flank and shoot';
     return 'shoot';
   }
-  if (/guard|hunter|handler/.test(name)) {
+  if (role === 'brute') {
     return battlefield.chokepoint ? 'hold doorway and attack' : 'press attack';
   }
-  if (/acolyte|fanatic|wight/.test(name)) {
+  if (role === 'zealot') {
     return battlefield.hazard ? 'drive them into hazard' : 'relentless attack';
   }
   return battlefield.chokepoint ? 'brace and attack' : 'attack';

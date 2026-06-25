@@ -454,6 +454,10 @@ export function getCompanionPartyModifiers(db: Database, campaignId: string, sce
     rearGuard: 0,
     frontlineName: '',
     rearGuardName: '',
+    cohesion: 0,
+    fractureRisk: 0,
+    loyalCore: 0,
+    volatileCount: 0,
   };
 
   const ordered = [...rows].sort((left, right) => Number(left.companion_order || 0) - Number(right.companion_order || 0));
@@ -482,6 +486,10 @@ export function getCompanionPartyModifiers(db: Database, campaignId: string, sce
     if (duty === 'envoy') modifiers.envoyBonus += 2;
     if (duty === 'watch' || duty === 'torch') modifiers.watchBonus += 1;
     modifiers.morale += state.loyalty + state.morale + state.bond + state.respect - state.tension;
+    modifiers.cohesion += state.trust + state.bond + state.loyalty + state.respect - state.tension;
+    modifiers.fractureRisk += Math.max(0, state.tension - state.trust) + (state.morale <= 0 ? 1 : 0);
+    if (state.loyalty >= 4 || state.bond >= 4) modifiers.loyalCore += 1;
+    if (state.tension >= 5 || state.loyalty <= 0) modifiers.volatileCount += 1;
   }
 
   return modifiers;

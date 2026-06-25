@@ -861,6 +861,17 @@ function advanceExplorationTurn(
     noteCampaignEvent(campaignState, 'Supplies are being eaten away by the delve.');
   }
 
+  const torchesOnHand = getItemQuantity(inventory, 'Torch');
+  const rationsOnHand = getItemQuantity(inventory, 'Ration');
+  if (torchesOnHand <= 1) {
+    campaignState.encounterPressure = Math.min(10, campaignState.encounterPressure + 1);
+    if (turn % 2 === 1) noteCampaignEvent(campaignState, 'Torchlight is running thin, and the party knows it.');
+  }
+  if (rationsOnHand === 0 && turn >= 4) {
+    campaignState.encounterPressure = Math.min(10, campaignState.encounterPressure + 1);
+    if (turn % 3 === 0) noteCampaignEvent(campaignState, 'The company is pushing on without proper rations.');
+  }
+
   campaignState.encounterPressure = Math.min(10, campaignState.encounterPressure + 1);
 
   let pulse: string | undefined;
@@ -917,9 +928,10 @@ function finalizeOutcome(
 
   const canEncounter = turn.turn - campaignState.lastEncounterTurn >= 2;
   const heat = campaignState.factions[blueprint.faction]?.heat || 0;
-  const encounterChance = Math.min(5, 1 + Math.floor(campaignState.encounterPressure / 2) + Math.floor(heat / 3) + (noisy ? 1 : 0));
+  const factionReputation = campaignState.factions[blueprint.faction]?.reputation || 0;
+  const encounterChance = Math.min(5, 1 + Math.floor(campaignState.encounterPressure / 2) + Math.floor(heat / 3) + (noisy ? 1 : 0) + (factionReputation <= -4 ? 1 : 0));
   if (canEncounter && d6() <= encounterChance) {
-    const encounter = generateProceduralEncounter(blueprint, turn.turn, campaignState.encounterPressure, action);
+    const encounter = generateProceduralEncounter(blueprint, turn.turn, campaignState, action);
     if (!encounter) {
       saveCampaignState(db, campaignId, campaignState);
       return outcome;
@@ -943,9 +955,13 @@ function finalizeOutcome(
 function generateProceduralEncounter(
   blueprint: SceneBlueprint,
   turn: number,
-  pressure: number,
+  campaignState: CampaignSimulationState,
   action: string,
 ): AdventureActionOutcome['encounter'] {
+  const pressure = campaignState.encounterPressure;
+  const factionStanding = campaignState.factions[blueprint.faction];
+  const heat = factionStanding?.heat || 0;
+  const hostility = factionStanding?.reputation || 0;
   const baseLevel = 1 + Math.min(4, Math.floor((pressure + turn % 5) / 2));
   const faction = blueprint.faction;
   const themed: Record<string, ProceduralEnemy[]> = {
@@ -971,17 +987,30 @@ function generateProceduralEncounter(
     ],
   };
   const roster = themed[blueprint.encounterTheme] || themed.vermin;
-  const enemyCount = Math.min(3, 1 + Math.floor(pressure / 3));
-  const enemies = Array.from({ length: enemyCount }, (_, index) => ({ ...roster[index % roster.length], name: enemyCount > 1 ? `${roster[index % roster.length].name} ${index + 1}` : roster[index % roster.length].name }));
-  const initiativeType = pressure >= 5 ? 'individual' : 'group';
-  const surprise = pressure >= 5 || /force|bash|shoot|charge/.test(action)
+  const enemyCount = Math.min(4, 1 + Math.floor(pressure / 3) + (heat >= 6 ? 1 : 0));
+  const levelShift = hostility <= -4 ? 1 : hostility >= 3 ? -1 : 0;
+  const enemies = Array.from({ length: enemyCount }, (_, index) => {
+    const template = roster[index % roster.length];
+    return {
+      ...template,
+      level: Math.max(1, template.level + levelShift),
+      thac0: Math.max(12, (template.thac0 || 20) - levelShift),
+      hp: Math.max(3, (template.hp || 6) + (levelShift * 2) + (heat >= 6 ? 2 : 0)),
+      name: enemyCount > 1 ? `${template.name} ${index + 1}` : template.name,
+      faction,
+    };
+  });
+  const initiativeType = pressure >= 5 || heat >= 6 ? 'individual' : 'group';
+  const surprise = pressure >= 5 || /force|bash|shoot|charge/.test(action) || heat >= 6
     ? 'The contact comes on hard and fast before the party can fully control the terms.'
-    : 'You have just enough warning to realise this danger has been stalking the same dark as you.';
+    : hostility >= 3
+      ? 'You have just enough warning to realise this danger is watching the same roads as you with cautious interest.'
+      : 'You have just enough warning to realise this danger has been stalking the same dark as you.';
 
   return {
     enemies,
     initiativeType,
-    description: `${enemies.map((enemy) => enemy.name).join(', ')} emerge from the dark under the banner of ${faction}.`,
+    description: `${enemies.map((enemy) => enemy.name).join(', ')} emerge from the dark under the banner of ${faction}.${heat >= 6 ? ' They arrive with the confidence of foes who expected to find you.' : ''}${hostility <= -4 ? ' This feels less like a chance collision and more like the faction finally answering back.' : ''}`,
     surprise,
   };
 }
