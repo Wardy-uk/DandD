@@ -314,14 +314,18 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
   const className = String(character?.char_class || '').toLowerCase();
   const classAction = encounterActive
     ? className === 'paladin'
-      ? 'Call on your oath'
-      : className === 'cleric' || className === 'druid'
-        ? 'Lead a prayer'
+      ? 'Lay on hands'
+      : className === 'cleric'
+        ? 'Turn undead'
+        : className === 'druid'
+          ? 'Lead a prayer'
         : className === 'ranger'
-          ? 'Read their intent'
+          ? 'Rally the line'
           : className === 'thief'
             ? 'Check supplies'
-            : 'Take stock'
+            : className === 'fighter'
+              ? 'Rally the line'
+              : 'Take stock'
     : className === 'paladin'
       ? 'Lead a prayer'
       : className === 'cleric' || className === 'druid'
@@ -330,12 +334,34 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
           ? 'Read their intent'
           : className === 'thief'
             ? 'Check supplies'
-            : 'Take stock';
+          : 'Take stock';
+  const classActionTwo = encounterActive
+    ? className === 'paladin'
+      ? 'Smite evil'
+      : className === 'cleric'
+        ? 'Call for quarter'
+        : className === 'thief'
+          ? 'Take cover and aim'
+          : className === 'ranger'
+            ? 'Take cover and aim'
+            : className === 'fighter'
+              ? 'Hold the doorway'
+              : null
+    : className === 'paladin'
+      ? 'Sense evil'
+      : className === 'cleric' || className === 'druid'
+        ? 'Lead a prayer'
+        : className === 'thief'
+          ? 'Share supplies'
+          : className === 'ranger'
+            ? 'Read their intent'
+            : null;
   const quickActions = [
     'Look around',
     'Listen carefully',
     'Read the battlefield',
     classAction,
+    classActionTwo,
     leadCompanion && !leadCompanion.personalQuestResolved
       ? leadCompanion.personalQuestNeed
       : (leadCompanion ? `Ask ${leadCompanion.name} to scout ahead` : (recruitableNpc ? `Ask ${recruitableNpc.name} to join us` : (encounterActive ? 'Hold the doorway' : 'Search for traps'))),
@@ -345,7 +371,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
     encounterActive ? 'Drive them into the hazard' : 'Secure this room',
     encounterActive ? 'Fall back to cover' : 'Mark fallback point',
     encounterActive ? 'Brace and hold' : 'Rest',
-  ];
+  ].filter(Boolean) as string[];
 
   return (
     <div className="flex gap-4 h-[calc(100vh-120px)]">

@@ -9,6 +9,7 @@ import {
   rollGroupInitiative,
   rollIndividualInitiative,
   rollSurpriseCheck,
+  turnUndead,
   type Combatant,
 } from '../engine/combat.js';
 import { buildSceneBlueprint, type ProceduralEnemy } from './adventure.js';
@@ -62,6 +63,13 @@ interface TacticalIntent {
   forcingHazard: boolean;
   steadyingShot: boolean;
   chokeControl: boolean;
+}
+
+interface SpecialActionResult {
+  narration: { actor: string; content: string }[];
+  combatResults: any[];
+  updatedCharacterIds: string[];
+  ended?: boolean;
 }
 
 export function createEncounterRecord(params: {
@@ -287,6 +295,56 @@ export function resolveEncounterAction(params: {
     return finishResolution(db, encounter.id, narration, combatResults, updatedCharacterIds);
   }
 
+  const specialAction = resolveSpecialCombatAction(db, encounter, combatants, current, lowered, battlefield);
+  if (specialAction) {
+    narration.push(...specialAction.narration);
+    combatResults.push(...specialAction.combatResults);
+    for (const id of specialAction.updatedCharacterIds) updatedCharacterIds.add(id);
+    if (specialAction.ended) {
+      return finishResolution(db, encounter.id, narration, combatResults, updatedCharacterIds);
+    }
+
+    let advanced = advanceEncounterTurn(db, encounter.id);
+    let loopGuard = 0;
+    while (advanced.prompt && advanced.current && (advanced.current.side === 'enemy' || (advanced.current.side === 'party' && advanced.current.npc_id && !advanced.current.character_id)) && loopGuard < 8) {
+      const enemyActor = advanced.current;
+      const refreshedCombatants = getEncounterCombatants(db, encounter.id);
+      const target = enemyActor.side === 'enemy'
+        ? chooseEnemyTarget(refreshedCombatants)
+        : chooseTargetFromAction('', refreshedCombatants, 'enemy');
+      if (!target) break;
+      const enemyAction = enemyActor.side === 'enemy'
+        ? inferEnemyAction(enemyActor, battlefield)
+        : inferCompanionAction(enemyActor, battlefield);
+      const enemyStrike = resolveAttackExchange(db, encounter.id, enemyActor, target, enemyAction, battlefield);
+      combatResults.push(enemyStrike.result);
+      narration.push({
+        actor: 'DM',
+        content: `${describeRolePressure(enemyActor, true)} ${describeBattlefieldPressure(battlefield, enemyAction, true)} ${enemyStrike.result.description}`,
+      });
+      if (target.character_id) updatedCharacterIds.add(target.character_id);
+
+      if (enemyActor.side === 'enemy') {
+        const partyState = evaluatePartyState(db, encounter, target, enemyActor);
+        narration.push(...partyState.narration);
+        if (partyState.ended) {
+          return finishResolution(db, encounter.id, narration, combatResults, updatedCharacterIds);
+        }
+      } else {
+        const enemyState = evaluateEnemyState(db, encounter, target, enemyActor);
+        narration.push(...enemyState.narration);
+        if (enemyState.ended) {
+          return finishResolution(db, encounter.id, narration, combatResults, updatedCharacterIds);
+        }
+      }
+
+      advanced = advanceEncounterTurn(db, encounter.id);
+      loopGuard += 1;
+    }
+
+    return finishResolution(db, encounter.id, narration, combatResults, updatedCharacterIds, advanced.prompt);
+  }
+
   const target = chooseTargetFromAction(lowered, combatants, 'enemy');
   if (!target) {
     return {
@@ -441,6 +499,149 @@ function chooseEnemyTarget(combatants: any[]) {
   return party[0] || null;
 }
 
+function chooseAllyTargetFromAction(action: string, combatants: any[], current: any) {
+  const living = combatants.filter((c) => c.side === 'party' && c.current_hp > 0);
+  if (!living.length) return current;
+  const exact = living.find((c) => action.includes(String(c.name || '').toLowerCase()));
+  if (exact) return exact;
+  const wounded = living
+    .filter((c) => c.current_hp < c.max_hp)
+    .sort((a, b) => (a.current_hp / Math.max(1, a.max_hp)) - (b.current_hp / Math.max(1, b.max_hp)));
+  return wounded[0] || current;
+}
+
+function resolveSpecialCombatAction(
+  db: Database,
+  encounter: any,
+  combatants: any[],
+  current: any,
+  action: string,
+  battlefield: BattlefieldProfile,
+): SpecialActionResult | null {
+  const charClass = String(current.char_class || buildCombatantProfile(db, current).charClass || '').toLowerCase();
+  const currentConditions = safeConditions(current.conditions);
+
+  if (/lay on hands|healing touch/.test(action)) {
+    if (charClass !== 'paladin') {
+      return {
+        narration: [{ actor: 'DM', content: `${current.name} reaches for grace they do not truly command. In this ruleset, lay on hands belongs to paladins.` }],
+        combatResults: [],
+        updatedCharacterIds: current.character_id ? [current.character_id] : [],
+      };
+    }
+    if (currentConditions.includes('lay_on_hands_used')) {
+      return {
+        narration: [{ actor: 'DM', content: `${current.name} has already spent their lay on hands in this fight.` }],
+        combatResults: [],
+        updatedCharacterIds: current.character_id ? [current.character_id] : [],
+      };
+    }
+    const ally = chooseAllyTargetFromAction(action, combatants, current);
+    const healAmount = Math.max(2, 2 + Math.floor(buildCombatantProfile(db, current).level / 2));
+    const nextHp = Math.min(Number(ally.max_hp || ally.current_hp), Number(ally.current_hp || 0) + healAmount);
+    const actualHeal = nextHp - Number(ally.current_hp || 0);
+    if (actualHeal <= 0) {
+      return {
+        narration: [{ actor: 'DM', content: `${ally.name} is already as whole as the moment allows. ${current.name}'s healing touch would be wasted.` }],
+        combatResults: [],
+        updatedCharacterIds: [current.character_id, ally.character_id].filter(Boolean) as string[],
+      };
+    }
+    setCombatantHp(db, ally, nextHp);
+    setCombatantConditions(db, current, appendConditionList(currentConditions, ['lay_on_hands_used']));
+    return {
+      narration: [{
+        actor: 'DM',
+        content: `${current.name} lays on hands upon ${ally.name}, forcing a pocket of calm and holy resolve into the chaos. ${ally.name} recovers ${actualHeal} hit point${actualHeal === 1 ? '' : 's'}.`,
+      }],
+      combatResults: [],
+      updatedCharacterIds: [current.character_id, ally.character_id].filter(Boolean) as string[],
+    };
+  }
+
+  if (/turn undead|rebuke undead|drive back the dead/.test(action)) {
+    if (charClass !== 'cleric') {
+      return {
+        narration: [{ actor: 'DM', content: `${current.name} calls against the dead, but only a true cleric can turn undead in this system.` }],
+        combatResults: [],
+        updatedCharacterIds: current.character_id ? [current.character_id] : [],
+      };
+    }
+    const undead = combatants
+      .filter((c) => c.side === 'enemy' && c.current_hp > 0)
+      .map((enemy) => ({ enemy, undeadType: inferUndeadType(enemy.name) }))
+      .filter((entry) => entry.undeadType);
+    if (!undead.length) {
+      return {
+        narration: [{ actor: 'DM', content: `${current.name} raises a holy symbol, but there is no undead presence here for the rite to seize.` }],
+        combatResults: [],
+        updatedCharacterIds: current.character_id ? [current.character_id] : [],
+      };
+    }
+
+    const result = turnUndead(buildCombatantProfile(db, current).level, undead[0].undeadType!);
+    if (result.result === 'cannot_turn' || result.result === 'no_effect') {
+      return {
+        narration: [{ actor: 'DM', content: `${current.name}'s invocation rings out, but the dead do not yield. ${result.roll ? `The turning roll comes up ${result.roll}.` : 'The rite finds no purchase.'}` }],
+        combatResults: [],
+        updatedCharacterIds: current.character_id ? [current.character_id] : [],
+      };
+    }
+
+    const affected = undead.slice(0, Math.max(1, Math.min(result.numAffected || 1, undead.length)));
+    for (const { enemy } of affected) {
+      if (result.result === 'destroyed') {
+        setCombatantHp(db, enemy, 0);
+        setCombatantConditions(db, enemy, appendConditionList(safeConditions(enemy.conditions), ['down', 'turned_to_dust']));
+      } else {
+        setCombatantConditions(db, enemy, appendConditionList(safeConditions(enemy.conditions), ['turned', 'off_balance']));
+      }
+    }
+
+    const refreshedEncounter = get(db, 'SELECT * FROM encounters WHERE id = ?', [encounter.id]) as any;
+    const enemyState = evaluateEnemyState(db, refreshedEncounter, affected[0].enemy, current);
+    return {
+      narration: [{
+        actor: 'DM',
+        content: result.result === 'destroyed'
+          ? `${current.name} brandishes faith like a weapon. ${affected.map(({ enemy }) => enemy.name).join(', ')} ${affected.length === 1 ? 'is' : 'are'} blasted apart by the turning.`
+          : `${current.name} drives the holy command into the room. ${affected.map(({ enemy }) => enemy.name).join(', ')} recoil${affected.length === 1 ? 's' : ''}, forced back by the power of the rite.`,
+      }, ...enemyState.narration],
+      combatResults: [],
+      updatedCharacterIds: current.character_id ? [current.character_id] : [],
+      ended: enemyState.ended,
+    };
+  }
+
+  if (/rally the line|rally the company|hold fast|steady us/.test(action)) {
+    if (!/fighter|paladin|ranger/.test(charClass)) {
+      return {
+        narration: [{ actor: 'DM', content: `${current.name} tries to rally the line, but the command lacks the hard authority of a trained war leader.` }],
+        combatResults: [],
+        updatedCharacterIds: current.character_id ? [current.character_id] : [],
+      };
+    }
+    const allies = combatants.filter((c) => c.side === 'party' && c.current_hp > 0);
+    for (const ally of allies) {
+      const next = appendConditionList(
+        safeConditions(ally.conditions).filter((condition) => condition !== 'off_balance'),
+        battlefield.chokepoint ? ['holding_choke', 'braced'] : ['braced'],
+      );
+      setCombatantConditions(db, ally, next);
+    }
+    return {
+      narration: [{
+        actor: 'DM',
+        content: `${current.name} barks the sort of order that cuts through panic. Shields rise, footing improves, and the company remembers how to fight together instead of merely survive apart.`,
+      }],
+      combatResults: [],
+      updatedCharacterIds: allies.map((ally) => ally.character_id).filter(Boolean) as string[],
+    };
+  }
+
+  return null;
+}
+
 function resolveAttackExchange(
   db: Database,
   encounterId: string,
@@ -455,6 +656,14 @@ function resolveAttackExchange(
   const result = intent.ranged
     ? resolveMissileAttack(attackerProfile, defenderProfile, 'short')
     : resolveAttack(attackerProfile, defenderProfile);
+
+  if (attackerProfile.charClass === 'paladin' && /smite|holy strike|oath/.test(action) && isProfaneTarget(defender.name) && result.hit) {
+    const bonus = 2;
+    result.totalDamage = (result.totalDamage || 0) + bonus;
+    result.defenderHpAfter = (result.defenderHpAfter ?? defender.current_hp) - bonus;
+    result.defenderKilled = (result.defenderHpAfter ?? 1) <= 0;
+    result.description += ` The smiting oath lands true, adding ${bonus} holy damage against an unclean foe.`;
+  }
 
   let remainingHp = defender.current_hp;
   let nextConditions = safeConditions(defender.conditions);
@@ -596,12 +805,56 @@ function safeConditions(raw: any) {
   }
 }
 
+function setCombatantConditions(db: Database, combatant: any, conditions: string[]) {
+  run(db, 'UPDATE combatants SET conditions = ? WHERE id = ?', [JSON.stringify(conditions), combatant.id]);
+}
+
+function setCombatantHp(db: Database, combatant: any, nextHp: number) {
+  const remainingHp = Math.max(0, nextHp);
+  run(db, 'UPDATE combatants SET current_hp = ? WHERE id = ?', [remainingHp, combatant.id]);
+  if (combatant.character_id) {
+    run(db, 'UPDATE characters SET hp = ?, status = ? WHERE id = ?',
+      [remainingHp, remainingHp <= 0 ? 'dead' : 'active', combatant.character_id]);
+  }
+  if (combatant.npc_id) {
+    const npc = get(db, 'SELECT stats FROM npcs WHERE id = ?', [combatant.npc_id]) as any;
+    const stats = safeJsonObject(npc?.stats);
+    stats.currentHp = remainingHp;
+    stats.maxHp = stats.maxHp ?? stats.hp ?? remainingHp;
+    stats.hp = stats.maxHp;
+    run(db, 'UPDATE npcs SET stats = ?, alive = ? WHERE id = ?',
+      [JSON.stringify(stats), remainingHp <= 0 ? 0 : 1, combatant.npc_id]);
+  }
+}
+
 function inferWeaponDamage(row: any) {
   const name = String(row.name || '').toLowerCase();
   if (/wight|guard|hunter|handler/.test(name)) return '1d8';
   if (/archer|crossbow|skirmisher|scout/.test(name)) return '1d6';
   if (/swarm/.test(name)) return '1d4';
   return '1d6';
+}
+
+function inferUndeadType(name: string): string | null {
+  const lowered = String(name || '').toLowerCase();
+  if (/skeleton/.test(lowered)) return 'Skeleton';
+  if (/zombie/.test(lowered)) return 'Zombie';
+  if (/ghoul/.test(lowered)) return 'Ghoul';
+  if (/shadow/.test(lowered)) return 'Shadow';
+  if (/wight/.test(lowered)) return 'Wight';
+  if (/ghast/.test(lowered)) return 'Ghast';
+  if (/wraith/.test(lowered)) return 'Wraith';
+  if (/mummy/.test(lowered)) return 'Mummy';
+  if (/spectre/.test(lowered)) return 'Spectre';
+  if (/vampire/.test(lowered)) return 'Vampire';
+  if (/ghost/.test(lowered)) return 'Ghost';
+  if (/lich/.test(lowered)) return 'Lich';
+  if (/restless dead/.test(lowered)) return 'Skeleton';
+  return null;
+}
+
+function isProfaneTarget(name: string) {
+  return /wight|undead|skeleton|zombie|acolyte|fanatic|cult|demon|shadow|wraith|ghost|lich/i.test(String(name || ''));
 }
 
 function evaluateEnemyState(db: Database, encounter: any, defender: any, attacker: any) {
