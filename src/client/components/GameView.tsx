@@ -45,6 +45,9 @@ interface Companion {
   disposition: string;
   joinedParty: boolean;
   companionRole: string;
+  duty: string;
+  aspiration: string;
+  grievance: string;
   hp: number;
   maxHp: number;
   relationshipLabel: string;
@@ -54,6 +57,8 @@ interface Companion {
     tension: number;
     respect: number;
     romance: number;
+    loyalty: number;
+    morale: number;
     lastBeat: string;
   };
 }
@@ -68,6 +73,9 @@ interface SceneNpc {
   disposition: string;
   joinedParty: boolean;
   companionRole: string;
+  duty: string;
+  aspiration: string;
+  grievance: string;
   relationshipLabel: string;
   recruitHint: string;
 }
@@ -271,12 +279,14 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
   };
 
   const recruitableNpc = sceneNpcs.find((npc) => !npc.joinedParty);
+  const leadCompanion = companions.find((companion) => companion.joinedParty);
   const quickActions = [
     'Look around',
     'Listen carefully',
     'Read the battlefield',
+    leadCompanion ? `Ask ${leadCompanion.name} to scout ahead` : (recruitableNpc ? `Ask ${recruitableNpc.name} to join us` : (encounterActive ? 'Hold the doorway' : 'Search for traps')),
+    leadCompanion ? `Comfort ${leadCompanion.name}` : (encounterActive ? 'Take cover and aim' : 'Search for hidden doors'),
     recruitableNpc ? `Ask ${recruitableNpc.name} to join us` : (encounterActive ? 'Hold the doorway' : 'Search for traps'),
-    encounterActive ? 'Take cover and aim' : 'Search for hidden doors',
     encounterActive ? 'Drive them into the hazard' : 'Secure this room',
     encounterActive ? 'Fall back to cover' : 'Mark fallback point',
     encounterActive ? 'Brace and hold' : 'Rest',
@@ -435,6 +445,15 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                       {companion.hp}/{companion.maxHp} HP
                     </div>
                   </div>
+                  <div className="mt-1 text-[11px] font-body text-ink-light">
+                    Duty: {companion.duty || 'unset'}
+                  </div>
+                  <div className="mt-1 text-[11px] font-body text-ink-faint">
+                    Wants: {companion.aspiration}
+                  </div>
+                  <div className="mt-1 text-[11px] font-body text-ink-faint">
+                    Resents: {companion.grievance}
+                  </div>
                   {companion.relationship.lastBeat && (
                     <p className="mt-1 text-[11px] font-body text-ink-faint">
                       {companion.relationship.lastBeat}
@@ -458,7 +477,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                     <div>
                       <div className="font-heading text-xs font-bold text-leather-dark">{npc.name}</div>
                       <div className="text-[11px] font-body text-ink-faint italic">
-                        {npc.race} {npc.charClass} • {npc.joinedParty ? npc.companionRole : npc.disposition}
+                        {npc.race} {npc.charClass} • {npc.joinedParty ? `${npc.companionRole} • ${npc.duty}` : npc.disposition}
                       </div>
                     </div>
                     <button
@@ -475,6 +494,11 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                   <div className="mt-1 text-[11px] font-body text-ink-light">
                     {npc.relationshipLabel} • {npc.recruitHint}
                   </div>
+                  {npc.joinedParty && (
+                    <div className="mt-1 text-[11px] font-body text-ink-faint">
+                      Wants: {npc.aspiration}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

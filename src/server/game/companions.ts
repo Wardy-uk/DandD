@@ -8,9 +8,16 @@ export interface CompanionRelationshipState {
   tension: number;
   respect: number;
   romance: number;
+  loyalty: number;
+  morale: number;
   companionStatus: 'available' | 'joined' | 'departed' | 'refused';
+  currentDuty: string;
+  aspiration: string;
+  grievance: string;
   lastBeat: string;
 }
+
+type CompanionDuty = 'scout' | 'vanguard' | 'warden' | 'envoy' | 'watch' | 'torch';
 
 interface CompanionRow {
   id: string;
@@ -67,7 +74,12 @@ export function seedStarterCompanions(db: Database, campaignId: string) {
         tension: 0,
         respect: 1,
         romance: 0,
+        loyalty: 2,
+        morale: 1,
         companionStatus: 'joined',
+        currentDuty: npc.role,
+        aspiration: npc.aspiration,
+        grievance: npc.grievance,
         lastBeat: `${npc.name} joined as part of the original company.`,
       }),
       npc.role,
@@ -89,7 +101,7 @@ export function getPartyCompanions(db: Database, campaignId: string) {
 
   return rows.map((row) => {
     const stats = safeJson(row.stats);
-    const relationship = normalizeRelationshipState(safeJson(row.relationship_state));
+    const relationship = hydrateRelationshipState(row);
     return {
       id: row.id,
       name: row.name,
@@ -104,6 +116,9 @@ export function getPartyCompanions(db: Database, campaignId: string) {
       hp: Number(stats.currentHp ?? stats.hp ?? 0),
       maxHp: Number(stats.maxHp ?? stats.hp ?? 0),
       ac: Number(stats.ac ?? 8),
+      duty: relationship.currentDuty,
+      aspiration: relationship.aspiration,
+      grievance: relationship.grievance,
       relationship,
       relationshipLabel: describeRelationship(relationship),
     };
@@ -120,7 +135,7 @@ export function getSceneNpcRoster(db: Database, campaignId: string, sceneId: str
   `, [campaignId, sceneId]) as CompanionRow[];
 
   return rows.map((row) => {
-    const relationship = normalizeRelationshipState(safeJson(row.relationship_state));
+    const relationship = hydrateRelationshipState(row);
     return {
       id: row.id,
       name: row.name,
@@ -131,6 +146,9 @@ export function getSceneNpcRoster(db: Database, campaignId: string, sceneId: str
       disposition: row.disposition,
       joinedParty: Number(row.joined_party || 0) === 1,
       companionRole: row.companion_role || inferCompanionRole(row.char_class),
+      duty: relationship.currentDuty,
+      aspiration: relationship.aspiration,
+      grievance: relationship.grievance,
       relationshipLabel: describeRelationship(relationship),
       relationship,
       recruitHint: Number(row.joined_party || 0) === 1
@@ -163,7 +181,7 @@ export function tryRecruitNpc(params: {
     return { ok: true, content: `${npc.name} is already part of the company and moves with the party.` };
   }
 
-  const relationship = normalizeRelationshipState(safeJson(npc.relationship_state));
+  const relationship = hydrateRelationshipState(npc as CompanionRow);
   const pressure = Math.floor((leaderCha - 10) / 2) + relationship.trust + relationship.respect + relationship.bond - relationship.tension;
   const threshold = /swear|pledge|travel with us|join us/.test(action) ? 2 : 3;
   if (pressure >= threshold || npc.disposition === 'friendly' || npc.disposition === 'enthusiastic') {
@@ -192,23 +210,32 @@ export function updateCompanionRelationships(params: {
 }) {
   const { db, npcIds, kind, note } = params;
   for (const npcId of npcIds) {
-    const npc = get(db, 'SELECT relationship_state, disposition FROM npcs WHERE id = ?', [npcId]) as any;
+    const npc = get(db, `
+      SELECT id, name, race, char_class, level, personality, disposition, location_scene_id,
+        stats, relationship_state, joined_party, companion_role, companion_order, alive
+      FROM npcs WHERE id = ?
+    `, [npcId]) as CompanionRow | undefined;
     if (!npc) continue;
-    const state = normalizeRelationshipState(safeJson(npc.relationship_state));
+    const state = hydrateRelationshipState(npc);
     switch (kind) {
       case 'victory':
         state.respect += 1;
         state.bond += 1;
+        state.loyalty += 1;
+        state.morale += 1;
         break;
       case 'rest':
         state.trust += 1;
+        state.morale += 1;
         break;
       case 'hazard':
         state.tension += 1;
         state.trust -= 1;
+        state.morale -= 1;
         break;
       case 'greed':
         state.tension += 1;
+        state.loyalty -= 1;
         break;
       case 'parley':
         state.trust += 1;
@@ -217,13 +244,16 @@ export function updateCompanionRelationships(params: {
       case 'romance':
         state.romance += 1;
         state.bond += 1;
+        state.loyalty += 1;
         break;
       case 'friction':
         state.tension += 2;
+        state.morale -= 1;
         break;
       case 'security':
         state.trust += 1;
         state.bond += 1;
+        state.morale += 1;
         break;
     }
     state.lastBeat = note;
@@ -231,6 +261,182 @@ export function updateCompanionRelationships(params: {
     run(db, 'UPDATE npcs SET relationship_state = ?, disposition = ? WHERE id = ?',
       [JSON.stringify(state), nextDisposition, npcId]);
   }
+}
+
+export function resolveCompanionInteraction(params: {
+  db: Database;
+  campaignId: string;
+  sceneId: string;
+  character: {
+    id: string;
+    name: string;
+    cha?: number;
+    gold?: number;
+    inventory?: string | null;
+  };
+  action: string;
+}) {
+  const { db, campaignId, sceneId, character, action } = params;
+  const lowered = action.toLowerCase();
+  const npcs = all(db, `
+    SELECT id, name, race, char_class, level, personality, disposition, location_scene_id,
+      stats, relationship_state, joined_party, companion_role, companion_order, alive
+    FROM npcs
+    WHERE campaign_id = ? AND location_scene_id = ? AND alive = 1
+    ORDER BY joined_party DESC, companion_order ASC, name ASC
+  `, [campaignId, sceneId]) as CompanionRow[];
+
+  if (!npcs.length) return null;
+
+  const target = npcs.find((npc) => lowered.includes(String(npc.name || '').toLowerCase()))
+    || (npcs.length === 1 ? npcs[0] : null);
+  if (!target) return null;
+
+  const state = hydrateRelationshipState(target);
+
+  const dutyMap: Array<{ duty: CompanionDuty; pattern: RegExp }> = [
+    { duty: 'scout', pattern: /scout|range ahead|check ahead|search ahead|check for traps/ },
+    { duty: 'vanguard', pattern: /take point|front rank|hold the line|lead the way/ },
+    { duty: 'warden', pattern: /tend wounds|healer|watch over us|keep us steady/ },
+    { duty: 'envoy', pattern: /speak for us|handle the talking|parley for us/ },
+    { duty: 'watch', pattern: /keep watch|watch the rear|guard camp|hold the rear/ },
+    { duty: 'torch', pattern: /carry the torch|take the light|hold the lamp/ },
+  ];
+  const matchedDuty = dutyMap.find((entry) => entry.pattern.test(lowered));
+  if (matchedDuty && /ask|tell|order|have|set|put/.test(lowered)) {
+    return assignCompanionDuty(db, target, state, matchedDuty.duty, character.name);
+  }
+
+  if (/comfort|confide|apologize|apologise|praise|thank/.test(lowered)) {
+    state.trust += 1;
+    state.bond += 1;
+    state.morale += 1;
+    state.lastBeat = `${character.name} took time to speak to ${target.name} as a person, not just a piece on the board.`;
+    persistRelationshipState(db, target.id, state);
+    return {
+      handled: true,
+      narration: [`${target.name} visibly settles under the attention. The bond feels more deliberate afterwards.`],
+      characterUpdated: false,
+    };
+  }
+
+  if (/flirt|admire|kiss|romance/.test(lowered)) {
+    state.romance += state.trust >= 2 ? 1 : 0;
+    state.tension += state.trust < 2 ? 1 : 0;
+    state.lastBeat = `${character.name} tested the line between camaraderie and attraction with ${target.name}.`;
+    persistRelationshipState(db, target.id, state);
+    return {
+      handled: true,
+      narration: [state.trust >= 2
+        ? `${target.name} meets the moment instead of dodging it. Something warmer now hangs in the air between you.`
+        : `${target.name} reads the moment badly and pulls back. The camp mood tightens instead of softening.`],
+      characterUpdated: false,
+    };
+  }
+
+  if (/argue|insult|threaten|berate|dress down/.test(lowered)) {
+    state.tension += 2;
+    state.respect -= 1;
+    state.morale -= 1;
+    state.lastBeat = `${character.name} pushed ${target.name} hard in front of the company.`;
+    persistRelationshipState(db, target.id, state);
+    return {
+      handled: true,
+      narration: [`${target.name} takes the rebuke badly. The company can feel the crack in discipline and trust.`],
+      characterUpdated: false,
+    };
+  }
+
+  if (/share loot|pay|cut .* in|give .* gold|bonus/.test(lowered)) {
+    const goldOffer = extractGoldAmount(action) || 5;
+    const currentGold = Number(character.gold || 0);
+    if (currentGold < goldOffer) {
+      return {
+        handled: true,
+        narration: [`You mean to pay ${target.name}, but the purse does not back the gesture.`],
+        characterUpdated: false,
+      };
+    }
+    run(db, 'UPDATE characters SET gold = gold - ? WHERE id = ?', [goldOffer, character.id]);
+    state.trust += 1;
+    state.respect += 1;
+    state.loyalty += 1;
+    state.lastBeat = `${character.name} shared ${goldOffer} gp with ${target.name}.`;
+    persistRelationshipState(db, target.id, state);
+    return {
+      handled: true,
+      narration: [`${target.name} accepts ${goldOffer} gp with a look that says the gesture mattered as much as the coin.`],
+      characterUpdated: true,
+    };
+  }
+
+  if (/give .* ration|share food|offer food/.test(lowered)) {
+    if (!consumeInventoryItem(db, character.id, character.inventory, 'Ration', 1)) {
+      return {
+        handled: true,
+        narration: [`You offer food to ${target.name}, but the packs are thinner than the gesture requires.`],
+        characterUpdated: false,
+      };
+    }
+    state.trust += 1;
+    state.loyalty += 1;
+    state.morale += 1;
+    state.lastBeat = `${character.name} shared supplies with ${target.name} instead of hoarding them.`;
+    persistRelationshipState(db, target.id, state);
+    return {
+      handled: true,
+      narration: [`${target.name} eats without pretending not to notice the kindness. That sort of thing gets remembered underground.`],
+      characterUpdated: true,
+    };
+  }
+
+  if (/dismiss|send away|leave the company/.test(lowered) && Number(target.joined_party || 0) === 1) {
+    state.companionStatus = 'departed';
+    state.trust -= 1;
+    state.loyalty -= 2;
+    state.lastBeat = `${character.name} dismissed ${target.name} from the company.`;
+    run(db, 'UPDATE npcs SET joined_party = 0, disposition = ?, relationship_state = ? WHERE id = ?',
+      [deriveDisposition(state), JSON.stringify(state), target.id]);
+    return {
+      handled: true,
+      narration: [`${target.name} leaves the company with very little ceremony, which somehow makes it feel harsher.`],
+      characterUpdated: false,
+    };
+  }
+
+  return null;
+}
+
+export function getCompanionPartyModifiers(db: Database, campaignId: string, sceneId: string) {
+  const rows = all(db, `
+    SELECT id, name, race, char_class, level, personality, disposition, location_scene_id,
+      stats, relationship_state, joined_party, companion_role, companion_order, alive
+    FROM npcs
+    WHERE campaign_id = ? AND location_scene_id = ? AND joined_party = 1 AND alive = 1
+  `, [campaignId, sceneId]) as CompanionRow[];
+
+  const modifiers = {
+    scoutBonus: 0,
+    vanguardBonus: 0,
+    wardenBonus: 0,
+    envoyBonus: 0,
+    watchBonus: 0,
+    morale: 0,
+  };
+
+  for (const row of rows) {
+    const state = hydrateRelationshipState(row);
+    const role = String(row.companion_role || inferCompanionRole(row.char_class)).toLowerCase();
+    const duty = String(state.currentDuty || '').toLowerCase();
+    if (role === 'scout' || duty === 'scout') modifiers.scoutBonus += duty === 'scout' ? 2 : 1;
+    if (role === 'vanguard' || duty === 'vanguard') modifiers.vanguardBonus += duty === 'vanguard' ? 2 : 1;
+    if (role === 'warden' || duty === 'warden') modifiers.wardenBonus += duty === 'warden' ? 2 : 1;
+    if (duty === 'envoy') modifiers.envoyBonus += 2;
+    if (duty === 'watch' || duty === 'torch') modifiers.watchBonus += 1;
+    modifiers.morale += state.loyalty + state.morale + state.bond + state.respect - state.tension;
+  }
+
+  return modifiers;
 }
 
 export function resolveCompanionDrama(params: {
@@ -258,7 +464,7 @@ export function resolveCompanionDrama(params: {
   const eventSeed = hashValue(`${campaignId}:${sceneId}:${turn}:${lowered}`);
 
   for (const npc of joined) {
-    const state = normalizeRelationshipState(safeJson(npc.relationship_state));
+    const state = hydrateRelationshipState(npc);
     if (state.tension >= 7 && state.trust <= 0 && state.bond <= 1) {
       state.companionStatus = 'departed';
       state.lastBeat = `${npc.name} walked away from the company after one strain too many.`;
@@ -282,8 +488,8 @@ export function resolveCompanionDrama(params: {
     for (let index = 0; index < joined.length - 1; index += 1) {
       const left = joined[index];
       const right = joined[index + 1];
-      const leftState = normalizeRelationshipState(safeJson(left.relationship_state));
-      const rightState = normalizeRelationshipState(safeJson(right.relationship_state));
+      const leftState = hydrateRelationshipState(left);
+      const rightState = hydrateRelationshipState(right);
       const pairSeed = hashValue(`${left.id}:${right.id}:${turn}:${lowered}`);
 
       if ((/force|divide|loot|risk|trap|danger/.test(lowered) || pairSeed % 5 === 0) && (leftState.tension + rightState.tension) >= 5) {
@@ -331,7 +537,12 @@ export function normalizeRelationshipState(raw: any): CompanionRelationshipState
     tension: Number(raw?.tension || 0),
     respect: Number(raw?.respect || 0),
     romance: Number(raw?.romance || 0),
+    loyalty: Number(raw?.loyalty || 0),
+    morale: Number(raw?.morale || 0),
     companionStatus: raw?.companionStatus || 'available',
+    currentDuty: String(raw?.currentDuty || ''),
+    aspiration: String(raw?.aspiration || ''),
+    grievance: String(raw?.grievance || ''),
     lastBeat: String(raw?.lastBeat || ''),
   };
 }
@@ -339,6 +550,7 @@ export function normalizeRelationshipState(raw: any): CompanionRelationshipState
 export function describeRelationship(state: CompanionRelationshipState) {
   if (state.romance >= 4 && state.tension <= 2) return 'romantic';
   if (state.tension >= 5) return 'volatile';
+  if (state.loyalty >= 5 && state.respect >= 3) return 'sworn';
   if (state.bond >= 4 && state.trust >= 3) return 'loyal friend';
   if (state.trust >= 2) return 'steadily warming';
   if (state.tension >= 2) return 'strained';
@@ -346,7 +558,7 @@ export function describeRelationship(state: CompanionRelationshipState) {
 }
 
 function deriveDisposition(state: CompanionRelationshipState) {
-  const score = state.trust + state.bond + state.respect + state.romance - state.tension;
+  const score = state.trust + state.bond + state.respect + state.romance + state.loyalty - state.tension;
   if (score >= 6) return 'enthusiastic';
   if (score >= 3) return 'friendly';
   if (score <= -1) return 'unfriendly';
@@ -377,6 +589,8 @@ function buildStarterRoster(setting: string) {
       memory: ['They signed on to survive and to matter.'],
       inventory: [{ item: 'Spear', weight: 5, quantity: 1, equipped: true }],
       stats: { hp: 10, currentHp: 10, maxHp: 10, thac0: 20, ac: 6, str: 15, dex: 12, weaponSpeed: 6, damage: '1d8' },
+      aspiration: 'Stand in front when the trouble turns real.',
+      grievance: 'Despises leaders who freeze when a decision has to be made.',
     },
     {
       name: grim ? 'Tavish Reed' : 'Tavish Quick',
@@ -390,6 +604,8 @@ function buildStarterRoster(setting: string) {
       memory: ['They trust wit more than force.'],
       inventory: [{ item: 'Short Bow', weight: 3, quantity: 1, equipped: true }, { item: 'Arrow', weight: 0.1, quantity: 12, equipped: false }],
       stats: { hp: 7, currentHp: 7, maxHp: 7, thac0: 20, ac: 7, str: 11, dex: 16, weaponSpeed: 5, damage: '1d6' },
+      aspiration: 'Be the one who spots the angle no one else saw.',
+      grievance: 'Hates blundering into traps that patience would have beaten.',
     },
   ];
 }
@@ -399,6 +615,111 @@ function safeJson(raw?: string) {
     return JSON.parse(raw || '{}');
   } catch {
     return {};
+  }
+}
+
+function hydrateRelationshipState(row: CompanionRow) {
+  const state = normalizeRelationshipState(safeJson(row.relationship_state));
+  const innerLife = buildInnerLife(row);
+  return {
+    ...state,
+    loyalty: state.loyalty || innerLife.loyalty,
+    morale: state.morale || innerLife.morale,
+    currentDuty: state.currentDuty || innerLife.currentDuty,
+    aspiration: state.aspiration || innerLife.aspiration,
+    grievance: state.grievance || innerLife.grievance,
+  };
+}
+
+function buildInnerLife(row: CompanionRow) {
+  const role = String(row.companion_role || inferCompanionRole(row.char_class)).toLowerCase();
+  const loweredPersonality = String(row.personality || '').toLowerCase();
+  if (role === 'scout') {
+    return {
+      loyalty: 1,
+      morale: 1,
+      currentDuty: 'scout',
+      aspiration: loweredPersonality.includes('curious') ? 'Find something no one else spotted first.' : 'Stay useful by being first to danger, not last to notice it.',
+      grievance: 'Hates being marched blind into obvious risk.',
+    };
+  }
+  if (role === 'warden') {
+    return {
+      loyalty: 1,
+      morale: 1,
+      currentDuty: 'warden',
+      aspiration: 'Keep the company alive long enough to matter.',
+      grievance: 'Resents wasteful risk and sloppy camp discipline.',
+    };
+  }
+  if (role === 'vanguard') {
+    return {
+      loyalty: 2,
+      morale: 1,
+      currentDuty: 'vanguard',
+      aspiration: 'Stand where the line might break and keep it from breaking.',
+      grievance: 'Will not quietly accept cowardice or dithering under pressure.',
+    };
+  }
+  return {
+    loyalty: 1,
+    morale: 0,
+    currentDuty: 'watch',
+    aspiration: 'Earn a secure place in the company.',
+    grievance: 'Dislikes being treated as disposable.',
+  };
+}
+
+function assignCompanionDuty(
+  db: Database,
+  target: CompanionRow,
+  state: CompanionRelationshipState,
+  duty: CompanionDuty,
+  leaderName: string,
+) {
+  const role = String(target.companion_role || inferCompanionRole(target.char_class)).toLowerCase();
+  const suited = role === duty || (role === 'scout' && duty === 'watch') || (role === 'vanguard' && duty === 'watch');
+  state.currentDuty = duty;
+  state.respect += suited ? 1 : 0;
+  state.trust += suited ? 1 : 0;
+  state.tension += suited ? 0 : 1;
+  state.lastBeat = `${leaderName} assigned ${target.name} to ${duty}.`;
+  persistRelationshipState(db, target.id, state);
+  return {
+    handled: true,
+    narration: [suited
+      ? `${target.name} takes the ${duty} duty with the look of someone who feels seen and used well.`
+      : `${target.name} accepts the ${duty} duty, but not without a flicker of doubt about whether this is really where they belong.`],
+    characterUpdated: false,
+  };
+}
+
+function persistRelationshipState(db: Database, npcId: string, state: CompanionRelationshipState) {
+  run(db, 'UPDATE npcs SET relationship_state = ?, disposition = ? WHERE id = ?',
+    [JSON.stringify(state), deriveDisposition(state), npcId]);
+}
+
+function extractGoldAmount(action: string) {
+  const match = action.match(/(\d+)\s*gp/i) || action.match(/(\d+)\s*gold/i);
+  return match ? Number(match[1]) : 0;
+}
+
+function consumeInventoryItem(db: Database, characterId: string, rawInventory: string | null | undefined, itemName: string, quantity: number) {
+  const inventory = parseInventory(rawInventory);
+  const item = inventory.find((entry) => entry.item === itemName);
+  if (!item || item.quantity < quantity) return false;
+  item.quantity -= quantity;
+  const trimmed = inventory.filter((entry) => entry.quantity > 0);
+  run(db, 'UPDATE characters SET inventory = ? WHERE id = ?', [JSON.stringify(trimmed), characterId]);
+  return true;
+}
+
+function parseInventory(raw: string | null | undefined) {
+  try {
+    const parsed = JSON.parse(raw || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
   }
 }
 

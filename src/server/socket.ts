@@ -13,10 +13,12 @@ import { resolveRichExploration } from './game/adventure.js';
 import { createEncounterRecord, describeBattlefield, emitEncounterStart, getActiveEncounter, resolveEncounterAction } from './game/encounters.js';
 import { buildCampaignMapIntel } from './game/mapIntel.js';
 import {
+  getCompanionPartyModifiers,
   getJoinedCompanionIdsInScene,
   getPartyCompanions,
   getSceneNpcRoster,
   resolveCompanionDrama,
+  resolveCompanionInteraction,
   syncCompanionsToScene,
   tryRecruitNpc,
   updateCompanionRelationships,
@@ -288,6 +290,37 @@ export function setupSocketHandlers(
       const npcsInScene = all(db,
         'SELECT * FROM npcs WHERE campaign_id = ? AND location_scene_id = ? AND alive = 1',
         [campaignId, scene.id]) as any[];
+
+      const companionInteraction = resolveCompanionInteraction({
+        db,
+        campaignId,
+        sceneId: scene.id,
+        character,
+        action,
+      });
+      if (companionInteraction?.handled) {
+        for (const content of companionInteraction.narration) {
+          io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content });
+        }
+        if (companionInteraction.characterUpdated) {
+          const updatedCharacter = get(db, 'SELECT * FROM characters WHERE id = ?', [character.id]) as any;
+          if (updatedCharacter) {
+            io.to(`campaign:${campaignId}`).emit('game:state_update', {
+              type: 'character_update',
+              payload: updatedCharacter,
+            });
+          }
+        }
+        io.to(`campaign:${campaignId}`).emit('game:state_update', {
+          type: 'companions_update',
+          payload: getPartyCompanions(db, campaignId),
+        });
+        io.to(`campaign:${campaignId}`).emit('game:state_update', {
+          type: 'scene_npcs_update',
+          payload: getSceneNpcRoster(db, campaignId, scene.id),
+        });
+        return;
+      }
 
       if (/join us|travel with us|come with us|recruit|enlist|hire/.test(action.toLowerCase()) && npcsInScene.length > 0) {
         const targetNpc = npcsInScene.find((npc) => action.toLowerCase().includes(String(npc.name || '').toLowerCase())) || npcsInScene[0];

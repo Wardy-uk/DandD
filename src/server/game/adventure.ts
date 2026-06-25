@@ -3,7 +3,7 @@ import { get, run } from '../db/helpers.js';
 import { d6, d20, roll, roll2d6 } from '../engine/dice.js';
 import { getCharismaReactionAdj, getReactionResult, getStrengthMods, THIEF_SKILLS_BASE } from '../engine/tables.js';
 import { getCampaignState, noteCampaignEvent, saveCampaignState, shiftFactionStanding, type CampaignSimulationState } from './campaignState.js';
-import { updateCompanionRelationships } from './companions.js';
+import { getCompanionPartyModifiers, updateCompanionRelationships } from './companions.js';
 
 interface SceneRecord {
   id: string;
@@ -239,10 +239,11 @@ export function resolveRichExploration(params: {
   const blueprint = buildSceneBlueprint(scene);
   const campaignState = getCampaignState(db, campaignId);
   const inventory = getInventory(character);
+  const companionMods = getCompanionPartyModifiers(db, campaignId, scene.id);
 
   if (/search(?!.*hidden)|inspect|examine room|check the room|scavenge/.test(lowered)) {
     const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
-    const searchScore = d20() + Math.floor((character.int - 10) / 2) + thiefBonus(character, 'find_traps');
+    const searchScore = d20() + Math.floor((character.int - 10) / 2) + thiefBonus(character, 'find_traps') + companionMods.scoutBonus;
     const lines: string[] = [];
 
     if (!state.clueFound && searchScore >= 12) {
@@ -288,7 +289,7 @@ export function resolveRichExploration(params: {
     state.listened = true;
     state.tracksFound = true;
     saveSceneState(db, campaignId, scene.id, state);
-    const listenScore = d20() + Math.floor((character.wis - 10) / 2) + thiefBonus(character, 'detect_noise');
+    const listenScore = d20() + Math.floor((character.wis - 10) / 2) + thiefBonus(character, 'detect_noise') + companionMods.watchBonus;
     const detail = listenScore >= 13 ? blueprint.tracks : blueprint.pressure;
     noteCampaignEvent(campaignState, `${character.name} listened in ${scene.name} and heard ${detail}.`);
     saveCampaignState(db, campaignId, campaignState);
@@ -308,7 +309,7 @@ export function resolveRichExploration(params: {
       return finalizeOutcome(db, campaignId, { content: `You study ${blueprint.lock.kind}, but without proper picks you can only guess at its weaknesses.`, explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action);
     }
 
-    const pickScore = d20() + Math.floor((character.dex - 10) / 2) + thiefBonus(character, 'open_locks');
+    const pickScore = d20() + Math.floor((character.dex - 10) / 2) + thiefBonus(character, 'open_locks') + companionMods.scoutBonus;
     if (pickScore >= blueprint.lock.dc) {
       state.lockOpened = true;
       state.cleared = false;
@@ -341,7 +342,7 @@ export function resolveRichExploration(params: {
       return finalizeOutcome(db, campaignId, { content: 'Whatever trap was here has already been neutralised.', explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action);
     }
 
-    const disarmScore = d20() + Math.floor((character.dex - 10) / 2) + thiefBonus(character, 'find_traps');
+    const disarmScore = d20() + Math.floor((character.dex - 10) / 2) + thiefBonus(character, 'find_traps') + companionMods.scoutBonus;
     if (disarmScore >= blueprint.trap.dc) {
       state.trapDisarmed = true;
       state.knownHazard = true;
@@ -372,7 +373,7 @@ export function resolveRichExploration(params: {
 
     const searchRoll = d6();
     const skillEdge = thiefBonus(character, 'find_traps') > 0 || character.dex >= 15 || character.wis >= 14;
-    const success = searchRoll <= (skillEdge ? 3 : 2);
+    const success = searchRoll <= (skillEdge ? 3 : 2) + Math.min(1, companionMods.scoutBonus);
     if (!success) {
       saveCampaignState(db, campaignId, campaignState);
       return finalizeOutcome(db, campaignId, { content: 'You trace mortar lines and test the stonework, but the walls keep their secrets for now.', explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action);
@@ -409,7 +410,7 @@ export function resolveRichExploration(params: {
       return finalizeOutcome(db, campaignId, { content: 'The way is already clear enough to pass.', explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action);
     }
     const strMods = getStrengthMods(character.str, character.str_percentile);
-    const effort = d20() + strMods.hitAdj + Math.floor((character.level - 1) / 2);
+    const effort = d20() + strMods.hitAdj + Math.floor((character.level - 1) / 2) + companionMods.vanguardBonus;
     if (effort >= 13) {
       state.obstacleCleared = true;
       state.secured = false;
@@ -437,7 +438,7 @@ export function resolveRichExploration(params: {
 
   if (/rest|bind wounds|catch our breath|take a breather|camp/.test(lowered)) {
     const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
-    const heal = state.restCount === 0 ? Math.min(character.max_hp - character.hp, 1 + Math.floor((character.level + 1) / 3)) : 0;
+    const heal = state.restCount === 0 ? Math.min(character.max_hp - character.hp, 1 + Math.floor((character.level + 1) / 3) + Math.min(1, companionMods.wardenBonus)) : 0;
     state.restCount += 1;
     if (heal > 0) {
       applyHp(db, character.id, character.hp + heal);
@@ -450,7 +451,7 @@ export function resolveRichExploration(params: {
     }
     saveSceneState(db, campaignId, scene.id, state);
     saveCampaignState(db, campaignId, campaignState);
-    const riskText = d6() <= Math.min(5, turn.dangerLevel + state.restCount)
+    const riskText = d6() <= Math.max(1, Math.min(5, turn.dangerLevel + state.restCount - Math.min(1, companionMods.watchBonus)))
       ? 'Your pause buys recovery, but it also gives nearby threats time to adjust around you.'
       : 'You manage a brief, disciplined pause without giving too much away.';
     return finalizeOutcome(db, campaignId, {
@@ -505,7 +506,8 @@ export function resolveRichExploration(params: {
     const factionStanding = campaignState.factions[blueprint.faction];
     const reactionRoll = roll2d6().total
       + Math.max(-2, Math.min(2, Math.floor(getCharismaReactionAdj(character.cha) / 2)))
-      + Math.max(-2, Math.min(2, Math.floor((factionStanding?.reputation || 0) / 3)));
+      + Math.max(-2, Math.min(2, Math.floor((factionStanding?.reputation || 0) / 3)))
+      + Math.min(2, companionMods.envoyBonus);
     const reaction = getReactionResult(reactionRoll);
     const npcName = npcs[0].name;
     const responseMap: Record<string, string> = {
@@ -541,7 +543,7 @@ export function resolveRichExploration(params: {
 
   if (/sneak|hide|creep|move silently/.test(lowered)) {
     const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
-    const stealth = d20() + Math.floor((character.dex - 10) / 2) + thiefBonus(character, 'move_silently');
+    const stealth = d20() + Math.floor((character.dex - 10) / 2) + thiefBonus(character, 'move_silently') + Math.min(2, companionMods.scoutBonus);
     const good = stealth >= 13;
     if (good) {
       campaignState.encounterPressure = Math.max(0, campaignState.encounterPressure - 1);
