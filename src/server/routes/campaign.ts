@@ -8,6 +8,7 @@ import type { Database } from 'sql.js';
 import type { Server as SocketServer } from 'socket.io';
 import { get, all, run } from '../db/helpers.js';
 import { authMiddleware, requireAuth } from './auth.js';
+import { getAppSettings } from '../db/settings.js';
 
 export function createCampaignRoutes(db: Database, io: SocketServer): Router {
   const router = Router();
@@ -104,6 +105,12 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
 
   // Create campaign
   router.post('/', requireAuth, (req: any, res) => {
+    const settings = getAppSettings(db);
+    if (!settings.allowCampaignCreation) {
+      res.json({ ok: false, error: 'Campaign creation is currently disabled by an administrator' });
+      return;
+    }
+
     const { name, setting } = req.body;
     if (!name) {
       res.json({ ok: false, error: 'Campaign name required' });
@@ -114,8 +121,20 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
     const startSceneId = uuid();
 
     run(db,
-      'INSERT INTO campaigns (id, name, setting, current_scene_id, created_by) VALUES (?, ?, ?, ?, ?)',
-      [id, name, setting || '', startSceneId, req.player.id]);
+      `INSERT INTO campaigns (
+        id, name, setting, current_scene_id, created_by,
+        ai_growth_enabled, target_scene_buffer, target_npc_buffer
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        name,
+        setting || '',
+        startSceneId,
+        req.player.id,
+        settings.defaultAiGrowthEnabled ? 1 : 0,
+        settings.defaultTargetSceneBuffer,
+        settings.defaultTargetNpcBuffer,
+      ]);
 
     // Add creator as campaign member
     run(db,

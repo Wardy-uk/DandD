@@ -8,6 +8,8 @@ import type { Database } from 'sql.js';
 import { get, all, run } from '../db/helpers.js';
 import { authMiddleware, requireAuth } from './auth.js';
 import { assessCampaignReadiness, runNightlyGrowth } from '../ai/nightlyGrowth.js';
+import { getAppSettings, updateAppSettings } from '../db/settings.js';
+import { healthCheck, listModels } from '../ai/ollama.js';
 
 function requireAdmin(req: any, res: any, next: any) {
   if (!req.player) {
@@ -33,6 +35,92 @@ export function createAdminRoutes(db: Database): Router {
     const users = all(db,
       'SELECT id, username, display_name, role, created_at, last_seen FROM players ORDER BY created_at DESC');
     res.json({ ok: true, data: users });
+  });
+
+  router.get('/campaigns', requireAuth, requireAdmin, (_req: any, res) => {
+    const campaigns = all(db, `
+      SELECT
+        c.*,
+        (SELECT COUNT(*) FROM campaign_players WHERE campaign_id = c.id) as player_count,
+        (SELECT COUNT(*) FROM characters WHERE campaign_id = c.id) as character_count,
+        (SELECT COUNT(*) FROM scenes WHERE campaign_id = c.id) as scene_count,
+        (SELECT COUNT(*) FROM npcs WHERE campaign_id = c.id AND alive = 1) as npc_count
+      FROM campaigns c
+      ORDER BY c.created_at DESC
+    `);
+
+    res.json({ ok: true, data: campaigns });
+  });
+
+  router.patch('/campaigns/:id', requireAuth, requireAdmin, (req: any, res) => {
+    const campaign = get(db, 'SELECT * FROM campaigns WHERE id = ?', [req.params.id]) as any;
+    if (!campaign) {
+      res.status(404).json({ ok: false, error: 'Campaign not found' });
+      return;
+    }
+
+    const {
+      name,
+      setting,
+      status,
+      aiGrowthEnabled,
+      targetSceneBuffer,
+      targetNpcBuffer,
+    } = req.body;
+
+    run(db, `
+      UPDATE campaigns
+      SET name = COALESCE(?, name),
+          setting = COALESCE(?, setting),
+          status = COALESCE(?, status),
+          ai_growth_enabled = COALESCE(?, ai_growth_enabled),
+          target_scene_buffer = COALESCE(?, target_scene_buffer),
+          target_npc_buffer = COALESCE(?, target_npc_buffer)
+      WHERE id = ?
+    `, [
+      typeof name === 'string' && name.trim() ? name.trim() : null,
+      typeof setting === 'string' ? setting : null,
+      ['active', 'paused', 'completed'].includes(status) ? status : null,
+      typeof aiGrowthEnabled === 'boolean' ? (aiGrowthEnabled ? 1 : 0) : null,
+      Number.isFinite(targetSceneBuffer) ? targetSceneBuffer : null,
+      Number.isFinite(targetNpcBuffer) ? targetNpcBuffer : null,
+      req.params.id,
+    ]);
+
+    res.json({ ok: true, data: { message: 'Campaign updated' } });
+  });
+
+  router.get('/settings', requireAuth, requireAdmin, async (_req: any, res) => {
+    const settings = getAppSettings(db);
+    const ollamaOk = await healthCheck();
+    const models = ollamaOk ? await listModels() : [];
+
+    res.json({
+      ok: true,
+      data: {
+        settings,
+        runtime: {
+          ollamaReachable: ollamaOk,
+          models,
+          activeModel: process.env.OLLAMA_MODEL || 'qwen2.5:7b',
+          fastModel: process.env.OLLAMA_FAST_MODEL || 'qwen2.5:3b',
+          nightlyGrowthHourUtc: Number(process.env.NIGHTLY_GROWTH_HOUR_UTC || 3),
+          runtimeMode: 'deterministic',
+        },
+      },
+    });
+  });
+
+  router.patch('/settings', requireAuth, requireAdmin, (req: any, res) => {
+    const next = updateAppSettings(db, {
+      allowRegistration: typeof req.body.allowRegistration === 'boolean' ? req.body.allowRegistration : undefined,
+      allowCampaignCreation: typeof req.body.allowCampaignCreation === 'boolean' ? req.body.allowCampaignCreation : undefined,
+      defaultAiGrowthEnabled: typeof req.body.defaultAiGrowthEnabled === 'boolean' ? req.body.defaultAiGrowthEnabled : undefined,
+      defaultTargetSceneBuffer: Number.isFinite(req.body.defaultTargetSceneBuffer) ? req.body.defaultTargetSceneBuffer : undefined,
+      defaultTargetNpcBuffer: Number.isFinite(req.body.defaultTargetNpcBuffer) ? req.body.defaultTargetNpcBuffer : undefined,
+    });
+
+    res.json({ ok: true, data: next });
   });
 
   // Update user role

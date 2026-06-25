@@ -8,6 +8,7 @@ import jwt from 'jsonwebtoken';
 import { v4 as uuid } from 'uuid';
 import type { Database } from 'sql.js';
 import { get, all, run } from '../db/helpers.js';
+import { getAppSettings } from '../db/settings.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'quest-dm-secret-change-in-production';
 
@@ -17,6 +18,12 @@ export function createAuthRoutes(db: Database): Router {
   // Register
   router.post('/register', async (req, res) => {
     try {
+      const settings = getAppSettings(db);
+      if (!settings.allowRegistration) {
+        res.json({ ok: false, error: 'Registration is currently closed by an administrator' });
+        return;
+      }
+
       const { username, password, displayName } = req.body;
       if (!username || !password) {
         res.json({ ok: false, error: 'Username and password required' });

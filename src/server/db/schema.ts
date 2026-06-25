@@ -7,6 +7,7 @@ import initSqlJs, { type Database } from 'sql.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { ensureAppSettings } from './settings.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = path.resolve(__dirname, '../../../quest.db');
@@ -300,6 +301,13 @@ function runMigrations() {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )
+  `);
+
   // Indexes
   const indexes = [
     'CREATE INDEX IF NOT EXISTS idx_characters_campaign ON characters(campaign_id)',
@@ -316,6 +324,8 @@ function runMigrations() {
   for (const idx of indexes) {
     db.run(idx);
   }
+
+  ensureAppSettings(db);
 
   console.log('[DB] Migrations complete');
 }
