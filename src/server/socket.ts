@@ -10,7 +10,7 @@ import type { ServerToClientEvents, ClientToServerEvents } from '../shared/types
 import { get, all, run } from './db/helpers.js';
 import { describeScene, findMovementTarget } from './game/deterministic.js';
 import { resolveRichExploration } from './game/adventure.js';
-import { addLootWeight, applyAttritionDamage, getCampaignState, getCampaignStateSnapshot, getLightModifiers, lightTorch, makeCamp, saveCampaignState, tickDelveConditions } from './game/campaignState.js';
+import { addLootWeight, applyAttritionDamage, getCampaignState, getCampaignStateSnapshot, getLightModifiers, lightTorch, makeCamp, saveCampaignState, shiftFactionStanding, tickDelveConditions } from './game/campaignState.js';
 import { createEncounterRecord, describeBattlefield, emitEncounterStart, getActiveEncounter, resolveEncounterAction } from './game/encounters.js';
 import { buildCampaignMapIntel } from './game/mapIntel.js';
 import {
@@ -397,6 +397,33 @@ export function setupSocketHandlers(
         return;
       }
 
+      // ── Faction parley ───────────────────────────────────────────────
+      if (isParleyAction(action)) {
+        const campRow = get(db, 'SELECT * FROM campaigns WHERE id = ?', [campaignId]) as any;
+        const parleyFactionKey = campRow?.dominant_faction || 'locals';
+        const parleyState = getCampaignState(db, campaignId);
+        const parleyResult = resolveParley({
+          state: parleyState,
+          factionKey: parleyFactionKey,
+          leaderCha: Number(character.cha || 10),
+          parleyAction: action,
+        });
+        if (parleyResult.heatDelta !== 0 || parleyResult.repDelta !== 0) {
+          shiftFactionStanding(parleyState, parleyFactionKey, {
+            heat: parleyResult.heatDelta,
+            reputation: parleyResult.repDelta,
+          });
+        }
+        saveCampaignState(db, campaignId, parleyState);
+        for (const note of parleyResult.notes) {
+          run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+            [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', note]);
+          io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: note });
+        }
+        emitCampaignState(io, db, campaignId);
+        return;
+      }
+
       // ── Rival clash actions (fight/parley/intimidate) ─────────────────
       const explorationTurnNow = Number((get(db, 'SELECT exploration_turn FROM campaigns WHERE id = ?', [campaignId]) as any)?.exploration_turn || 0);
       const sceneRivals = getAllRivals(db, campaignId).filter(
@@ -460,6 +487,20 @@ export function setupSocketHandlers(
         // Check rival presence in the new scene
         const rivalPresence = checkRivalPresence({ db, campaignId, sceneId: nextScene.id, explorationTurn });
         for (const note of rivalPresence.notes) {
+          run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+            [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', note]);
+          io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: note });
+        }
+
+        // ── Faction patrol check on scene entry ─────────────────────────
+        const campaignRowFaction = get(db, 'SELECT * FROM campaigns WHERE id = ?', [campaignId]) as any;
+        const sceneFactionKey = campaignRowFaction?.dominant_faction || 'locals';
+        const factionEntryNotes = checkFactionSceneEntry({
+          db, campaignId, sceneId: nextScene.id, factionKey: sceneFactionKey,
+          explorationTurn: Number(campaignRowFaction?.exploration_turn || 0),
+          leaderName: character.name,
+        });
+        for (const note of factionEntryNotes) {
           run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
             [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', note]);
           io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: note });

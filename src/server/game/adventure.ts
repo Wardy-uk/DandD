@@ -3,6 +3,11 @@ import { get, run } from '../db/helpers.js';
 import { d6, d20, roll, roll2d6 } from '../engine/dice.js';
 import { getCharismaReactionAdj, getReactionResult, getStrengthMods, THIEF_SKILLS_BASE } from '../engine/tables.js';
 import { getCampaignState, noteCampaignEvent, saveCampaignState, shiftFactionStanding, type CampaignSimulationState } from './campaignState.js';
+import {
+  canParley, generateBountyHunter, getEscalationLevel, getPatrolModifier,
+  describeSurpriseByEscalation, willAmbush, resolveParley, isParleyAction,
+  type ParleyOutcome,
+} from './factions.js';
 import { getCompanionPartyModifiers, updateCompanionRelationships } from './companions.js';
 
 interface SceneRecord {
@@ -1002,7 +1007,10 @@ function finalizeOutcome(
   const canEncounter = turn.turn - campaignState.lastEncounterTurn >= 2;
   const heat = campaignState.factions[blueprint.faction]?.heat || 0;
   const factionReputation = campaignState.factions[blueprint.faction]?.reputation || 0;
-  const encounterChance = Math.min(5, 1 + Math.floor(campaignState.encounterPressure / 2) + Math.floor(heat / 3) + (noisy ? 1 : 0) + (factionReputation <= -4 ? 1 : 0));
+  const factionObj = campaignState.factions[blueprint.faction];
+  const escalation = getEscalationLevel(heat);
+  const patrolMod = getPatrolModifier(escalation);
+  const encounterChance = Math.min(5, 1 + Math.floor(campaignState.encounterPressure / 2) + patrolMod + (noisy ? 1 : 0) + (factionReputation <= -4 ? 1 : 0));
   if (canEncounter && d6() <= encounterChance) {
     const encounter = generateProceduralEncounter(blueprint, turn.turn, campaignState, action);
     if (!encounter) {
@@ -1073,17 +1081,23 @@ function generateProceduralEncounter(
       faction,
     };
   });
+  // Inject bounty hunter at manhunt tier
+  const factionStandingObj = campaignState.factions[blueprint.faction];
+  const escalation = getEscalationLevel(heat);
+  if (escalation === 'manhunt' && factionStandingObj) {
+    enemies.push(generateBountyHunter(factionStandingObj, baseLevel) as any);
+  }
+
   const initiativeType = pressure >= 5 || heat >= 6 ? 'individual' : 'group';
-  const surprise = pressure >= 5 || /force|bash|shoot|charge/.test(action) || heat >= 6
-    ? 'The contact comes on hard and fast before the party can fully control the terms.'
-    : hostility >= 3
-      ? 'You have just enough warning to realise this danger is watching the same roads as you with cautious interest.'
-      : 'You have just enough warning to realise this danger has been stalking the same dark as you.';
+  const surprise = describeSurpriseByEscalation(escalation, blueprint.faction);
+  const ambushOpener = (willAmbush(factionStandingObj || { reputation: 0, heat: 0, name: '', notes: '' }))
+    ? ' They came for you specifically.'
+    : '';
 
   return {
     enemies,
     initiativeType,
-    description: `${enemies.map((enemy) => enemy.name).join(', ')} emerge from the dark under the banner of ${faction}.${heat >= 6 ? ' They arrive with the confidence of foes who expected to find you.' : ''}${hostility <= -4 ? ' This feels less like a chance collision and more like the faction finally answering back.' : ''}`,
+    description: `${enemies.map((enemy) => enemy.name).join(', ')} emerge from the dark under the banner of ${faction}.${escalation !== 'quiet' ? ` ${describeSurpriseByEscalation(escalation, faction)}` : ''}${ambushOpener}`,
     surprise,
   };
 }
