@@ -1,5 +1,11 @@
 import { d6, d20 } from '../engine/dice.js';
 import { describeSceneDepth } from './adventure.js';
+import {
+  detectRoomType,
+  getDungeonTheme,
+  getRoomOpener,
+  getRoomAmbience,
+} from './dungeonVariety.js';
 
 interface SceneConnection {
   direction: string;
@@ -11,6 +17,7 @@ interface SceneConnection {
 
 interface SceneRecord {
   id: string;
+  campaign_id?: string;
   name: string;
   brief?: string;
   ai_description?: string;
@@ -57,20 +64,9 @@ const lightText: Record<string, string> = {
   bright: "Well-lit. Whatever's here, you'll see it.",
 };
 
-// Terrain openers — set physical mood in one sentence
-const terrainOpeners: Record<string, string[]> = {
-  indoor: [
-    'The floor is stone, worn smooth in patches.',
-    'Worked stone. Someone built this to last.',
-    'Old plaster, cracked. Torch smoke has blackened the ceiling.',
-    'The walls are close and the air is stale.',
-  ],
-  dungeon: [
-    'The air down here is cold and very still.',
-    'Stone and old dark. The usual.',
-    'Every sound comes back a little wrong.',
-    'The ceiling is low. Lower than it looks.',
-  ],
+// Fallback terrain openers for non-dungeon terrain (cave, forest, town, ruins).
+// Dungeon/indoor rooms use named room-type openers from dungeonVariety instead.
+const terrainOpenersFallback: Record<string, string[]> = {
   cave: [
     'Natural rock, unworked. Water has been through here.',
     'The floor is uneven. Watch your footing.',
@@ -127,11 +123,7 @@ export function describeScene(params: {
 
   // Seed for picking variants without randomness (same scene = same description)
   const s = scene.id.split('').reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7);
-
-  const terrainKey = (scene.terrain_type || 'indoor') as keyof typeof terrainOpeners;
-  const openers = terrainOpeners[terrainKey] ?? terrainOpeners.indoor;
-  const opener = openers[s % openers.length];
-  const light = lightText[scene.light_level || 'normal'] ?? 'The light is workable.';
+  const terrainKey = scene.terrain_type || 'indoor';
 
   // Brief — skip placeholder text from campaign creation
   const rawBrief = scene.brief?.trim() ?? '';
@@ -139,9 +131,6 @@ export function describeScene(params: {
     || rawBrief.toLowerCase().includes('dm will describe')
     || rawBrief.toLowerCase().includes('adventure begins here');
   const briefSentence = isPlaceholder ? '' : rawBrief;
-
-  // Depth detail from blueprint (ambience + pressure line)
-  const depth = describeSceneDepth(scene);
 
   // Exits — one blunt sentence
   let exitLine: string;
@@ -161,6 +150,22 @@ export function describeScene(params: {
     npcLine = `${joinList(npcs.map((n) => n.name))} are here.`;
   }
 
+  const light = lightText[scene.light_level || 'normal'] ?? 'The light is workable.';
+
+  // Dungeon/indoor rooms get a named room-type opener + room ambience for distinct identity.
+  // Other terrain types fall back to generic terrain openers + describeSceneDepth.
+  if (terrainKey === 'indoor' || terrainKey === 'dungeon') {
+    const roomType = detectRoomType(scene.name, scene.id);
+    const dungeonTheme = getDungeonTheme(scene.campaign_id || scene.id);
+    const opener = getRoomOpener(roomType, scene.id);
+    const roomAmbienceStr = getRoomAmbience(roomType, dungeonTheme, scene.id);
+    const parts = [opener, light, briefSentence, roomAmbienceStr, npcLine, exitLine].filter(Boolean);
+    return parts.join(' ');
+  }
+
+  const fallbackOpeners = terrainOpenersFallback[terrainKey] ?? terrainOpenersFallback.cave;
+  const opener = fallbackOpeners[s % fallbackOpeners.length];
+  const depth = describeSceneDepth(scene);
   const parts = [opener, light, briefSentence, depth, npcLine, exitLine].filter(Boolean);
   return parts.join(' ');
 }

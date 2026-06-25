@@ -9,6 +9,20 @@ import {
   type ParleyOutcome,
 } from './factions.js';
 import { getCompanionPartyModifiers, updateCompanionRelationships } from './companions.js';
+import {
+  detectRoomType,
+  getDungeonTheme,
+  getRoomOpener,
+  getRoomAmbience,
+  getThemePressure,
+  getSignpostDetail,
+  getRoomSpecificFind,
+  getRoomSpecificHazard,
+  getLoreFragment,
+  CLEARED_ROOM_NOTES,
+  type RoomType,
+  type DungeonTheme,
+} from './dungeonVariety.js';
 
 interface SceneRecord {
   id: string;
@@ -66,6 +80,7 @@ interface SceneState {
   knownHazard: boolean;
   knownTreasure: boolean;
   restCount: number;
+  loreFragmentsFound: string[];
 }
 
 interface SceneBlueprint {
@@ -82,6 +97,15 @@ interface SceneBlueprint {
   faction: string;
   encounterTheme: string;
   salvage: string;
+  // Dungeon variety
+  roomType: RoomType;
+  dungeonTheme: DungeonTheme;
+  roomOpener: string;
+  roomAmbience: string;
+  themePressure: string;
+  signpostDetail: string;
+  roomSpecificFind: string | null;
+  roomSpecificHazard: string | null;
 }
 
 interface InventoryItem {
@@ -201,6 +225,8 @@ export function saveSceneState(db: Database, campaignId: string, sceneId: string
 export function buildSceneBlueprint(scene: SceneRecord): SceneBlueprint {
   // Use >>> (unsigned right-shift) so negative seeds never produce negative indices.
   const s = hash(scene.id) >>> 0;
+  const roomType = detectRoomType(scene.name, scene.id);
+  const dungeonTheme = getDungeonTheme(scene.campaign_id || scene.id);
   return {
     ambience: ambienceTable[s % ambienceTable.length],
     clue: clueTable[(s >>> 2) % clueTable.length],
@@ -226,11 +252,26 @@ export function buildSceneBlueprint(scene: SceneRecord): SceneBlueprint {
     faction: factionKeys[(s >>> 24) % factionKeys.length],
     encounterTheme: encounterThemes[(s >>> 26) % encounterThemes.length],
     salvage: salvageTable[(s >>> 28) % salvageTable.length],
+    // Dungeon variety
+    roomType,
+    dungeonTheme,
+    roomOpener: getRoomOpener(roomType, scene.id),
+    roomAmbience: getRoomAmbience(roomType, dungeonTheme, scene.id),
+    themePressure: getThemePressure(dungeonTheme, scene.id),
+    signpostDetail: getSignpostDetail(dungeonTheme, scene.id),
+    roomSpecificFind: getRoomSpecificFind(roomType, scene.id),
+    roomSpecificHazard: getRoomSpecificHazard(roomType, scene.id),
   };
 }
 
 export function describeSceneDepth(scene: SceneRecord): string {
   const blueprint = buildSceneBlueprint(scene);
+  // Dungeon/indoor: room-type ambience + theme pressure for distinct character.
+  // Other terrain: generic tables as before.
+  const terrain = scene.terrain_type || 'indoor';
+  if (terrain === 'indoor' || terrain === 'dungeon') {
+    return `${blueprint.roomAmbience} ${blueprint.themePressure}`;
+  }
   return `${blueprint.ambience} ${blueprint.pressure}`;
 }
 
@@ -905,7 +946,7 @@ export function resolveRichExploration(params: {
     saveCampaignState(db, campaignId, campaignState);
     return finalizeOutcome(db, campaignId, {
       content: lines.filter(Boolean).join(' '),
-      explorationTurnAdvanced: false,
+
     }, { turn: 0, pulse: null } as any, campaignState, blueprint, action);
   }
 
@@ -1209,6 +1250,9 @@ function normalizeState(state: Partial<SceneState>): SceneState {
     knownHazard: Boolean((state as any).knownHazard),
     knownTreasure: Boolean((state as any).knownTreasure),
     restCount: Number(state.restCount || 0),
+    loreFragmentsFound: Array.isArray((state as any).loreFragmentsFound)
+      ? (state as any).loreFragmentsFound
+      : [],
   };
 }
 
