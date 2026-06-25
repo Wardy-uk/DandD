@@ -98,6 +98,9 @@ function runMigrations() {
   try { db.run('ALTER TABLE campaigns ADD COLUMN danger_level INTEGER DEFAULT 2'); } catch {}
   try { db.run('ALTER TABLE campaigns ADD COLUMN start_mode TEXT DEFAULT "solo"'); } catch {}
   try { db.run('ALTER TABLE campaigns ADD COLUMN starter_party_seeded INTEGER DEFAULT 0'); } catch {}
+  try { db.run('ALTER TABLE campaigns ADD COLUMN campaign_phase TEXT DEFAULT "dungeon"'); } catch {}
+  try { db.run('ALTER TABLE campaigns ADD COLUMN town_name TEXT DEFAULT ""'); } catch {}
+  try { db.run('ALTER TABLE campaigns ADD COLUMN town_contracts TEXT DEFAULT "[]"'); } catch {}
 
   db.run(`
     CREATE TABLE IF NOT EXISTS campaign_players (

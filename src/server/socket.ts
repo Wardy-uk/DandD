@@ -40,6 +40,7 @@ import {
   tryRecruitNpc,
   updateCompanionRelationships,
 } from './game/companions.js';
+import { returnToTown } from './game/town.js';
 
 interface ConnectedPlayer {
   socketId: string;
@@ -311,6 +312,34 @@ export function setupSocketHandlers(
         }
         if (resolution.turnPrompt) {
           io.to(`campaign:${campaignId}`).emit('game:turn_prompt', resolution.turnPrompt);
+        }
+        return;
+      }
+
+      // ── Return to town ────────────────────────────────────────────────
+      if (/return to town|head back to town|leave the dungeon|make for town|back to (the )?town|retreat to town|we head back|leave for town/i.test(action)) {
+        try {
+          const { townName, arrivalNarration, dawnSummary } = returnToTown(db, campaignId);
+          const arrivalLogId = crypto.randomUUID();
+          run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+            [arrivalLogId, campaignId, 1, 'narration', 'DM', arrivalNarration]);
+          io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: arrivalNarration });
+          if (dawnSummary) {
+            run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+              [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', dawnSummary]);
+            io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: dawnSummary });
+          }
+          io.to(`campaign:${campaignId}`).emit('game:state_update', {
+            type: 'phase_change',
+            payload: { phase: 'town', townName },
+          });
+          emitCampaignState(io, db, campaignId);
+        } catch (err) {
+          console.error('[town transition error]', err);
+          io.to(`campaign:${campaignId}`).emit('game:narration', {
+            actor: 'DM',
+            content: 'The road to town is clear. Head there when ready.',
+          });
         }
         return;
       }
