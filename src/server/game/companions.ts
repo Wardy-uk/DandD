@@ -26,6 +26,7 @@ type CompanionDuty = 'scout' | 'vanguard' | 'warden' | 'envoy' | 'watch' | 'torc
 
 interface CompanionRow {
   id: string;
+  campaign_id: string;
   name: string;
   race: string;
   char_class: string;
@@ -122,6 +123,7 @@ export function getPartyCompanions(db: Database, campaignId: string) {
       locationSceneId: row.location_scene_id,
       joinedParty: Number(row.joined_party || 0) === 1,
       companionRole: row.companion_role || '',
+      companionOrder: Number(row.companion_order || 0),
       hp: Number(stats.currentHp ?? stats.hp ?? 0),
       maxHp: Number(stats.maxHp ?? stats.hp ?? 0),
       ac: Number(stats.ac ?? 8),
@@ -159,6 +161,7 @@ export function getSceneNpcRoster(db: Database, campaignId: string, sceneId: str
       disposition: row.disposition,
       joinedParty: Number(row.joined_party || 0) === 1,
       companionRole: row.companion_role || inferCompanionRole(row.char_class),
+      companionOrder: Number(row.companion_order || 0),
       duty: relationship.currentDuty,
       aspiration: relationship.aspiration,
       grievance: relationship.grievance,
@@ -296,7 +299,7 @@ export function resolveCompanionInteraction(params: {
   const { db, campaignId, sceneId, character, action } = params;
   const lowered = action.toLowerCase();
   const npcs = all(db, `
-    SELECT id, name, race, char_class, level, personality, disposition, location_scene_id,
+    SELECT id, campaign_id, name, race, char_class, level, personality, disposition, location_scene_id,
       stats, relationship_state, joined_party, companion_role, companion_order, alive
     FROM npcs
     WHERE campaign_id = ? AND location_scene_id = ? AND alive = 1
@@ -447,9 +450,29 @@ export function getCompanionPartyModifiers(db: Database, campaignId: string, sce
     envoyBonus: 0,
     watchBonus: 0,
     morale: 0,
+    frontlineGuard: 0,
+    rearGuard: 0,
+    frontlineName: '',
+    rearGuardName: '',
   };
 
-  for (const row of rows) {
+  const ordered = [...rows].sort((left, right) => Number(left.companion_order || 0) - Number(right.companion_order || 0));
+  const front = ordered[0];
+  const rear = ordered[ordered.length - 1];
+  if (front) {
+    const role = String(front.companion_role || inferCompanionRole(front.char_class)).toLowerCase();
+    const state = hydrateRelationshipState(front);
+    modifiers.frontlineName = front.name;
+    modifiers.frontlineGuard = role === 'vanguard' || state.currentDuty === 'vanguard' ? 2 : 1;
+  }
+  if (rear) {
+    const role = String(rear.companion_role || inferCompanionRole(rear.char_class)).toLowerCase();
+    const state = hydrateRelationshipState(rear);
+    modifiers.rearGuardName = rear.name;
+    modifiers.rearGuard = state.currentDuty === 'watch' || role === 'scout' || role === 'vanguard' ? 1 : 0;
+  }
+
+  for (const row of ordered) {
     const state = hydrateRelationshipState(row);
     const role = String(row.companion_role || inferCompanionRole(row.char_class)).toLowerCase();
     const duty = String(state.currentDuty || '').toLowerCase();
@@ -821,7 +844,7 @@ function updateCompanionOrder(
     SELECT MIN(companion_order) AS min_order, MAX(companion_order) AS max_order
     FROM npcs
     WHERE campaign_id = ? AND joined_party = 1 AND alive = 1
-  `, [get(db, 'SELECT campaign_id FROM npcs WHERE id = ?', [target.id])?.campaign_id]) as any;
+  `, [target.campaign_id]) as any;
   const nextOrder = placement === 'front'
     ? Number(bounds?.min_order ?? 0) - 1
     : Number(bounds?.max_order ?? 0) + 1;

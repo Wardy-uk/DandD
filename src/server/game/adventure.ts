@@ -268,7 +268,7 @@ export function resolveRichExploration(params: {
     if (!state.trapTriggered && !state.trapDisarmed && searchScore <= 8) {
       state.trapTriggered = true;
       state.knownHazard = true;
-      const trap = triggerTrap(db, character, inventory, blueprint, campaignState);
+      const trap = triggerTrap(db, character, inventory, blueprint, campaignState, companionMods);
       lines.push(trap.content);
       saveSceneState(db, campaignId, scene.id, state);
       saveCampaignState(db, campaignId, campaignState);
@@ -358,7 +358,7 @@ export function resolveRichExploration(params: {
 
     state.trapTriggered = true;
     state.knownHazard = true;
-    const trap = triggerTrap(db, character, inventory, blueprint, campaignState);
+    const trap = triggerTrap(db, character, inventory, blueprint, campaignState, companionMods);
     saveSceneState(db, campaignId, scene.id, state);
     saveCampaignState(db, campaignId, campaignState);
     return finalizeOutcome(db, campaignId, { ...trap, explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action);
@@ -497,6 +497,88 @@ export function resolveRichExploration(params: {
     return finalizeOutcome(db, campaignId, {
       content: 'You take a few disciplined minutes to sketch routes, rough dimensions, and memorable hazards so the next decision can be made from something better than fear.',
       xpDelta: 10,
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
+  if (/probe.*floor|test.*floor|tap.*ahead|prod.*ahead|use.*pole/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    if (!state.knownHazard) {
+      state.knownHazard = true;
+      saveSceneState(db, campaignId, scene.id, state);
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
+        content: `You slow the expedition down and test the route before trusting it. The caution pays off: signs of ${blueprint.trap.kind} show themselves before anyone commits full weight to the ground.`,
+        explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action);
+    }
+
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: 'You check the next few steps the hard way instead of the fast way, which is often the difference between caution and a funeral.',
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
+  if (/set ambush|prepare ambush|hold an ambush|ready an ambush/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    state.secured = true;
+    campaignState.encounterPressure = Math.max(0, campaignState.encounterPressure - 2);
+    saveSceneState(db, campaignId, scene.id, state);
+    noteCampaignEvent(campaignState, `${character.name} prepared an ambush in ${scene.name}.`);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: `The company chooses ground, lanes of fire, and the angle of first contact instead of waiting to be surprised. If trouble comes next, it will find a readier party.`,
+      xpDelta: 15,
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
+  if (/bar the door|spike the door|jam the door|wedge the door/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    state.secured = true;
+    state.safeCamp = state.safeCamp || state.trapDisarmed || state.obstacleCleared;
+    campaignState.encounterPressure = Math.max(0, campaignState.encounterPressure - 1);
+    saveSceneState(db, campaignId, scene.id, state);
+    noteCampaignEvent(campaignState, `${character.name} denied an easy approach in ${scene.name}.`);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: 'You physically deny the easiest line of approach, buying the company the kind of ugly little safety that matters underground.',
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
+  if (/loot carefully|search the bodies|search corpse|loot the dead|check the bodies/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    if (!state.cleared && !state.stashFound) {
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
+        content: 'You start thinking about loot before the room is truly yours. The instinct is understandable, but that is how delvers die richer than they lived.',
+        explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action, true);
+    }
+
+    if (state.scavengedParts && state.knownTreasure) {
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
+        content: 'You work the aftermath with a professional eye, but the best salvage has already been taken.',
+        explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action);
+    }
+
+    const gold = 6 + d6() * 3;
+    const xp = 15 + d6() * 5;
+    state.scavengedParts = true;
+    state.knownTreasure = true;
+    awardGoldAndXp(db, character, gold, xp);
+    addInventoryItem(db, character.id, inventory, { item: `Recovered Trophies from ${blueprint.encounterTheme}`, weight: 1, quantity: 1, equipped: false });
+    saveSceneState(db, campaignId, scene.id, state);
+    noteCampaignEvent(campaignState, `${character.name} stripped useful spoils in ${scene.name}.`);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: `You loot with care instead of greed, turning the aftermath into ${gold} gp in value and a bundle of useful trophies or salvage.`,
+      xpDelta: xp,
+      goldDelta: gold,
       explorationTurnAdvanced: turn.turn,
     }, turn, campaignState, blueprint, action);
   }
@@ -802,11 +884,13 @@ function triggerTrap(
   inventory: InventoryItem[],
   blueprint: SceneBlueprint,
   campaignState: CampaignSimulationState,
+  companionMods: ReturnType<typeof getCompanionPartyModifiers>,
 ): AdventureActionOutcome {
   const saveRoll = d20() + Math.floor((character.dex - 10) / 2);
   const half = saveRoll >= blueprint.trap.dc;
   const damage = rollDamage(blueprint.trap.damage);
-  const finalDamage = half ? Math.max(1, Math.floor(damage / 2)) : damage;
+  const cushionedDamage = Math.max(1, damage - Math.min(2, companionMods.frontlineGuard || 0));
+  const finalDamage = half ? Math.max(1, Math.floor(cushionedDamage / 2)) : cushionedDamage;
   applyHp(db, character.id, character.hp - finalDamage);
   if (consumeItem(db, character.id, inventory, 'Bandage Roll', 1)) {
     campaignState.supply.bandagesUsed += 1;
@@ -814,7 +898,7 @@ function triggerTrap(
   shiftFactionStanding(campaignState, blueprint.faction, { heat: 2 });
   noteCampaignEvent(campaignState, `${character.name} triggered ${blueprint.trap.kind}.`);
   return {
-    content: `Your probing search wakes ${blueprint.trap.kind}. ${character.name} ${half ? 'partly avoids the worst of it' : 'takes the full force'} and suffers ${finalDamage} damage.`,
+    content: `Your probing search wakes ${blueprint.trap.kind}. ${companionMods.frontlineName ? `${companionMods.frontlineName} is far enough forward to bark a warning and spoil the worst of the setup. ` : ''}${character.name} ${half ? 'partly avoids the worst of it' : 'takes the full force'} and suffers ${finalDamage} damage.`,
     hpDelta: -finalDamage,
   };
 }
