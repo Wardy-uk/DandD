@@ -14,6 +14,11 @@ import {
   DEFAULT_CAMPAIGN_SETTING_ID,
   findCampaignSettingOption,
 } from '../../shared/campaignSettings.js';
+import {
+  CAMPAIGN_START_MODES,
+  DEFAULT_CAMPAIGN_START_MODE,
+  isCampaignStartMode,
+} from '../../shared/campaignModes.js';
 import { buildCampaignMapIntel } from '../game/mapIntel.js';
 
 export function createCampaignRoutes(db: Database, io: SocketServer): Router {
@@ -56,6 +61,8 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
       data: {
         options: CAMPAIGN_SETTING_OPTIONS,
         defaultSettingId: DEFAULT_CAMPAIGN_SETTING_ID,
+        startModes: CAMPAIGN_START_MODES,
+        defaultStartMode: DEFAULT_CAMPAIGN_START_MODE,
       },
     });
   });
@@ -144,7 +151,7 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
       return;
     }
 
-    const { name, settingId } = req.body;
+    const { name, settingId, startMode } = req.body;
     if (!name) {
       res.json({ ok: false, error: 'Campaign name required' });
       return;
@@ -154,6 +161,7 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
       res.json({ ok: false, error: 'Please choose one of the available settings' });
       return;
     }
+    const chosenStartMode = isCampaignStartMode(startMode) ? startMode : DEFAULT_CAMPAIGN_START_MODE;
 
     const id = uuid();
     const startSceneId = uuid();
@@ -161,8 +169,8 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
     run(db,
       `INSERT INTO campaigns (
         id, name, setting, current_scene_id, created_by,
-        ai_growth_enabled, target_scene_buffer, target_npc_buffer
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ai_growth_enabled, target_scene_buffer, target_npc_buffer, start_mode
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         name,
@@ -172,6 +180,7 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
         settings.defaultAiGrowthEnabled ? 1 : 0,
         settings.defaultTargetSceneBuffer,
         settings.defaultTargetNpcBuffer,
+        chosenStartMode,
       ]);
 
     // Add creator as campaign member
@@ -184,7 +193,7 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
       'INSERT INTO scenes (id, campaign_id, name, brief) VALUES (?, ?, ?, ?)',
       [startSceneId, id, 'Starting Location', 'The adventure begins here. The DM will describe this location.']);
 
-    res.json({ ok: true, data: { id, name, setting: selectedSetting.name, settingId: selectedSetting.id } });
+    res.json({ ok: true, data: { id, name, setting: selectedSetting.name, settingId: selectedSetting.id, startMode: chosenStartMode } });
   });
 
   // Join campaign (by invite code / ID)

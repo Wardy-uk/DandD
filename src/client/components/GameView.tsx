@@ -35,6 +35,43 @@ interface CampaignMapData {
   edges: any[];
 }
 
+interface Companion {
+  id: string;
+  name: string;
+  race: string;
+  charClass: string;
+  level: number;
+  personality: string;
+  disposition: string;
+  joinedParty: boolean;
+  companionRole: string;
+  hp: number;
+  maxHp: number;
+  relationshipLabel: string;
+  relationship: {
+    trust: number;
+    bond: number;
+    tension: number;
+    respect: number;
+    romance: number;
+    lastBeat: string;
+  };
+}
+
+interface SceneNpc {
+  id: string;
+  name: string;
+  race: string;
+  charClass: string;
+  level: number;
+  personality: string;
+  disposition: string;
+  joinedParty: boolean;
+  companionRole: string;
+  relationshipLabel: string;
+  recruitHint: string;
+}
+
 interface Props {
   apiUrl: string;
   player: { id: string; token: string; displayName: string };
@@ -55,6 +92,8 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
   const [battlefield, setBattlefield] = useState<BattlefieldProfile | null>(null);
   const [encounterActive, setEncounterActive] = useState(false);
   const [campaignMap, setCampaignMap] = useState<CampaignMapData | null>(null);
+  const [companions, setCompanions] = useState<Companion[]>([]);
+  const [sceneNpcs, setSceneNpcs] = useState<SceneNpc[]>([]);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const headers = { Authorization: `Bearer ${player.token}`, 'Content-Type': 'application/json' };
@@ -130,6 +169,10 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
         setBattlefield(data.payload.profile || null);
       } else if (data.type === 'map_update') {
         setCampaignMap(data.payload || null);
+      } else if (data.type === 'companions_update') {
+        setCompanions(data.payload || []);
+      } else if (data.type === 'scene_npcs_update') {
+        setSceneNpcs(data.payload || []);
       }
     };
 
@@ -226,6 +269,18 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
   const quickAction = (action: string) => {
     socket.emit('game:action', { campaignId, action });
   };
+
+  const recruitableNpc = sceneNpcs.find((npc) => !npc.joinedParty);
+  const quickActions = [
+    'Look around',
+    'Listen carefully',
+    'Read the battlefield',
+    recruitableNpc ? `Ask ${recruitableNpc.name} to join us` : (encounterActive ? 'Hold the doorway' : 'Search for traps'),
+    encounterActive ? 'Take cover and aim' : 'Search for hidden doors',
+    encounterActive ? 'Drive them into the hazard' : 'Secure this room',
+    encounterActive ? 'Fall back to cover' : 'Mark fallback point',
+    encounterActive ? 'Brace and hold' : 'Rest',
+  ];
 
   return (
     <div className="flex gap-4 h-[calc(100vh-120px)]">
@@ -361,6 +416,71 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
           </div>
         )}
 
+        {companions.length > 0 && (
+          <div className="border border-leather/15 rounded-lg p-3 bg-parchment-light/40">
+            <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">
+              Company
+            </div>
+            <div className="space-y-2">
+              {companions.filter((companion) => companion.joinedParty).map((companion) => (
+                <div key={companion.id} className="rounded-lg border border-leather/10 bg-parchment/60 p-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-heading text-xs font-bold text-leather-dark">{companion.name}</div>
+                      <div className="text-[11px] font-body text-ink-faint italic">
+                        {companion.race} {companion.charClass} • {companion.companionRole} • {companion.relationshipLabel}
+                      </div>
+                    </div>
+                    <div className="text-[11px] font-heading text-ink-light">
+                      {companion.hp}/{companion.maxHp} HP
+                    </div>
+                  </div>
+                  {companion.relationship.lastBeat && (
+                    <p className="mt-1 text-[11px] font-body text-ink-faint">
+                      {companion.relationship.lastBeat}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {sceneNpcs.length > 0 && (
+          <div className="border border-leather/15 rounded-lg p-3 bg-parchment-light/40">
+            <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">
+              In This Scene
+            </div>
+            <div className="space-y-2">
+              {sceneNpcs.map((npc) => (
+                <div key={npc.id} className="rounded-lg border border-leather/10 bg-parchment/60 p-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="font-heading text-xs font-bold text-leather-dark">{npc.name}</div>
+                      <div className="text-[11px] font-body text-ink-faint italic">
+                        {npc.race} {npc.charClass} • {npc.joinedParty ? npc.companionRole : npc.disposition}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => quickAction(npc.joinedParty ? `Talk to ${npc.name}` : `Ask ${npc.name} to join us`)}
+                      className="rounded-full border border-leather/15 px-2 py-1 text-[10px] font-heading text-leather hover:bg-leather/5"
+                    >
+                      {npc.joinedParty ? 'Talk' : 'Recruit'}
+                    </button>
+                  </div>
+                  <div className="mt-1 text-[11px] font-body text-ink-faint">
+                    {npc.personality}
+                  </div>
+                  <div className="mt-1 text-[11px] font-body text-ink-light">
+                    {npc.relationshipLabel} • {npc.recruitHint}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <CampaignMap mapData={campaignMap} />
       </div>
 
@@ -442,16 +562,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
         <div className="border-t border-leather/10 p-4 bg-parchment-light/40">
           {/* Quick Actions */}
           <div className="flex gap-2 mb-3 flex-wrap">
-            {[
-              'Look around',
-              'Listen carefully',
-              'Read the battlefield',
-              encounterActive ? 'Hold the doorway' : 'Search for traps',
-              encounterActive ? 'Take cover and aim' : 'Search for hidden doors',
-              encounterActive ? 'Drive them into the hazard' : 'Secure this room',
-              encounterActive ? 'Fall back to cover' : 'Mark fallback point',
-              encounterActive ? 'Brace and hold' : 'Rest',
-            ].map(action => (
+            {quickActions.map(action => (
               <button key={action} onClick={() => quickAction(action)}
                 className="text-xs px-3 py-1.5 rounded-full border border-leather/15 text-leather font-heading hover:bg-leather/5 transition-colors">
                 {action}

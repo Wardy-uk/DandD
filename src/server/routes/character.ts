@@ -13,6 +13,7 @@ import {
   getValidAlignments, assembleCharacter, applyRacialAdjustments,
 } from '../engine/character.js';
 import type { Race, CharClass, Alignment } from '../engine/tables.js';
+import { seedStarterCompanions } from '../game/companions.js';
 
 export function createCharacterRoutes(db: Database): Router {
   const router = Router();
@@ -136,6 +137,8 @@ export function createCharacterRoutes(db: Database): Router {
       character.copper, character.electrum, character.platinum,
       JSON.stringify(character.conditions), character.notes, character.status,
     ]);
+
+    seedStarterCompanions(db, campaignId);
 
     res.json({ ok: true, data: character });
   });

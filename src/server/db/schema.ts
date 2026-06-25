@@ -96,6 +96,8 @@ function runMigrations() {
   try { db.run('ALTER TABLE campaigns ADD COLUMN last_growth_build_at TEXT'); } catch {}
   try { db.run('ALTER TABLE campaigns ADD COLUMN exploration_turn INTEGER DEFAULT 0'); } catch {}
   try { db.run('ALTER TABLE campaigns ADD COLUMN danger_level INTEGER DEFAULT 2'); } catch {}
+  try { db.run('ALTER TABLE campaigns ADD COLUMN start_mode TEXT DEFAULT "solo"'); } catch {}
+  try { db.run('ALTER TABLE campaigns ADD COLUMN starter_party_seeded INTEGER DEFAULT 0'); } catch {}
 
   db.run(`
     CREATE TABLE IF NOT EXISTS campaign_players (
@@ -194,6 +196,10 @@ function runMigrations() {
       alive INTEGER DEFAULT 1
     )
   `);
+  try { db.run('ALTER TABLE npcs ADD COLUMN relationship_state TEXT DEFAULT "{}"'); } catch {}
+  try { db.run('ALTER TABLE npcs ADD COLUMN joined_party INTEGER DEFAULT 0'); } catch {}
+  try { db.run('ALTER TABLE npcs ADD COLUMN companion_role TEXT DEFAULT ""'); } catch {}
+  try { db.run('ALTER TABLE npcs ADD COLUMN companion_order INTEGER DEFAULT 0'); } catch {}
 
   db.run(`
     CREATE TABLE IF NOT EXISTS monster_templates (

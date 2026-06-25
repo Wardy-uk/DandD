@@ -79,6 +79,9 @@ export function createEncounterRecord(params: {
   const partyChars = all(db,
     'SELECT * FROM characters WHERE campaign_id = ? AND status = "active"',
     [campaignId]) as any[];
+  const companionNpcs = all(db,
+    'SELECT * FROM npcs WHERE campaign_id = ? AND joined_party = 1 AND alive = 1',
+    [campaignId]) as any[];
 
   const partyCombatants: Combatant[] = partyChars.map((c) => ({
     id: uuid(),
@@ -99,6 +102,27 @@ export function createEncounterRecord(params: {
     conditions: JSON.parse(c.conditions || '[]'),
     side: 'party',
   }));
+  const companionCombatants: Combatant[] = companionNpcs.map((npc) => {
+    const stats = safeJsonObject(npc.stats);
+    return {
+      id: uuid(),
+      name: npc.name,
+      charClass: npc.char_class || 'fighter',
+      level: npc.level || 1,
+      thac0: Number(stats.thac0 ?? 20),
+      ac: Number(stats.ac ?? 7),
+      hp: Number(stats.currentHp ?? stats.hp ?? 6),
+      maxHp: Number(stats.maxHp ?? stats.hp ?? 6),
+      str: Number(stats.str ?? 12),
+      dex: Number(stats.dex ?? 12),
+      weaponSpeed: Number(stats.weaponSpeed ?? 5),
+      weaponDamageSm: String(stats.damage || '1d6'),
+      weaponDamageLg: String(stats.damage || '1d6'),
+      isLargeTarget: false,
+      conditions: [],
+      side: 'party',
+    };
+  });
 
   const enemyCombatants: Combatant[] = (enemies || []).map((e) => ({
     id: uuid(),
@@ -119,10 +143,10 @@ export function createEncounterRecord(params: {
     side: 'enemy',
   }));
 
-  const allCombatants = [...partyCombatants, ...enemyCombatants];
+  const allCombatants = [...partyCombatants, ...companionCombatants, ...enemyCombatants];
   const initiative = initiativeType === 'individual'
     ? rollIndividualInitiative(allCombatants)
-    : rollGroupInitiative(partyCombatants, enemyCombatants);
+    : rollGroupInitiative([...partyCombatants, ...companionCombatants], enemyCombatants);
   const surprise = rollSurpriseCheck();
 
   run(db, `
@@ -139,8 +163,8 @@ export function createEncounterRecord(params: {
     `, [
       c.id,
       encounterId,
-      c.side === 'party' ? partyChars.find((pc) => pc.name === c.name)?.id : null,
-      null,
+      c.side === 'party' ? partyChars.find((pc) => pc.name === c.name)?.id || null : null,
+      c.side === 'party' ? companionNpcs.find((npc) => npc.name === c.name)?.id || null : null,
       c.name,
       c.side,
       orderEntry?.initiative || 0,
@@ -222,22 +246,34 @@ export function resolveEncounterAction(params: {
 
   const scene = get(db, 'SELECT * FROM scenes WHERE id = ?', [encounter.scene_id]) as any;
   const battlefield = buildBattlefieldProfile(scene);
-  const combatants = getEncounterCombatants(db, encounterId);
-  const current = getCurrentTurnCombatant(encounter, combatants);
+  let combatants = getEncounterCombatants(db, encounterId);
+  let current = getCurrentTurnCombatant(encounter, combatants);
+  const narration: { actor: string; content: string }[] = [];
+  const combatResults: any[] = [];
+  const updatedCharacterIds = new Set<string>();
+
+  let automated = autoResolveNonPlayerTurns(db, encounter, current, battlefield, combatResults, narration, updatedCharacterIds);
+  if (automated.ended) {
+    return finishResolution(db, encounter.id, narration, combatResults, updatedCharacterIds, automated.prompt);
+  }
+  if (automated.current) {
+    current = automated.current;
+    combatants = getEncounterCombatants(db, encounterId);
+  }
   if (!current) {
     return { ok: false, error: 'Encounter has no valid turn holder.', narration: [], combatResults: [], updatedCharacterIds: [] };
   }
   if (current.side !== 'party') {
     return { ok: false, error: `It is ${current.name}'s turn, and the party is still under pressure.`, narration: [], combatResults: [], updatedCharacterIds: [] };
   }
+  if (current.npc_id && !current.character_id) {
+    return { ok: false, error: `${current.name} is still acting on instinct. Give the moment a beat and try again.`, narration: [], combatResults: [], updatedCharacterIds: [] };
+  }
   if (actingCharacterId && current.character_id && current.character_id !== actingCharacterId) {
     return { ok: false, error: `It is ${current.name}'s turn right now.`, narration: [], combatResults: [], updatedCharacterIds: [] };
   }
 
   const lowered = action.toLowerCase();
-  const narration: { actor: string; content: string }[] = [];
-  const combatResults: any[] = [];
-  const updatedCharacterIds = new Set<string>();
 
   if (/retreat|withdraw|fall back|run/.test(lowered)) {
     const retreat = attemptRetreat(db, encounter, combatants, current);
@@ -282,24 +318,36 @@ export function resolveEncounterAction(params: {
 
   let advanced = advanceEncounterTurn(db, encounter.id);
   let loopGuard = 0;
-  while (advanced.prompt && advanced.current?.side === 'enemy' && loopGuard < 8) {
+  while (advanced.prompt && advanced.current && (advanced.current.side === 'enemy' || (advanced.current.side === 'party' && advanced.current.npc_id && !advanced.current.character_id)) && loopGuard < 8) {
     const enemyActor = advanced.current;
     const refreshedCombatants = getEncounterCombatants(db, encounter.id);
-    const partyTarget = chooseEnemyTarget(refreshedCombatants);
-    if (!partyTarget) break;
-    const enemyAction = inferEnemyAction(enemyActor, battlefield);
-    const enemyStrike = resolveAttackExchange(db, encounter.id, enemyActor, partyTarget, enemyAction, battlefield);
+    const target = enemyActor.side === 'enemy'
+      ? chooseEnemyTarget(refreshedCombatants)
+      : chooseTargetFromAction('', refreshedCombatants, 'enemy');
+    if (!target) break;
+    const enemyAction = enemyActor.side === 'enemy'
+      ? inferEnemyAction(enemyActor, battlefield)
+      : inferCompanionAction(enemyActor, battlefield);
+    const enemyStrike = resolveAttackExchange(db, encounter.id, enemyActor, target, enemyAction, battlefield);
     combatResults.push(enemyStrike.result);
     narration.push({
       actor: 'DM',
       content: `${describeRolePressure(enemyActor, true)} ${describeBattlefieldPressure(battlefield, enemyAction, true)} ${enemyStrike.result.description}`,
     });
-    if (partyTarget.character_id) updatedCharacterIds.add(partyTarget.character_id);
+    if (target.character_id) updatedCharacterIds.add(target.character_id);
 
-    const partyState = evaluatePartyState(db, encounter, partyTarget, enemyActor);
-    narration.push(...partyState.narration);
-    if (partyState.ended) {
-      return finishResolution(db, encounter.id, narration, combatResults, updatedCharacterIds);
+    if (enemyActor.side === 'enemy') {
+      const partyState = evaluatePartyState(db, encounter, target, enemyActor);
+      narration.push(...partyState.narration);
+      if (partyState.ended) {
+        return finishResolution(db, encounter.id, narration, combatResults, updatedCharacterIds);
+      }
+    } else {
+      const enemyState = evaluateEnemyState(db, encounter, target, enemyActor);
+      narration.push(...enemyState.narration);
+      if (enemyState.ended) {
+        return finishResolution(db, encounter.id, narration, combatResults, updatedCharacterIds);
+      }
     }
 
     advanced = advanceEncounterTurn(db, encounter.id);
@@ -336,6 +384,47 @@ function getCurrentTurnCombatant(encounter: any, combatants: any[]) {
   const turnOrder = JSON.parse(encounter.turn_order || '[]');
   const currentId = turnOrder[Number(encounter.current_turn_index || 0)];
   return combatants.find((c) => c.id === currentId && c.current_hp > 0);
+}
+
+function autoResolveNonPlayerTurns(
+  db: Database,
+  encounter: any,
+  current: any,
+  battlefield: BattlefieldProfile,
+  combatResults: any[],
+  narration: { actor: string; content: string }[],
+  updatedCharacterIds: Set<string>,
+) {
+  let active = current;
+  let prompt: TurnPrompt | undefined;
+  let loopGuard = 0;
+  while (active && loopGuard < 8 && ((active.side === 'enemy') || (active.side === 'party' && active.npc_id && !active.character_id))) {
+    const combatants = getEncounterCombatants(db, encounter.id);
+    const target = active.side === 'enemy'
+      ? chooseEnemyTarget(combatants)
+      : chooseTargetFromAction('', combatants, 'enemy');
+    if (!target) return { ended: true, prompt };
+    const action = active.side === 'enemy' ? inferEnemyAction(active, battlefield) : inferCompanionAction(active, battlefield);
+    const strike = resolveAttackExchange(db, encounter.id, active, target, action, battlefield);
+    combatResults.push(strike.result);
+    narration.push({
+      actor: 'DM',
+      content: `${describeRolePressure(active, true)} ${describeBattlefieldPressure(battlefield, action, true)} ${strike.result.description}`,
+    });
+    if (target.character_id) updatedCharacterIds.add(target.character_id);
+
+    const state = active.side === 'enemy'
+      ? evaluatePartyState(db, encounter, target, active)
+      : evaluateEnemyState(db, encounter, target, active);
+    narration.push(...state.narration);
+    if (state.ended) return { ended: true, prompt };
+
+    const advanced = advanceEncounterTurn(db, encounter.id);
+    prompt = advanced.prompt;
+    active = advanced.current;
+    loopGuard += 1;
+  }
+  return { ended: false, current: active, prompt };
 }
 
 function chooseTargetFromAction(action: string, combatants: any[], side: 'enemy' | 'party') {
@@ -386,6 +475,15 @@ function resolveAttackExchange(
       run(db, 'UPDATE characters SET hp = ?, status = ? WHERE id = ?',
         [remainingHp, remainingHp <= 0 ? 'dead' : 'active', defender.character_id]);
     }
+    if (defender.npc_id) {
+      const npc = get(db, 'SELECT stats FROM npcs WHERE id = ?', [defender.npc_id]) as any;
+      const stats = safeJsonObject(npc?.stats);
+      stats.currentHp = remainingHp;
+      stats.maxHp = stats.maxHp ?? stats.hp ?? remainingHp;
+      stats.hp = stats.maxHp;
+      run(db, 'UPDATE npcs SET stats = ?, alive = ? WHERE id = ?',
+        [JSON.stringify(stats), remainingHp <= 0 ? 0 : 1, defender.npc_id]);
+    }
   }
 
   applyActorStance(db, attacker, intent);
@@ -402,21 +500,25 @@ function buildCombatantProfile(db: Database, row: any): Combatant {
   const character = row.character_id
     ? get(db, 'SELECT * FROM characters WHERE id = ?', [row.character_id]) as any
     : null;
+  const npc = row.npc_id
+    ? get(db, 'SELECT * FROM npcs WHERE id = ?', [row.npc_id]) as any
+    : null;
+  const npcStats = safeJsonObject(npc?.stats);
   return {
     id: row.id,
     name: row.name,
-    charClass: character?.char_class || 'fighter',
-    level: character?.level || 1,
+    charClass: character?.char_class || npc?.char_class || 'fighter',
+    level: character?.level || npc?.level || 1,
     thac0: row.thac0,
     ac: row.ac,
     hp: row.current_hp,
     maxHp: row.max_hp,
-    str: character?.str || 10,
+    str: character?.str || npcStats.str || 10,
     strPercentile: character?.str_percentile || undefined,
-    dex: character?.dex || 10,
+    dex: character?.dex || npcStats.dex || 10,
     weaponSpeed: row.weapon_speed || 5,
-    weaponDamageSm: inferWeaponDamage(row),
-    weaponDamageLg: inferWeaponDamage(row),
+    weaponDamageSm: String(npcStats.damage || inferWeaponDamage(row)),
+    weaponDamageLg: String(npcStats.damage || inferWeaponDamage(row)),
     isLargeTarget: false,
     conditions: safeConditions(row.conditions),
     side: row.side,
@@ -720,6 +822,17 @@ function inferEnemyAction(enemy: any, battlefield: BattlefieldProfile) {
     return battlefield.hazard ? 'drive them into hazard' : 'relentless attack';
   }
   return battlefield.chokepoint ? 'brace and attack' : 'attack';
+}
+
+function inferCompanionAction(companion: any, battlefield: BattlefieldProfile) {
+  const role = String(companion.name || '').toLowerCase();
+  if (/thief|quick|scout|bard/.test(role)) {
+    return battlefield.cover ? 'take cover and aim' : battlefield.hazard ? 'flank and drive them into the hazard' : 'flank and strike';
+  }
+  if (/cleric|warden|druid/.test(role)) {
+    return battlefield.chokepoint ? 'brace and hold' : 'steady attack';
+  }
+  return battlefield.chokepoint ? 'hold doorway and attack' : 'press attack';
 }
 
 function buildBattlefieldProfile(scene: any): BattlefieldProfile {

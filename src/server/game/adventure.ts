@@ -3,6 +3,7 @@ import { get, run } from '../db/helpers.js';
 import { d6, d20, roll, roll2d6 } from '../engine/dice.js';
 import { getCharismaReactionAdj, getReactionResult, getStrengthMods, THIEF_SKILLS_BASE } from '../engine/tables.js';
 import { getCampaignState, noteCampaignEvent, saveCampaignState, shiftFactionStanding, type CampaignSimulationState } from './campaignState.js';
+import { updateCompanionRelationships } from './companions.js';
 
 interface SceneRecord {
   id: string;
@@ -516,6 +517,16 @@ export function resolveRichExploration(params: {
     };
     const xp = reaction === 'friendly' || reaction === 'enthusiastic' ? 15 : 0;
     if (xp > 0) awardXp(db, character, xp);
+    updateCompanionRelationships({
+      db,
+      npcIds: [npcs[0].id],
+      kind: /flirt|comfort|confide|admire/.test(lowered)
+        ? 'romance'
+        : /insult|threaten|argue|accuse/.test(lowered)
+          ? 'friction'
+          : 'parley',
+      note: `${character.name} spoke to ${npcName}: ${action}`,
+    });
     shiftFactionStanding(campaignState, blueprint.faction, {
       reputation: reaction === 'friendly' ? 1 : reaction === 'enthusiastic' ? 2 : reaction === 'hostile' ? -2 : reaction === 'unfriendly' ? -1 : 0,
       heat: reaction === 'hostile' ? 2 : 0,

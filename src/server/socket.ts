@@ -12,6 +12,15 @@ import { describeScene, findMovementTarget } from './game/deterministic.js';
 import { resolveRichExploration } from './game/adventure.js';
 import { createEncounterRecord, describeBattlefield, emitEncounterStart, getActiveEncounter, resolveEncounterAction } from './game/encounters.js';
 import { buildCampaignMapIntel } from './game/mapIntel.js';
+import {
+  getJoinedCompanionIdsInScene,
+  getPartyCompanions,
+  getSceneNpcRoster,
+  resolveCompanionDrama,
+  syncCompanionsToScene,
+  tryRecruitNpc,
+  updateCompanionRelationships,
+} from './game/companions.js';
 
 interface ConnectedPlayer {
   socketId: string;
@@ -76,6 +85,16 @@ export function setupSocketHandlers(
           'SELECT * FROM game_log WHERE campaign_id = ? ORDER BY timestamp DESC LIMIT 50',
           [campaignId]);
         socket.emit('game:state_update', { type: 'recent_logs', payload: recentLogs.reverse() });
+        socket.emit('game:state_update', {
+          type: 'companions_update',
+          payload: getPartyCompanions(db, campaignId),
+        });
+        if (campaign.current_scene_id) {
+          socket.emit('game:state_update', {
+            type: 'scene_npcs_update',
+            payload: getSceneNpcRoster(db, campaignId, campaign.current_scene_id),
+          });
+        }
 
         // If there's an active scene, send it
         if (campaign.current_scene_id) {
@@ -198,9 +217,42 @@ export function setupSocketHandlers(
           io.to(`campaign:${campaignId}`).emit('game:encounter_update', resolution.encounterUpdate);
         }
         io.to(`campaign:${campaignId}`).emit('game:state_update', {
+          type: 'companions_update',
+          payload: getPartyCompanions(db, campaignId),
+        });
+        if (campaign.current_scene_id) {
+          io.to(`campaign:${campaignId}`).emit('game:state_update', {
+            type: 'scene_npcs_update',
+            payload: getSceneNpcRoster(db, campaignId, campaign.current_scene_id),
+          });
+        }
+        io.to(`campaign:${campaignId}`).emit('game:state_update', {
           type: 'map_update',
           payload: buildCampaignMapIntel(db, campaignId),
         });
+        if (resolution.encounterUpdate?.status === 'resolved' && campaign.current_scene_id) {
+          const companionIds = getJoinedCompanionIdsInScene(db, campaignId, campaign.current_scene_id);
+          updateCompanionRelationships({
+            db,
+            npcIds: companionIds,
+            kind: 'victory',
+            note: `${character.name} led the company through a live fight.`,
+          });
+          const dramaNotes = resolveCompanionDrama({
+            db,
+            campaignId,
+            sceneId: campaign.current_scene_id,
+            action: `victory ${action}`,
+            leaderName: character.name,
+          });
+          for (const note of dramaNotes) {
+            io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: note });
+          }
+          io.to(`campaign:${campaignId}`).emit('game:state_update', {
+            type: 'companions_update',
+            payload: getPartyCompanions(db, campaignId),
+          });
+        }
         if (resolution.turnPrompt) {
           io.to(`campaign:${campaignId}`).emit('game:turn_prompt', resolution.turnPrompt);
         }
@@ -233,6 +285,25 @@ export function setupSocketHandlers(
         return;
       }
 
+      const npcsInScene = all(db,
+        'SELECT * FROM npcs WHERE campaign_id = ? AND location_scene_id = ? AND alive = 1',
+        [campaignId, scene.id]) as any[];
+
+      if (/join us|travel with us|come with us|recruit|enlist|hire/.test(action.toLowerCase()) && npcsInScene.length > 0) {
+        const targetNpc = npcsInScene.find((npc) => action.toLowerCase().includes(String(npc.name || '').toLowerCase())) || npcsInScene[0];
+        const recruit = tryRecruitNpc({ db, npcId: targetNpc.id, leaderCha: Number(character.cha || 10), action: action.toLowerCase() });
+        io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: recruit.content });
+        io.to(`campaign:${campaignId}`).emit('game:state_update', {
+          type: 'companions_update',
+          payload: getPartyCompanions(db, campaignId),
+        });
+        io.to(`campaign:${campaignId}`).emit('game:state_update', {
+          type: 'scene_npcs_update',
+          payload: getSceneNpcRoster(db, campaignId, scene.id),
+        });
+        return;
+      }
+
       const movementTarget = findMovementTarget(action, scene);
       if (movementTarget) {
         const nextScene = get(db, 'SELECT * FROM scenes WHERE id = ? AND campaign_id = ?',
@@ -247,6 +318,7 @@ export function setupSocketHandlers(
 
         run(db, 'UPDATE campaigns SET current_scene_id = ? WHERE id = ?', [nextScene.id, campaignId]);
         run(db, 'UPDATE scenes SET visited = 1 WHERE id = ?', [nextScene.id]);
+        syncCompanionsToScene(db, campaignId, nextScene.id);
 
         const npcsInScene = all(db,
           'SELECT name, personality FROM npcs WHERE campaign_id = ? AND location_scene_id = ? AND alive = 1',
@@ -279,12 +351,16 @@ export function setupSocketHandlers(
           type: 'map_update',
           payload: buildCampaignMapIntel(db, campaignId),
         });
+        io.to(`campaign:${campaignId}`).emit('game:state_update', {
+          type: 'companions_update',
+          payload: getPartyCompanions(db, campaignId),
+        });
+        io.to(`campaign:${campaignId}`).emit('game:state_update', {
+          type: 'scene_npcs_update',
+          payload: getSceneNpcRoster(db, campaignId, nextScene.id),
+        });
         return;
       }
-
-      const npcsInScene = all(db,
-        'SELECT * FROM npcs WHERE campaign_id = ? AND location_scene_id = ? AND alive = 1',
-        [campaignId, scene.id]) as any[];
       const outcome = resolveRichExploration({
         db,
         campaignId,
@@ -329,6 +405,39 @@ export function setupSocketHandlers(
         payload: buildCampaignMapIntel(db, campaignId),
       });
 
+      const companionIds = getJoinedCompanionIdsInScene(db, campaignId, scene.id);
+      if (/rest|camp|secure|fallback|mark fallback point|parley|negotiate/.test(action.toLowerCase())) {
+        updateCompanionRelationships({
+          db,
+          npcIds: companionIds,
+          kind: /parley|negotiate/.test(action.toLowerCase()) ? 'parley' : /secure|fallback/.test(action.toLowerCase()) ? 'security' : 'rest',
+          note: `${character.name} shaped the company with: ${action}`,
+        });
+      }
+      if (/force|bash|trap|hazard/.test(action.toLowerCase()) || (outcome.hpDelta || 0) < 0) {
+        updateCompanionRelationships({
+          db,
+          npcIds: companionIds,
+          kind: 'hazard',
+          note: `${character.name} led the company into a dangerous beat: ${action}`,
+        });
+      }
+      const dramaNotes = resolveCompanionDrama({
+        db,
+        campaignId,
+        sceneId: scene.id,
+        action,
+        leaderName: character.name,
+      });
+      io.to(`campaign:${campaignId}`).emit('game:state_update', {
+        type: 'companions_update',
+        payload: getPartyCompanions(db, campaignId),
+      });
+      io.to(`campaign:${campaignId}`).emit('game:state_update', {
+        type: 'scene_npcs_update',
+        payload: getSceneNpcRoster(db, campaignId, scene.id),
+      });
+
       const updatedCharacter = get(db, 'SELECT * FROM characters WHERE id = ?', [character.id]) as any;
       if (updatedCharacter) {
         io.to(`campaign:${campaignId}`).emit('game:state_update', {
@@ -341,6 +450,12 @@ export function setupSocketHandlers(
         content: outcome.content,
         actor: outcome.actor || 'DM',
       });
+      for (const note of dramaNotes) {
+        io.to(`campaign:${campaignId}`).emit('game:narration', {
+          content: note,
+          actor: 'DM',
+        });
+      }
 
       if (outcome.encounter) {
         const activeEncounter = getActiveEncounter(db, campaignId);

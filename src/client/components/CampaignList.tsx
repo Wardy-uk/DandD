@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { CampaignSettingOption } from '../../shared/campaignSettings.js';
+import type { CampaignStartMode } from '../../shared/campaignModes.js';
 
 interface Campaign {
   id: string;
@@ -22,6 +23,8 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [settingOptions, setSettingOptions] = useState<CampaignSettingOption[]>([]);
   const [defaultSettingId, setDefaultSettingId] = useState('');
+  const [startModes, setStartModes] = useState<Array<{ id: CampaignStartMode; name: string; summary: string }>>([]);
+  const [defaultStartMode, setDefaultStartMode] = useState<CampaignStartMode>('solo');
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [showJoin, setShowJoin] = useState(false);
@@ -29,6 +32,7 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
   const [browseLoading, setBrowseLoading] = useState(false);
   const [newName, setNewName] = useState('');
   const [newSettingId, setNewSettingId] = useState('');
+  const [newStartMode, setNewStartMode] = useState<CampaignStartMode>('solo');
 
   const headers = { Authorization: `Bearer ${player.token}`, 'Content-Type': 'application/json' };
 
@@ -57,7 +61,10 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
       if (data.ok) {
         setSettingOptions(data.data.options || []);
         setDefaultSettingId(data.data.defaultSettingId || '');
+        setStartModes(data.data.startModes || []);
+        setDefaultStartMode(data.data.defaultStartMode || 'solo');
         setNewSettingId((current: string) => current || data.data.defaultSettingId || '');
+        setNewStartMode(data.data.defaultStartMode || 'solo');
       }
     } catch (err) {
       console.error('Failed to fetch campaign settings', err);
@@ -70,13 +77,14 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
       const res = await fetch(`${apiUrl}/api/campaigns`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ name: newName, settingId: newSettingId }),
+        body: JSON.stringify({ name: newName, settingId: newSettingId, startMode: newStartMode }),
       });
       const data = await res.json();
       if (data.ok) {
         setShowCreate(false);
         setNewName('');
         setNewSettingId(defaultSettingId || settingOptions[0]?.id || '');
+        setNewStartMode(defaultStartMode || 'solo');
         fetchCampaigns();
       }
     } catch (err) {
@@ -213,6 +221,28 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
                   placeholder="e.g. The Tomb of Horrors"
                   className="w-full px-4 py-2.5 rounded-lg border border-leather/20 bg-parchment-light font-body text-sm focus:outline-none focus:border-leather/50"
                 />
+              </div>
+              <div>
+                <label className="block text-xs font-heading font-semibold text-ink-faint uppercase tracking-wider mb-1">
+                  Starting Mode
+                </label>
+                <div className="grid gap-2">
+                  {startModes.map((mode) => (
+                    <button
+                      key={mode.id}
+                      type="button"
+                      onClick={() => setNewStartMode(mode.id)}
+                      className={`rounded-lg border px-3 py-3 text-left transition-colors ${
+                        newStartMode === mode.id
+                          ? 'border-leather bg-leather/10'
+                          : 'border-leather/10 bg-parchment hover:border-leather/30 hover:bg-parchment-light'
+                      }`}
+                    >
+                      <div className="font-heading font-semibold text-sm text-leather-dark">{mode.name}</div>
+                      <div className="mt-1 text-xs font-body italic text-ink-faint">{mode.summary}</div>
+                    </button>
+                  ))}
+                </div>
               </div>
               <div>
                 <label className="block text-xs font-heading font-semibold text-ink-faint uppercase tracking-wider mb-1">
