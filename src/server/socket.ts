@@ -14,6 +14,13 @@ import { getCampaignState, getCampaignStateSnapshot } from './game/campaignState
 import { createEncounterRecord, describeBattlefield, emitEncounterStart, getActiveEncounter, resolveEncounterAction } from './game/encounters.js';
 import { buildCampaignMapIntel } from './game/mapIntel.js';
 import {
+  checkRivalPresence,
+  getAllRivals,
+  resolveRivalClash,
+  seedRivalPartyIfNeeded,
+  tickRivals,
+} from './game/rivals.js';
+import {
   checkCompanionRefusals,
   checkJealousyTriggers,
   checkRecruitmentFriction,
@@ -390,6 +397,35 @@ export function setupSocketHandlers(
         return;
       }
 
+      // ── Rival clash actions (fight/parley/intimidate) ─────────────────
+      const explorationTurnNow = Number((get(db, 'SELECT exploration_turn FROM campaigns WHERE id = ?', [campaignId]) as any)?.exploration_turn || 0);
+      const sceneRivals = getAllRivals(db, campaignId).filter(
+        (r) => r.status === 'active' && r.currentSceneId === scene.id,
+      );
+      if (sceneRivals.length > 0) {
+        const clashPattern = /fight|attack|drive off|confront|intimidate|parley|talk to them|ignore them|leave them alone/i;
+        if (clashPattern.test(action)) {
+          const rival = sceneRivals[0];
+          const partyMods = getCompanionPartyModifiers(db, campaignId, scene.id);
+          const partyStrength = 5 + Math.floor(partyMods.morale / 3) + partyMods.vanguardBonus;
+          const clashType: 'fight' | 'parley' | 'intimidate' | 'ignore' =
+            /fight|attack|drive off|confront/.test(action.toLowerCase()) ? 'fight'
+            : /parley|talk to them/.test(action.toLowerCase()) ? 'parley'
+            : /intimidate/.test(action.toLowerCase()) ? 'intimidate'
+            : 'ignore';
+          const clashResult = resolveRivalClash({
+            db, campaignId, rivalId: rival.id, partyStrength, leaderName: character.name, clashType,
+          });
+          for (const note of clashResult.notes) {
+            run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+              [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', note]);
+            io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: note });
+          }
+          emitCampaignState(io, db, campaignId);
+          return;
+        }
+      }
+
       const movementTarget = findMovementTarget(action, scene);
       if (movementTarget) {
         const nextScene = get(db, 'SELECT * FROM scenes WHERE id = ? AND campaign_id = ?',
@@ -405,6 +441,29 @@ export function setupSocketHandlers(
         run(db, 'UPDATE campaigns SET current_scene_id = ? WHERE id = ?', [nextScene.id, campaignId]);
         run(db, 'UPDATE scenes SET visited = 1 WHERE id = ?', [nextScene.id]);
         syncCompanionsToScene(db, campaignId, nextScene.id);
+
+        // ── Rival tick: advance all active rivals when party moves ──
+        const explorationTurn = Number((get(db, 'SELECT exploration_turn FROM campaigns WHERE id = ?', [campaignId]) as any)?.exploration_turn || 0);
+        const campaignRow = get(db, 'SELECT danger_level FROM campaigns WHERE id = ?', [campaignId]) as any;
+        const dangerLevel = Number(campaignRow?.danger_level || 2);
+
+        const rivalTickNotes = tickRivals({ db, campaignId, currentSceneId: nextScene.id, explorationTurn });
+        for (const note of rivalTickNotes) {
+          run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+            [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', note]);
+          io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: note });
+        }
+
+        // Spawn a new rival if conditions are right
+        seedRivalPartyIfNeeded({ db, campaignId, currentSceneId: nextScene.id, explorationTurn, dangerLevel });
+
+        // Check rival presence in the new scene
+        const rivalPresence = checkRivalPresence({ db, campaignId, sceneId: nextScene.id, explorationTurn });
+        for (const note of rivalPresence.notes) {
+          run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+            [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', note]);
+          io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: note });
+        }
 
         const npcsInScene = all(db,
           'SELECT name, personality FROM npcs WHERE campaign_id = ? AND location_scene_id = ? AND alive = 1',

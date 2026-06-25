@@ -333,6 +333,17 @@ function runMigrations() {
     )
   `);
 
+  // Rival parties table
+  db.run(`
+    CREATE TABLE IF NOT EXISTS rival_parties (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL,
+      state_json TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  try { db.run('CREATE INDEX IF NOT EXISTS idx_rivals_campaign ON rival_parties(campaign_id)'); } catch(e) {}
+
   // Indexes
   const indexes = [
     'CREATE INDEX IF NOT EXISTS idx_characters_campaign ON characters(campaign_id)',
