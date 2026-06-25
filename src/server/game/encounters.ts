@@ -198,6 +198,15 @@ export function getActiveEncounter(db: Database, campaignId: string) {
     [campaignId]) as any;
 }
 
+export function describeBattlefield(scene: any) {
+  const battlefield = buildBattlefieldProfile(scene);
+  return {
+    ...battlefield,
+    summary: describeBattlefieldOpening(battlefield),
+    tacticalAdvice: buildTacticalAdvice(battlefield),
+  };
+}
+
 export function resolveEncounterAction(params: {
   db: Database;
   campaignId: string;
@@ -732,6 +741,17 @@ function buildBattlefieldProfile(scene: any): BattlefieldProfile {
     footing,
     pressure: blueprint?.pressure || 'The space itself keeps pushing decisions toward risk.',
   };
+}
+
+function buildTacticalAdvice(battlefield: BattlefieldProfile): string[] {
+  const advice: string[] = [];
+  if (battlefield.chokepoint) advice.push('Holding the line or forcing a doorway matters here.');
+  if (battlefield.cover) advice.push('Cover is worth claiming before trading ranged attacks.');
+  if (battlefield.hazard) advice.push(`Shoves and bad footing can spill someone into ${battlefield.hazard}.`);
+  if (battlefield.visibility !== 'clear') advice.push('Aimed shots and careful positioning beat reckless speed.');
+  if (battlefield.footing !== 'stable') advice.push('Uneven ground makes movement and missile work less reliable.');
+  if (advice.length === 0) advice.push('This is a cleaner battlefield; tempo and target choice matter most.');
+  return advice;
 }
 
 function describeBattlefieldOpening(battlefield: BattlefieldProfile) {

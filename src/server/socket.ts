@@ -10,7 +10,7 @@ import type { ServerToClientEvents, ClientToServerEvents } from '../shared/types
 import { get, all, run } from './db/helpers.js';
 import { describeScene, findMovementTarget } from './game/deterministic.js';
 import { resolveRichExploration } from './game/adventure.js';
-import { createEncounterRecord, emitEncounterStart, getActiveEncounter, resolveEncounterAction } from './game/encounters.js';
+import { createEncounterRecord, describeBattlefield, emitEncounterStart, getActiveEncounter, resolveEncounterAction } from './game/encounters.js';
 
 interface ConnectedPlayer {
   socketId: string;
@@ -96,6 +96,13 @@ export function setupSocketHandlers(
                 npcs: npcsInScene,
                 party: characters,
               }),
+            });
+            socket.emit('game:state_update', {
+              type: 'battlefield_update',
+              payload: {
+                sceneId: scene.id,
+                profile: describeBattlefield(scene),
+              },
             });
           }
         }
@@ -237,6 +244,13 @@ export function setupSocketHandlers(
           scene: { ...nextScene, connections },
           description,
         });
+        io.to(`campaign:${campaignId}`).emit('game:state_update', {
+          type: 'battlefield_update',
+          payload: {
+            sceneId: nextScene.id,
+            profile: describeBattlefield(nextScene),
+          },
+        });
         return;
       }
 
@@ -275,6 +289,13 @@ export function setupSocketHandlers(
           },
         });
       }
+      io.to(`campaign:${campaignId}`).emit('game:state_update', {
+        type: 'battlefield_update',
+        payload: {
+          sceneId: scene.id,
+          profile: describeBattlefield(scene),
+        },
+      });
 
       const updatedCharacter = get(db, 'SELECT * FROM characters WHERE id = ?', [character.id]) as any;
       if (updatedCharacter) {
