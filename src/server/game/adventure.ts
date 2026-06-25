@@ -895,7 +895,7 @@ export function resolveRichExploration(params: {
 
   // ── LOOK AROUND / SURVEY ────────────────────────────────────────────
   // Matches any general observation action — never rejected, always narrated.
-  if (/^look$|^l$|look around|look about|survey|scan the room|scan the area|examine room|examine the room|examine the area|study the room|study the area|take in the room|take a look|peer around|observe|take stock of|glance around|sweep the room|assess the room|case the room|get a read|read the room|size.up the room/i.test(lowered)) {
+  if (/^look$|^l$|look around|look about|survey|scan the room|scan the area|examine room|examine the room|examine the area|study the room|study the area|take in the room|take a look|peer around|observe|take stock of|glance around|sweep the room|assess the room|case the room|get a read|read the room|size.up the room|where am i|where are we|what is this place|what is this room|what do i see|what can i see|what is here|describe this|describe the room|describe where i am|what is around|tell me about this place|what kind of place|what sort of place/i.test(lowered)) {
     const lines: string[] = [];
 
     // Light condition
