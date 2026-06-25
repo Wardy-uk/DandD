@@ -10,7 +10,7 @@ import type { ServerToClientEvents, ClientToServerEvents } from '../shared/types
 import { get, all, run } from './db/helpers.js';
 import { describeScene, findMovementTarget } from './game/deterministic.js';
 import { resolveRichExploration } from './game/adventure.js';
-import { getCampaignState, getCampaignStateSnapshot } from './game/campaignState.js';
+import { addLootWeight, applyAttritionDamage, getCampaignState, getCampaignStateSnapshot, getLightModifiers, lightTorch, makeCamp, saveCampaignState, tickDelveConditions } from './game/campaignState.js';
 import { createEncounterRecord, describeBattlefield, emitEncounterStart, getActiveEncounter, resolveEncounterAction } from './game/encounters.js';
 import { buildCampaignMapIntel } from './game/mapIntel.js';
 import {
@@ -518,10 +518,12 @@ export function setupSocketHandlers(
       });
 
       if (!outcome) {
-        io.to(`campaign:${campaignId}`).emit('game:narration', {
-          content: 'That action needs a little more specificity before the engine can resolve it. Try naming what you inspect, force, search, or attempt to negotiate with.',
-          actor: 'DM',
-        });
+        // Unrecognised action — give a helpful nudge but NEVER freeze the game.
+        const fallbackMsg = 'The party pauses, uncertain. Try something more specific — inspect an object, listen, search the room, or move to an exit.';
+        run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+          [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', fallbackMsg]);
+        io.to(`campaign:${campaignId}`).emit('game:narration', { content: fallbackMsg, actor: 'DM' });
+        emitCampaignState(io, db, campaignId);
         return;
       }
 
@@ -554,7 +556,77 @@ export function setupSocketHandlers(
 
       const companionIds = getJoinedCompanionIdsInScene(db, campaignId, scene.id);
 
-      // ── Risky decision accumulation ─────────────────────────────────
+      // ── Delve pressure tick ───────────────────────────────────────────
+      try {
+      const delveState = getCampaignState(db, campaignId);
+      const charInventory = typeof character.inventory === 'string'
+        ? JSON.parse(character.inventory || '[]') : (character.inventory || []);
+      const torchCount = charInventory.filter((i: any) => i.item === 'Torch').reduce((n: number, i: any) => n + Number(i.quantity || 0), 0);
+      const rationCount = charInventory.filter((i: any) => i.item === 'Ration').reduce((n: number, i: any) => n + Number(i.quantity || 0), 0);
+      const campTurn = Number((get(db, 'SELECT exploration_turn FROM campaigns WHERE id = ?', [campaignId]) as any)?.exploration_turn || 0);
+
+      const delveNotes = tickDelveConditions({
+        state: delveState,
+        explorationTurn: campTurn,
+        torchesCarried: torchCount,
+        rationsCarried: rationCount,
+        leaderName: character.name,
+      });
+
+      // Handle "light a torch" action
+      if (/light a torch|light the torch/.test(action.toLowerCase())) {
+        const torchNote = lightTorch(delveState, campTurn, torchCount);
+        delveNotes.push(torchNote);
+      }
+
+      // Handle camp/rest resolution
+      if (/^rest$|make camp|set camp|camp here|secure and rest/.test(action.toLowerCase())) {
+        const campNotes = makeCamp({
+          state: delveState,
+          explorationTurn: campTurn,
+          rationsAvailable: rationCount,
+          sceneLight: scene.light_level || 'normal',
+          fortified: /secure|barricade|bar the|fortified/.test(action.toLowerCase()),
+          leaderName: character.name,
+        });
+        delveNotes.push(...campNotes);
+      }
+
+      // Apply any accumulated attrition to the character HP
+      const attritionDelta = applyAttritionDamage(delveState);
+      if (attritionDelta < 0 && character.id) {
+        run(db, 'UPDATE characters SET hp = MAX(1, hp + ?) WHERE id = ?', [attritionDelta, character.id]);
+        const updatedChar = get(db, 'SELECT * FROM characters WHERE id = ?', [character.id]) as any;
+        if (updatedChar) {
+          io.to(`campaign:${campaignId}`).emit('game:state_update', { type: 'character_update', payload: updatedChar });
+        }
+      }
+
+      saveCampaignState(db, campaignId, delveState);
+
+      for (const note of delveNotes) {
+        run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+          [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', note]);
+        io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: note });
+      }
+
+      // Apply companion tension from supply shortages
+      if (delveState.delve.tensionFromSupply > 0) {
+        const companionTensionIds = getJoinedCompanionIdsInScene(db, campaignId, scene.id);
+        if (companionTensionIds.length > 0) {
+          updateCompanionRelationships({
+            db,
+            npcIds: companionTensionIds,
+            kind: 'hazard',
+            note: 'Supply shortages and poor conditions are grinding on the company.',
+          });
+        }
+      }
+      } catch (delveErr) {
+        console.error('[delve tick error]', delveErr);
+      }
+
+      // ── Risky decision accumulation ───────────────────────────────────
       const riskyNotes = recordRiskyDecision({
         db, campaignId, sceneId: scene.id, action, leaderName: character.name,
       });

@@ -190,32 +190,33 @@ export function saveSceneState(db: Database, campaignId: string, sceneId: string
 }
 
 export function buildSceneBlueprint(scene: SceneRecord): SceneBlueprint {
-  const seed = hash(scene.id);
+  // Use >>> (unsigned right-shift) so negative seeds never produce negative indices.
+  const s = hash(scene.id) >>> 0;
   return {
-    ambience: ambienceTable[seed % ambienceTable.length],
-    clue: clueTable[(seed >> 2) % clueTable.length],
+    ambience: ambienceTable[s % ambienceTable.length],
+    clue: clueTable[(s >>> 2) % clueTable.length],
     stash: {
-      item: stashItems[(seed >> 4) % stashItems.length],
-      gold: 8 + (seed % 5) * 7,
-      xp: 25 + (seed % 4) * 20,
+      item: stashItems[(s >>> 4) % stashItems.length],
+      gold: 8 + (s % 5) * 7,
+      xp: 25 + (s % 4) * 20,
     },
     trap: {
-      kind: trapKinds[(seed >> 6) % trapKinds.length],
-      damage: ['1d4', '1d6', '1d6+1', '2d4'][(seed >> 8) % 4],
-      dc: 11 + (seed % 5),
+      kind: trapKinds[(s >>> 6) % trapKinds.length],
+      damage: ['1d4', '1d6', '1d6+1', '2d4'][(s >>> 8) % 4],
+      dc: 11 + (s % 5),
     },
-    tracks: tracksTable[(seed >> 12) % tracksTable.length],
-    obstacle: obstacleTable[(seed >> 14) % obstacleTable.length],
-    hiddenExitDirection: directions[(seed >> 16) % directions.length],
+    tracks: tracksTable[(s >>> 12) % tracksTable.length],
+    obstacle: obstacleTable[(s >>> 14) % obstacleTable.length],
+    hiddenExitDirection: directions[(s >>> 16) % directions.length],
     hiddenExitDescription: 'revealed by a draft and a faint seam in the stonework',
-    pressure: pressureTable[(seed >> 18) % pressureTable.length],
+    pressure: pressureTable[(s >>> 18) % pressureTable.length],
     lock: {
-      kind: lockTable[(seed >> 20) % lockTable.length],
-      dc: 12 + ((seed >> 22) % 5),
+      kind: lockTable[(s >>> 20) % lockTable.length],
+      dc: 12 + ((s >>> 22) % 5),
     },
-    faction: factionKeys[(seed >> 24) % factionKeys.length],
-    encounterTheme: encounterThemes[(seed >> 26) % encounterThemes.length],
-    salvage: salvageTable[(seed >> 28) % salvageTable.length],
+    faction: factionKeys[(s >>> 24) % factionKeys.length],
+    encounterTheme: encounterThemes[(s >>> 26) % encounterThemes.length],
+    salvage: salvageTable[(s >>> 28) % salvageTable.length],
   };
 }
 
@@ -831,6 +832,74 @@ export function resolveRichExploration(params: {
       explorationTurnAdvanced: turn.turn,
     }, turn, campaignState, blueprint, action);
   }
+
+
+  // ── LOOK AROUND / SURVEY ────────────────────────────────────────────
+  // Matches any general observation action — never rejected, always narrated.
+  if (/^look$|^l$|look around|look about|survey|scan the room|scan the area|examine room|examine the room|examine the area|study the room|study the area|take in the room|take a look|peer around|observe|take stock of|glance around|sweep the room|assess the room|case the room|get a read|read the room|size.up the room/i.test(lowered)) {
+    const lines: string[] = [];
+
+    // Light condition
+    const lightLevel = campaignState.delve?.lightLevel;
+    if (lightLevel === 'dark') {
+      lines.push(`Torches out. You can barely see your hand.`);
+    } else if (lightLevel === 'dim') {
+      lines.push(`Your torch is low. The far end of the room is guesswork.`);
+    }
+
+    // Lead with ambience
+    lines.push(blueprint.ambience);
+
+    // Atmospheric details — pick by perception roll, not everything at once
+    const atmosphericDetails: string[] = [];
+    if (!state.clueFound && blueprint.clue) {
+      atmosphericDetails.push(blueprint.clue);
+    }
+    if (blueprint.tracks) {
+      atmosphericDetails.push(`The floor: ${blueprint.tracks}.`);
+    }
+    if (!state.knownHazard && blueprint.pressure) {
+      atmosphericDetails.push(blueprint.pressure);
+    }
+
+    const perceptionRoll = d20() + Math.floor((character.wis - 10) / 2) + companionMods.watchBonus;
+    const detailCount = perceptionRoll >= 15 ? Math.min(2, atmosphericDetails.length)
+                      : perceptionRoll >= 8  ? Math.min(1, atmosphericDetails.length)
+                      : 0;
+    for (let i = 0; i < detailCount; i++) {
+      lines.push(atmosphericDetails[i]);
+    }
+
+    // Exits — blunt
+    const visibleConnections = connections.filter((c: any) => !c.hidden);
+    if (visibleConnections.length === 0) {
+      lines.push(`No exits are obvious.`);
+    } else if (visibleConnections.length === 1) {
+      lines.push(`One way out: ${visibleConnections[0].direction || 'the passage ahead'}.`);
+    } else {
+      const dirs = visibleConnections.map((c: any) => c.direction || 'a passage').join(', ');
+      lines.push(`${visibleConnections.length} ways forward: ${dirs}.`);
+    }
+
+    // NPCs
+    if (npcs.length > 0) {
+      const npcNames = npcs.map((n: any) => n.name).join(' and ');
+      lines.push(`${npcNames} ${npcs.length === 1 ? 'is' : 'are'} here.`);
+    }
+
+    // Known treasure reminder
+    if (state.knownTreasure) {
+      lines.push(`The valuables you found earlier are still here.`);
+    }
+
+    saveSceneState(db, campaignId, scene.id, state);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: lines.filter(Boolean).join(' '),
+      explorationTurnAdvanced: false,
+    }, { turn: 0, pulse: null } as any, campaignState, blueprint, action);
+  }
+
 
   return null;
 }

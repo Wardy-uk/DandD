@@ -49,20 +49,52 @@ export interface DeterministicActionResult {
   updatedConnections?: SceneConnection[];
 }
 
+// Light phrases — short, present-tense, no passive voice
 const lightText: Record<string, string> = {
-  dark: 'Darkness presses in at the edges, forcing every shape into uncertainty.',
-  dim: 'The light is poor, leaving corners in a doubtful haze.',
-  normal: 'The light is serviceable, enough to read the room without ease.',
-  bright: 'The area is clearly lit, with little room for shadows to hide.',
+  dark:   "Your torch is out. Shapes blur past arm's reach.",
+  dim:    "Your torch reaches maybe ten feet. Beyond that, guess.",
+  normal: 'The light holds. You can read the room.',
+  bright: "Well-lit. Whatever's here, you'll see it.",
 };
 
-const terrainText: Record<string, string> = {
-  indoor: 'Stone, timber, and worked surfaces suggest careful hands once shaped this place.',
-  dungeon: 'The air carries the still, enclosed weight of the underworld.',
-  cave: 'Rough natural stone and damp mineral scents mark it as a living cavern.',
-  forest: 'Roots, loam, and leaf-shadow make every step feel watched.',
-  town: 'Signs of regular use and human traffic are everywhere.',
-  ruins: 'Age and neglect cling to every broken line and fallen edge.',
+// Terrain openers — set physical mood in one sentence
+const terrainOpeners: Record<string, string[]> = {
+  indoor: [
+    'The floor is stone, worn smooth in patches.',
+    'Worked stone. Someone built this to last.',
+    'Old plaster, cracked. Torch smoke has blackened the ceiling.',
+    'The walls are close and the air is stale.',
+  ],
+  dungeon: [
+    'The air down here is cold and very still.',
+    'Stone and old dark. The usual.',
+    'Every sound comes back a little wrong.',
+    'The ceiling is low. Lower than it looks.',
+  ],
+  cave: [
+    'Natural rock, unworked. Water has been through here.',
+    'The floor is uneven. Watch your footing.',
+    'Mineral smell, damp. The walls glisten.',
+    'This place predates anything human.',
+  ],
+  forest: [
+    'Roots everywhere. The ground shifts underfoot.',
+    "Trees close enough that you can't see far in any direction.",
+    'Something moves in the canopy. Wind, probably.',
+    'The light comes through in broken patches.',
+  ],
+  town: [
+    "Signs of recent use — ash in a hearth, a mug still on the table.",
+    'Built for people. Still feels that way.',
+    'Narrow streets, close buildings. A dozen places to disappear.',
+    'The kind of place that gets loud at night.',
+  ],
+  ruins: [
+    'Half the ceiling is gone. Sky where stone should be.',
+    "Whatever this was, it's been abandoned long enough to forget.",
+    'Rubble. Old mortar. Plants reclaiming the floor.',
+    'The walls still stand, barely.',
+  ],
 };
 
 function parseConnections(scene: SceneRecord): SceneConnection[] {
@@ -93,20 +125,44 @@ export function describeScene(params: {
     return scene.ai_description;
   }
 
-  const light = lightText[scene.light_level || 'normal'] || 'The lighting gives the place a distinct mood.';
-  const terrain = terrainText[scene.terrain_type || 'indoor'] || 'The surroundings have a character of their own.';
-  const brief = scene.brief?.trim()
-    ? scene.brief.trim()
-    : 'There is enough here to suggest danger, opportunity, or both.';
-  const npcText = npcs.length > 0
-    ? `You notice ${joinList(npcs.map((n) => `${n.name}${n.personality ? `, ${n.personality}` : ''}`))} here.`
-    : 'No other souls immediately reveal themselves.';
-  const exitText = connections.length > 0
-    ? `Obvious ways onward lead ${joinList(connections.map((c) => c.direction))}.`
-    : 'No obvious exit presents itself at first glance.';
-  const depthText = describeSceneDepth(scene);
+  // Seed for picking variants without randomness (same scene = same description)
+  const s = scene.id.split('').reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7);
 
-  return `${scene.name} lies before you. ${brief} ${light} ${terrain} ${depthText} ${npcText} ${exitText}`;
+  const terrainKey = (scene.terrain_type || 'indoor') as keyof typeof terrainOpeners;
+  const openers = terrainOpeners[terrainKey] ?? terrainOpeners.indoor;
+  const opener = openers[s % openers.length];
+  const light = lightText[scene.light_level || 'normal'] ?? 'The light is workable.';
+
+  // Brief — skip placeholder text from campaign creation
+  const rawBrief = scene.brief?.trim() ?? '';
+  const isPlaceholder = !rawBrief
+    || rawBrief.toLowerCase().includes('dm will describe')
+    || rawBrief.toLowerCase().includes('adventure begins here');
+  const briefSentence = isPlaceholder ? '' : rawBrief;
+
+  // Depth detail from blueprint (ambience + pressure line)
+  const depth = describeSceneDepth(scene);
+
+  // Exits — one blunt sentence
+  let exitLine: string;
+  if (connections.length === 0) {
+    exitLine = 'No exits are obvious from here.';
+  } else if (connections.length === 1) {
+    exitLine = `One way out: ${connections[0].direction}.`;
+  } else {
+    exitLine = `You count ${connections.length} ways forward — ${connections.map((c) => c.direction).join(', ')}.`;
+  }
+
+  // NPCs — name them, don't catalogue them
+  let npcLine = '';
+  if (npcs.length === 1) {
+    npcLine = `${npcs[0].name} is here.${npcs[0].personality ? ` ${npcs[0].personality.charAt(0).toUpperCase() + npcs[0].personality.slice(1)}.` : ''}`;
+  } else if (npcs.length > 1) {
+    npcLine = `${joinList(npcs.map((n) => n.name))} are here.`;
+  }
+
+  const parts = [opener, light, briefSentence, depth, npcLine, exitLine].filter(Boolean);
+  return parts.join(' ');
 }
 
 export function findMovementTarget(action: string, scene: SceneRecord): SceneConnection | null {

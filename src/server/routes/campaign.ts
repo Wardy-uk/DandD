@@ -191,7 +191,7 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
     // Create starting scene
     run(db,
       'INSERT INTO scenes (id, campaign_id, name, brief) VALUES (?, ?, ?, ?)',
-      [startSceneId, id, 'Starting Location', 'The adventure begins here. The DM will describe this location.']);
+      [startSceneId, id, 'Starting Location', '']);
 
     res.json({ ok: true, data: { id, name, setting: selectedSetting.name, settingId: selectedSetting.id, startMode: chosenStartMode } });
   });
