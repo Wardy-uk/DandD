@@ -65,6 +65,7 @@ export default function AdminPanel({ apiUrl, player }: Props) {
   const [resetPassword, setResetPassword] = useState('');
   const [savingSettings, setSavingSettings] = useState(false);
   const [runningGrowthId, setRunningGrowthId] = useState<string | null>(null);
+  const [runningNightlyId, setRunningNightlyId] = useState<string | null>(null);
 
   const headers = { Authorization: `Bearer ${player.token}`, 'Content-Type': 'application/json' };
 
@@ -265,6 +266,35 @@ export default function AdminPanel({ apiUrl, player }: Props) {
       showMessage('Growth run failed');
     } finally {
       setRunningGrowthId(null);
+    }
+  };
+
+  const runNightly = async (campaignId: string) => {
+    setRunningNightlyId(campaignId);
+    try {
+      const res = await fetch(`${apiUrl}/api/admin/campaigns/${campaignId}/nightly/run`, {
+        method: 'POST',
+        headers,
+      });
+      const data = await res.json();
+      if (data.ok) {
+        const r = data.data;
+        const parts: string[] = [];
+        if (r.factionChanges?.length)  parts.push(`${r.factionChanges.length} faction shift${r.factionChanges.length > 1 ? 's' : ''}`);
+        if (r.rivalUpdates?.length)    parts.push(`${r.rivalUpdates.length} rival move${r.rivalUpdates.length > 1 ? 's' : ''}`);
+        if (r.companionBeats?.length)  parts.push(`${r.companionBeats.length} companion beat${r.companionBeats.length > 1 ? 's' : ''}`);
+        if (r.worldEvents?.length)     parts.push(`${r.worldEvents.length} world event${r.worldEvents.length > 1 ? 's' : ''}`);
+        if (r.rumourCount)             parts.push(`${r.rumourCount} rumour${r.rumourCount > 1 ? 's' : ''}`);
+        if (r.loreReveal)              parts.push('lore reveal');
+        showMessage(parts.length ? `Nightly: ${parts.join(', ')}` : 'Nightly growth done — nothing triggered');
+        await loadAll();
+      } else {
+        showMessage(data.error || 'Nightly growth failed');
+      }
+    } catch {
+      showMessage('Nightly growth failed');
+    } finally {
+      setRunningNightlyId(null);
     }
   };
 
@@ -510,17 +540,28 @@ export default function AdminPanel({ apiUrl, player }: Props) {
                     </div>
                   </div>
 
-                  <div className="mt-4 flex flex-col gap-3 border-t border-leather/10 pt-4 md:flex-row md:items-center md:justify-between">
+                  <div className="mt-4 flex flex-col gap-3 border-t border-leather/10 pt-4">
                     <div className="text-xs font-body text-ink-faint">
-                      Last check: {formatDate(campaign.last_growth_check_at)} · Last build: {formatDate(campaign.last_growth_build_at)}
+                      Content: last check {formatDate(campaign.last_growth_check_at)} · last build {formatDate(campaign.last_growth_build_at)}
                     </div>
-                    <button
-                      onClick={() => void runGrowth(campaign.id)}
-                      disabled={runningGrowthId === campaign.id}
-                      className="rounded-lg border border-leather/20 px-4 py-2 text-xs font-heading font-semibold text-leather hover:bg-leather/5 disabled:opacity-50"
-                    >
-                      {runningGrowthId === campaign.id ? 'Running growth...' : 'Run Growth Now'}
-                    </button>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => void runGrowth(campaign.id)}
+                        disabled={runningGrowthId === campaign.id || runningNightlyId === campaign.id}
+                        className="rounded-lg border border-leather/20 px-4 py-2 text-xs font-heading font-semibold text-leather hover:bg-leather/5 disabled:opacity-50"
+                        title="Add scenes, NPCs, and lore entries to buffer the next session"
+                      >
+                        {runningGrowthId === campaign.id ? 'Building content...' : 'Run Content Growth'}
+                      </button>
+                      <button
+                        onClick={() => void runNightly(campaign.id)}
+                        disabled={runningNightlyId === campaign.id || runningGrowthId === campaign.id}
+                        className="rounded-lg border border-amber-600/30 bg-amber-50/30 px-4 py-2 text-xs font-heading font-semibold text-amber-800 hover:bg-amber-50/60 disabled:opacity-50"
+                        title="Simulate overnight world changes: faction drift, rival movement, rumours, world events"
+                      >
+                        {runningNightlyId === campaign.id ? 'Running nightly...' : 'Run Nightly Growth'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}

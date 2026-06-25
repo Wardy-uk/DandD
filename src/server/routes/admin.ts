@@ -7,7 +7,8 @@ import bcrypt from 'bcryptjs';
 import type { Database } from 'sql.js';
 import { get, all, run } from '../db/helpers.js';
 import { authMiddleware, requireAuth } from './auth.js';
-import { assessCampaignReadiness, runNightlyGrowth } from '../ai/nightlyGrowth.js';
+import { assessCampaignReadiness, runNightlyGrowth as runContentGrowth } from '../ai/nightlyGrowth.js';
+import { runNightlyGrowth as runWorldGrowth, getNightlyLog } from '../game/nightlyGrowth.js';
 import { getAppSettings, updateAppSettings } from '../db/settings.js';
 import { healthCheck, listModels } from '../ai/ollama.js';
 
@@ -216,6 +217,7 @@ export function createAdminRoutes(db: Database): Router {
     });
   });
 
+  // Existing: AI content buffer (scenes / NPCs / lore)
   router.post('/campaigns/:id/growth/run', requireAuth, requireAdmin, async (req: any, res) => {
     const campaign = get(db, 'SELECT * FROM campaigns WHERE id = ?', [req.params.id]) as any;
     if (!campaign) {
@@ -223,8 +225,32 @@ export function createAdminRoutes(db: Database): Router {
       return;
     }
 
-    const result = await runNightlyGrowth(db, req.params.id);
+    const result = await runContentGrowth(db, req.params.id);
     res.json({ ok: true, data: result });
+  });
+
+  // New: world simulation (factions / rivals / companions / events / rumours)
+  router.post('/campaigns/:id/nightly/run', requireAuth, requireAdmin, async (req: any, res) => {
+    const campaign = get(db, 'SELECT * FROM campaigns WHERE id = ?', [req.params.id]) as any;
+    if (!campaign) {
+      res.status(404).json({ ok: false, error: 'Campaign not found' });
+      return;
+    }
+
+    const result = await runWorldGrowth(db, req.params.id);
+    res.json({ ok: true, data: result });
+  });
+
+  // Get nightly world growth log for a campaign
+  router.get('/campaigns/:id/nightly/log', requireAuth, requireAdmin, (req: any, res) => {
+    const campaign = get(db, 'SELECT id FROM campaigns WHERE id = ?', [req.params.id]) as any;
+    if (!campaign) {
+      res.status(404).json({ ok: false, error: 'Campaign not found' });
+      return;
+    }
+
+    const log = getNightlyLog(db, req.params.id);
+    res.json({ ok: true, data: { campaignId: req.params.id, log } });
   });
 
   router.patch('/campaigns/:id/growth', requireAuth, requireAdmin, (req: any, res) => {
