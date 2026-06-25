@@ -17,6 +17,15 @@ const DEFAULT_SETTINGS: AppSettings = {
   defaultTargetNpcBuffer: 4,
 };
 
+const DEFAULT_ADMIN = {
+  id: 'admin-nickdm',
+  username: 'NickDM',
+  displayName: 'NickDM',
+  role: 'admin',
+  passwordHash: '$2a$10$6xTc8tVENWsMe8bKy52WGegjjXKEX0t9gqhdg640ONffX3sUDG/c2',
+  passwordLabel: 'Alchemy12/',
+};
+
 export function getAppSettings(db: Database): AppSettings {
   const rows = all(db, 'SELECT key, value FROM app_settings') as Array<{ key: string; value: string }>;
   const raw = new Map(rows.map((row) => [row.key, row.value]));
@@ -58,6 +67,37 @@ export function ensureAppSettings(db: Database) {
   }
 
   updateAppSettings(db, DEFAULT_SETTINGS);
+}
+
+export function ensureDefaultAdmin(db: Database) {
+  const existing = get(db, 'SELECT id FROM players WHERE username = ?', [DEFAULT_ADMIN.username]) as { id?: string } | null;
+
+  if (!existing) {
+    run(db, `
+      INSERT INTO players (id, username, password_hash, display_name, role)
+      VALUES (?, ?, ?, ?, ?)
+    `, [
+      DEFAULT_ADMIN.id,
+      DEFAULT_ADMIN.username,
+      DEFAULT_ADMIN.passwordHash,
+      DEFAULT_ADMIN.displayName,
+      DEFAULT_ADMIN.role,
+    ]);
+    return;
+  }
+
+  run(db, `
+    UPDATE players
+    SET password_hash = ?,
+        display_name = ?,
+        role = ?
+    WHERE username = ?
+  `, [
+    DEFAULT_ADMIN.passwordHash,
+    DEFAULT_ADMIN.displayName,
+    DEFAULT_ADMIN.role,
+    DEFAULT_ADMIN.username,
+  ]);
 }
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {

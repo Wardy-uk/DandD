@@ -7,7 +7,7 @@ import initSqlJs, { type Database } from 'sql.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { ensureAppSettings } from './settings.js';
+import { ensureAppSettings, ensureDefaultAdmin } from './settings.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = path.resolve(__dirname, '../../../quest.db');
@@ -337,6 +337,7 @@ function runMigrations() {
   }
 
   ensureAppSettings(db);
+  ensureDefaultAdmin(db);
 
   console.log('[DB] Migrations complete');
 }
