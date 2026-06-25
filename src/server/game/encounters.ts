@@ -55,6 +55,16 @@ interface BattlefieldProfile {
   pressure: string;
 }
 
+interface EncounterSetupProfile {
+  partySurpriseModifier: number;
+  enemySurpriseModifier: number;
+  partyInitiativeShift: number;
+  enemyInitiativeShift: number;
+  partyConditions: string[];
+  enemyConditions: string[];
+  openingNotes: string[];
+}
+
 interface TacticalIntent {
   ranged: boolean;
   defensive: boolean;
@@ -83,6 +93,8 @@ export function createEncounterRecord(params: {
   const encounterId = uuid();
   const scene = get(db, 'SELECT * FROM scenes WHERE id = ?', [sceneId]) as any;
   const battlefield = buildBattlefieldProfile(scene);
+  const sceneState = safeJsonObject(get(db, 'SELECT state_json FROM scene_state WHERE scene_id = ?', [sceneId])?.state_json);
+  const setup = buildEncounterSetupProfile(sceneState, battlefield);
 
   const partyChars = all(db,
     'SELECT * FROM characters WHERE campaign_id = ? AND status = "active"',
@@ -152,10 +164,11 @@ export function createEncounterRecord(params: {
   }));
 
   const allCombatants = [...partyCombatants, ...companionCombatants, ...enemyCombatants];
-  const initiative = initiativeType === 'individual'
+  const rolledInitiative = initiativeType === 'individual'
     ? rollIndividualInitiative(allCombatants)
     : rollGroupInitiative([...partyCombatants, ...companionCombatants], enemyCombatants);
-  const surprise = rollSurpriseCheck();
+  const initiative = applyInitiativeSetup(rolledInitiative, setup);
+  const surprise = rollSurpriseCheck(setup.partySurpriseModifier, setup.enemySurpriseModifier);
 
   run(db, `
     INSERT INTO encounters (id, campaign_id, scene_id, status, round, initiative_type, turn_order, current_turn_index)
@@ -165,6 +178,7 @@ export function createEncounterRecord(params: {
   for (const c of allCombatants) {
     const orderEntry = initiative.order.find((o) => o.id === c.id);
     const isSurprised = c.side === 'party' ? surprise.partySurprised : surprise.enemySurprised;
+    const openingConditions = c.side === 'party' ? setup.partyConditions : setup.enemyConditions;
     run(db, `
       INSERT INTO combatants (id, encounter_id, character_id, npc_id, name, side, initiative_roll, weapon_speed, final_initiative, current_hp, max_hp, thac0, ac, conditions, is_surprised)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -182,7 +196,7 @@ export function createEncounterRecord(params: {
       c.maxHp,
       c.thac0,
       c.ac,
-      JSON.stringify(c.conditions || []),
+      JSON.stringify(appendConditionList(c.conditions || [], openingConditions)),
       isSurprised ? 1 : 0,
     ]);
   }
@@ -205,7 +219,11 @@ export function createEncounterRecord(params: {
       ? `The enemy is surprised for ${surprise.surpriseSegments || 1} segment${surprise.surpriseSegments === 1 ? '' : 's'}.`
       : 'Neither side is caught fully off guard.';
 
-  return { encounter, initiative, surpriseSummary: `${surpriseSummary} ${describeBattlefieldOpening(battlefield)}` };
+  return {
+    encounter,
+    initiative,
+    surpriseSummary: `${surpriseSummary} ${setup.openingNotes.join(' ')} ${describeBattlefieldOpening(battlefield)}`.trim(),
+  };
 }
 
 export function emitEncounterStart(
@@ -794,6 +812,77 @@ function appendConditionList(current: string[], extras: string[]) {
     if (!merged.includes(extra)) merged.push(extra);
   }
   return merged;
+}
+
+function buildEncounterSetupProfile(sceneState: any, battlefield: BattlefieldProfile): EncounterSetupProfile {
+  const secured = Boolean(sceneState?.secured);
+  const fallbackPoint = Boolean(sceneState?.fallbackPoint);
+  const knownHazard = Boolean(sceneState?.knownHazard);
+  const trapDisarmed = Boolean(sceneState?.trapDisarmed);
+  const obstacleCleared = Boolean(sceneState?.obstacleCleared);
+
+  const profile: EncounterSetupProfile = {
+    partySurpriseModifier: 0,
+    enemySurpriseModifier: 0,
+    partyInitiativeShift: 0,
+    enemyInitiativeShift: 0,
+    partyConditions: [],
+    enemyConditions: [],
+    openingNotes: [],
+  };
+
+  if (secured) {
+    profile.partySurpriseModifier += 2;
+    profile.enemySurpriseModifier -= 2;
+    profile.partyInitiativeShift -= 1;
+    profile.openingNotes.push('The party meets contact from prepared ground instead of panic.');
+    profile.partyConditions = appendConditionList(profile.partyConditions, ['braced']);
+  }
+
+  if (fallbackPoint) {
+    profile.partySurpriseModifier += 1;
+    profile.partyInitiativeShift -= 1;
+    profile.openingNotes.push('A marked fallback lane keeps the company from bunching when steel comes out.');
+    if (battlefield.cover) {
+      profile.partyConditions = appendConditionList(profile.partyConditions, ['in_cover']);
+    }
+    if (battlefield.chokepoint) {
+      profile.partyConditions = appendConditionList(profile.partyConditions, ['holding_choke']);
+    }
+  }
+
+  if (knownHazard) {
+    profile.enemySurpriseModifier -= 1;
+    profile.enemyInitiativeShift += 1;
+    profile.openingNotes.push('The company already knows where the floor, edge, or trap line becomes lethal.');
+    profile.enemyConditions = appendConditionList(profile.enemyConditions, ['off_balance']);
+  }
+
+  if (trapDisarmed || obstacleCleared) {
+    profile.partyInitiativeShift -= 1;
+    profile.openingNotes.push('The route is already worked open, so the party can react without scrambling through its own mess.');
+  }
+
+  return profile;
+}
+
+function applyInitiativeSetup(
+  initiative: ReturnType<typeof rollGroupInitiative> | ReturnType<typeof rollIndividualInitiative>,
+  setup: EncounterSetupProfile,
+) {
+  const adjustedOrder = initiative.order
+    .map((entry) => ({
+      ...entry,
+      initiative: entry.initiative + (entry.side === 'party' ? setup.partyInitiativeShift : setup.enemyInitiativeShift),
+    }))
+    .sort((left, right) => left.initiative - right.initiative);
+
+  return {
+    ...initiative,
+    partyRoll: typeof initiative.partyRoll === 'number' ? initiative.partyRoll + setup.partyInitiativeShift : initiative.partyRoll,
+    enemyRoll: typeof initiative.enemyRoll === 'number' ? initiative.enemyRoll + setup.enemyInitiativeShift : initiative.enemyRoll,
+    order: adjustedOrder,
+  };
 }
 
 function safeConditions(raw: any) {
