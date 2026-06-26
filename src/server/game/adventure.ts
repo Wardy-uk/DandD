@@ -354,7 +354,7 @@ export function resolveRichExploration(params: {
     noteCampaignEvent(campaignState, `${character.name} listened in ${scene.name} and heard ${detail}.`);
     saveCampaignState(db, campaignId, campaignState);
     return finalizeOutcome(db, campaignId, {
-      content: `You draw the group into stillness and listen. After the room settles, you pick out ${detail}.`,
+      content: `You go still and listen. After the room settles, you pick out ${detail}.`,
       explorationTurnAdvanced: turn.turn,
     }, turn, campaignState, blueprint, action);
   }
@@ -544,7 +544,7 @@ export function resolveRichExploration(params: {
     saveSceneState(db, campaignId, scene.id, state);
     saveCampaignState(db, campaignId, campaignState);
     return finalizeOutcome(db, campaignId, {
-      content: 'You mark this place in the party’s working memory as a fallback point: not safe exactly, but dependable enough to matter under pressure.',
+      content: 'You mark this place as a fallback point: not safe exactly, but dependable enough to matter under pressure.',
       explorationTurnAdvanced: turn.turn,
     }, turn, campaignState, blueprint, action);
   }
@@ -680,7 +680,7 @@ export function resolveRichExploration(params: {
     return finalizeOutcome(db, campaignId, {
       content: divineClass
         ? `${character.name} gathers the company, sets fear in order, and leads a hard little prayer fit for dangerous ground. The mood steadies, pressure eases, and ${heal > 0 ? `${heal} hit point${heal === 1 ? '' : 's'} return with the renewed resolve.` : 'the company finds its nerve again.'}`
-        : `${character.name} takes a quiet moment to center the group. It is more discipline than miracle, but even that matters in a place like this.`,
+        : `${character.name} takes a quiet moment to center the mind. It is more discipline than miracle, but even that matters in a place like this.`,
       hpDelta: heal,
       explorationTurnAdvanced: turn.turn,
     }, turn, campaignState, blueprint, action);
@@ -755,7 +755,7 @@ export function resolveRichExploration(params: {
     saveCampaignState(db, campaignId, campaignState);
     return finalizeOutcome(db, campaignId, {
       content: good
-        ? 'You manage a careful, controlled advance, shifting the party’s presence from obvious intrusion to measured threat.'
+        ? 'You manage a careful, controlled advance, shifting from obvious intrusion to measured threat.'
         : 'You try to move like a rumor, but the place answers with enough scrape and clatter to remind you that stealth here is earned.',
       explorationTurnAdvanced: turn.turn,
     }, turn, campaignState, blueprint, action, !good);
@@ -886,7 +886,7 @@ export function resolveRichExploration(params: {
     noteCampaignEvent(campaignState, `${character.name} rigged rope lines in ${scene.name}.`);
     saveCampaignState(db, campaignId, campaignState);
     return finalizeOutcome(db, campaignId, {
-      content: `You rig rope where it matters, turning dangerous ground into manageable ground and giving the party a safer way to retreat, climb, or cross in a hurry.`,
+      content: `You rig rope where it matters, turning dangerous ground into manageable ground. The route is manageable now.`,
       xpDelta: 10,
       explorationTurnAdvanced: turn.turn,
     }, turn, campaignState, blueprint, action);
@@ -1125,7 +1125,7 @@ export function resolveRichExploration(params: {
       ? [
           `The attempt works, more or less. The room doesn't give ground easily, but the effort lands. ${blueprint.signpostDetail}`,
           `It takes longer than it should, but you manage it. Progress yields to persistence if not elegance.`,
-          `Done. Not cleanly, but done. The party is a step further forward.`,
+          `Done. Not cleanly, but done. You are a step further forward.`,
         ]
       : [
           `The attempt falls short. Not by much, but by enough. The obstacle stays an obstacle.`,

@@ -700,6 +700,30 @@ export function setupSocketHandlers(
         connections: JSON.parse(scene.connections || '[]'),
       });
 
+      // Party/companion query — answer deterministically, never hit Ollama for this
+      const partyQueryRx = /who('?s| is) with (me|us)|who are my (companions|party|allies)|who do i have|tell me (about my|who('?s in|are in)) (my )?(party|group|companions)|list (my |the )?(party|companions)/i;
+      if (!outcome && partyQueryRx.test(action)) {
+        const companions = campaignState.companions || [];
+        let partyMsg: string;
+        if (companions.length === 0) {
+          partyMsg = 'You are travelling alone.';
+        } else {
+          const names = companions.map((c: any) => {
+            const hpNote = c.hp !== undefined && c.maxHp !== undefined
+              ? ` (${c.hp}/${c.maxHp} HP)`
+              : '';
+            const morale = c.morale !== undefined ? `, morale ${c.morale}` : '';
+            return `${c.name}${hpNote}${morale}`;
+          });
+          partyMsg = `With you: ${names.join('; ')}.`;
+        }
+        run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+          [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', partyMsg]);
+        io.to(`campaign:${campaignId}`).emit('game:narration', { content: partyMsg, actor: 'DM' });
+        emitCampaignState(io, db, campaignId);
+        return;
+      }
+
       if (!outcome) {
         // Unknown action — AI resolves it. No action ever gets a dead rejection.
         const sceneExits = JSON.parse(scene.connections || '[]')

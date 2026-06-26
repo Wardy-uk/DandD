@@ -54,11 +54,19 @@ export async function generate(params: {
     },
   };
 
-  const res = await fetch(`${OLLAMA_URL}/api/generate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20_000);
+  let res: Response;
+  try {
+    res = await fetch(`${OLLAMA_URL}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!res.ok) {
     throw new Error(`Ollama error: ${res.status} ${await res.text()}`);
@@ -89,11 +97,19 @@ export async function chat(params: {
     },
   };
 
-  const res = await fetch(`${OLLAMA_URL}/api/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  const chatController = new AbortController();
+  const chatTimeout = setTimeout(() => chatController.abort(), 20_000);
+  let res: Response;
+  try {
+    res = await fetch(`${OLLAMA_URL}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: chatController.signal,
+    });
+  } finally {
+    clearTimeout(chatTimeout);
+  }
 
   if (!res.ok) {
     throw new Error(`Ollama error: ${res.status} ${await res.text()}`);
