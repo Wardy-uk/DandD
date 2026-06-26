@@ -1677,6 +1677,47 @@ function finalizeOutcome(
   return outcome;
 }
 
+// Gives multiple enemies of the same type natural distinguishing epithets instead of "Skeleton 1, Skeleton 2"
+function disambiguateEnemyName(baseName: string, index: number): string {
+  const lower = baseName.toLowerCase();
+  // Undead
+  if (/skeleton/.test(lower)) {
+    return ['the gaunt skeleton', 'the armoured skeleton', 'the howling skeleton', 'the lurching skeleton'][index] ?? `${baseName} (${index + 1})`;
+  }
+  if (/wight/.test(lower)) {
+    return ['the barrow wight', 'a second wight', 'the hollow wight'][index] ?? `a wight`;
+  }
+  if (/zombie/.test(lower)) {
+    return ['the bloated zombie', 'the clawing zombie', 'a shuffling dead'][index] ?? `a zombie`;
+  }
+  if (/ghoul/.test(lower)) {
+    return ['the lead ghoul', 'the flanking ghoul', 'a ravenous ghoul'][index] ?? `a ghoul`;
+  }
+  // Vermin
+  if (/rat|swarm/.test(lower)) {
+    return ['the first swarm', 'another surging mass'][index] ?? `a rat swarm`;
+  }
+  if (/lizard/.test(lower)) {
+    return ['the large lizard', 'a darting lizard', 'another lizard'][index] ?? `a cave lizard`;
+  }
+  // Cultists / humanoids
+  if (/acolyte/.test(lower)) {
+    return ['the lead acolyte', 'a chanting acolyte', 'a cowled acolyte'][index] ?? `an acolyte`;
+  }
+  if (/guard|fanatic/.test(lower)) {
+    return ['the point guard', 'a flanking guard', 'a blocking guard'][index] ?? `a guard`;
+  }
+  if (/goblin/.test(lower)) {
+    return ['the bold goblin', 'a skulking goblin', 'a yapping goblin'][index] ?? `a goblin`;
+  }
+  if (/wolf/.test(lower)) {
+    return ['the alpha wolf', 'the grey wolf'][index] ?? `a wolf`;
+  }
+  // Generic fallback — directional/tactical
+  const fallbacks = ['the leading one', 'the one on the flank', 'another from the dark', 'one more from the shadows'];
+  return fallbacks[index] ?? baseName;
+}
+
 function generateProceduralEncounter(
   blueprint: SceneBlueprint,
   turn: number,
@@ -1721,7 +1762,7 @@ function generateProceduralEncounter(
       level: Math.max(1, template.level + levelShift),
       thac0: Math.max(12, (template.thac0 || 20) - levelShift),
       hp: Math.max(3, (template.hp || 6) + (levelShift * 2) + (heat >= 6 ? 2 : 0)),
-      name: enemyCount > 1 ? `${template.name} ${index + 1}` : template.name,
+      name: enemyCount > 1 ? disambiguateEnemyName(template.name, index) : template.name,
       faction,
     };
   });
