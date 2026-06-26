@@ -273,6 +273,8 @@ export interface TownContract {
   taken: boolean;
   completedAt: string | null;
   claimedAt?: string | null;
+  expiredAt?: string | null;
+  takenAtTurn?: number;
   openingContract?: boolean;
   objectiveType?: 'discovered_sites' | 'cleared_scenes' | 'fallback_points' | 'treasure_marks' | 'lore_entries' | 'revelations' | 'named_scene_visited' | 'npc_recruited' | 'faction_standing';
   objectiveDetail?: string;
@@ -348,6 +350,54 @@ export function evaluateContracts(db: Database, campaignId: string, contracts: T
       readyToClaim: Boolean(contract.taken && completedAt && !contract.claimedAt),
     };
   });
+}
+
+// ─── Contract expiry ─────────────────────────────────────────────────────────
+
+const CONTRACT_EXPIRY_TURNS = 15;
+
+export function expireStaleContracts(
+  db: Database,
+  campaignId: string,
+): Array<{ narration: string; contract: TownContract }> {
+  const campRow = get(db, 'SELECT town_contracts, exploration_turn FROM campaigns WHERE id = ?', [campaignId]) as any;
+  if (!campRow) return [];
+
+  const currentTurn = Number(campRow.exploration_turn || 0);
+  let contracts: TownContract[] = [];
+  try { contracts = JSON.parse(campRow.town_contracts || '[]'); } catch {}
+
+  const expired: Array<{ narration: string; contract: TownContract }> = [];
+  let changed = false;
+  const state = getCampaignState(db, campaignId);
+
+  for (const c of contracts) {
+    if (!c.taken || c.completedAt || c.claimedAt || c.expiredAt) continue;
+    if (c.takenAtTurn == null) continue; // no turn stamp — can't expire
+    if (currentTurn - c.takenAtTurn < CONTRACT_EXPIRY_TURNS) continue;
+
+    c.expiredAt = new Date().toISOString();
+    shiftFactionStanding(state, c.factionKey, { reputation: -1 });
+    changed = true;
+
+    const EXPIRY_LINES: Record<string, string> = {
+      watch: `The garrison has scratched the posting for "${c.title}" from the board. Too long without result. It will be noted.`,
+      locals: `The guild has cancelled the contract for "${c.title}". Without a report they assume the worst. Your standing with the locals takes a knock.`,
+      shadows: `A terse message. The contract for "${c.title}" is voided. The interested parties have found alternative arrangements. They are not pleased.`,
+      delvers: `The cartographers' board no longer shows "${c.title}". The guild marks the failure in its records. You'll need to rebuild the goodwill.`,
+    };
+    const narration = EXPIRY_LINES[c.factionKey]
+      || `The contract "${c.title}" has lapsed. Too much time has passed without completion, and the faction has moved on.`;
+
+    expired.push({ narration, contract: c });
+  }
+
+  if (changed) {
+    saveCampaignState(db, campaignId, state);
+    run(db, 'UPDATE campaigns SET town_contracts = ? WHERE id = ?', [JSON.stringify(contracts), campaignId]);
+  }
+
+  return expired;
 }
 
 function factionRepNote(factionKey: string, newRep: number): string {

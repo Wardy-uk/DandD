@@ -71,6 +71,7 @@ interface Contract {
   progressText?: string;
   completedAt?: string | null;
   claimedAt?: string | null;
+  expiredAt?: string | null;
   readyToClaim?: boolean;
 }
 
@@ -439,7 +440,7 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
   const { townName, character, companions, catalogue, prospects, contracts, healQuote, lootAppraisal, deadCompanions } = townData;
   const joinedCompanions = companions.filter(c => c.joinedParty);
   const availableCompanions = companions.filter(c => !c.joinedParty);
-  const activeTakenContracts = contracts.filter(c => c.taken);
+  const activeTakenContracts = contracts.filter(c => c.taken && !c.expiredAt && !c.claimedAt);
 
   const TABS: Array<{ key: Tab; label: string; icon: string }> = [
     { key: 'taproom', label: 'Taproom', icon: '🍺' },
@@ -790,6 +791,7 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
                     <div key={contract.id} className={`p-3 rounded-lg border transition-colors ${
                       contract.id === newContractId
                         ? 'border-leather/50 bg-leather/8 ring-1 ring-leather/25'
+                        : contract.expiredAt ? 'border-red-900/20 bg-red-950/5 opacity-70'
                         : contract.taken ? 'border-green-600/30 bg-green-50/30'
                         : 'border-leather/15 bg-parchment/40'
                     }`}>
@@ -833,7 +835,9 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
                           )}
                         </div>
                         <div className="flex-shrink-0">
-                          {contract.claimedAt ? (
+                          {contract.expiredAt ? (
+                            <span className="text-[10px] text-red-700 font-heading px-2 py-1 rounded bg-red-900/10">Expired</span>
+                          ) : contract.claimedAt ? (
                             <span className="text-[10px] text-heal font-heading px-2 py-1 rounded bg-heal/10">Paid</span>
                           ) : contract.readyToClaim ? (
                             <button
@@ -854,6 +858,7 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
                               Accept
                             </button>
                           )}
+
                         </div>
                       </div>
                     </div>

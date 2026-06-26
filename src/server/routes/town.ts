@@ -12,6 +12,7 @@ import {
   buySupplies,
   claimContractReward,
   evaluateContracts,
+  expireStaleContracts,
   generateFollowUpContract,
   getCatalogue,
   getHealingQuote,
@@ -62,9 +63,19 @@ export function createTownRoutes(db: Database, io: SocketServer): Router {
     const settingId = String(campaign.setting_id || '');
     const prospects = getProspects(campaignId, partyClasses, sessionNumber, settingId);
 
+    // Expire stale contracts before building town state
+    const expirations = expireStaleContracts(db, campaignId);
+    for (const { narration: expNarration } of expirations) {
+      run(db, 'INSERT INTO game_log (id, campaign_id, type, actor, content) VALUES (?, ?, ?, ?, ?)',
+        [uuid(), campaignId, 'narration', 'DM', expNarration]);
+      io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: expNarration });
+    }
+
     let contracts: any[] = [];
     try {
-      contracts = JSON.parse(campaign.town_contracts || '[]');
+      // Re-read after possible expiry mutations
+      const freshRow = get(db, 'SELECT town_contracts FROM campaigns WHERE id = ?', [campaignId]) as any;
+      contracts = JSON.parse(freshRow?.town_contracts || '[]');
     } catch {}
     if (contracts.length === 0) {
       contracts = generateContracts(state, String(campaign.name || ''), settingId);
@@ -368,6 +379,8 @@ export function createTownRoutes(db: Database, io: SocketServer): Router {
     if (contract.taken) { res.json({ ok: false, error: 'Already taken' }); return; }
 
     contract.taken = true;
+    const turnRow = get(db, 'SELECT exploration_turn FROM campaigns WHERE id = ?', [campaignId]) as any;
+    contract.takenAtTurn = Number(turnRow?.exploration_turn || 0);
     contracts = evaluateContracts(db, campaignId, contracts);
     run(db, 'UPDATE campaigns SET town_contracts = ? WHERE id = ?', [JSON.stringify(contracts), campaignId]);
 
