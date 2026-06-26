@@ -371,6 +371,18 @@ export function createCharacterRoutes(db: Database): Router {
     res.json({ ok: true, data: { id: req.params.id, status } });
   });
 
+  // Delete character (owner only)
+  router.delete('/:id', requireAuth, (req: any, res) => {
+    const char = get(db, 'SELECT id FROM characters WHERE id = ? AND player_id = ?',
+      [req.params.id, req.player.id]) as any;
+    if (!char) {
+      res.status(403).json({ ok: false, error: 'Character not found or not yours' });
+      return;
+    }
+    run(db, 'DELETE FROM characters WHERE id = ?', [req.params.id]);
+    res.json({ ok: true });
+  });
+
   // List characters for a campaign
   router.get('/campaign/:campaignId', requireAuth, (req: any, res) => {
     const characters = all(db,

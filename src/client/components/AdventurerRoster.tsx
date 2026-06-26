@@ -54,6 +54,24 @@ export default function AdventurerRoster({ apiUrl, player, onBack }: Props) {
 
   const headers = { Authorization: `Bearer ${player.token}` };
 
+  const deleteCharacter = async (character: RosterCharacter) => {
+    if (!confirm(`Delete ${character.name}? This cannot be undone.`)) return;
+    try {
+      const res = await fetch(`${apiUrl}/api/characters/${character.id}`, {
+        method: 'DELETE',
+        headers,
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setRoster(prev => prev.filter(c => c.id !== character.id));
+      } else {
+        alert(data.error || 'Failed to delete character');
+      }
+    } catch (err) {
+      console.error('Failed to delete character', err);
+    }
+  };
+
   useEffect(() => {
     fetch(`${apiUrl}/api/characters/roster`, { headers })
       .then((r) => r.json())
@@ -166,8 +184,17 @@ export default function AdventurerRoster({ apiUrl, player, onBack }: Props) {
                               : ''}
                           </p>
                         </div>
-                        <div className="text-xs font-body text-ink-faint">
-                          {formatDate(character.createdAt)}
+                        <div className="flex items-center gap-3">
+                          <div className="text-xs font-body text-ink-faint">
+                            {formatDate(character.createdAt)}
+                          </div>
+                          <button
+                            onClick={() => deleteCharacter(character)}
+                            className="rounded border border-red-300/60 px-2 py-1 text-[10px] font-heading font-semibold text-red-600 hover:bg-red-50 transition-colors"
+                            title="Delete character"
+                          >
+                            🗑
+                          </button>
                         </div>
                       </div>
                     </div>

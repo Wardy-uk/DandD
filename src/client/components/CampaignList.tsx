@@ -179,6 +179,21 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
     }
   };
 
+  const deleteCampaign = async (c: Campaign) => {
+    if (!confirm(`Delete "${c.name}"? This cannot be undone.`)) return;
+    try {
+      const res = await fetch(`${apiUrl}/api/campaigns/${c.id}`, { method: 'DELETE', headers });
+      const data = await res.json();
+      if (data.ok) {
+        setCampaigns(prev => prev.filter(x => x.id !== c.id));
+      } else {
+        alert(data.error || 'Failed to delete campaign');
+      }
+    } catch (err) {
+      console.error('Failed to delete campaign', err);
+    }
+  };
+
   return (
     <div className="mx-auto max-w-3xl">
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -263,6 +278,13 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
                   className="flex-1 rounded-md border border-leather/20 px-3 py-1.5 text-xs font-heading font-semibold text-leather hover:bg-leather/10 transition-colors"
                 >
                   📜 Chronicle
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); deleteCampaign(c); }}
+                  className="rounded-md border border-red-300/60 px-3 py-1.5 text-xs font-heading font-semibold text-red-600 hover:bg-red-50 transition-colors"
+                  title="Delete campaign"
+                >
+                  🗑
                 </button>
               </div>
             </div>

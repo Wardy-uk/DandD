@@ -315,5 +315,48 @@ Rules:
     res.json({ ok: true, data: logs.reverse() });
   });
 
+  // Delete campaign (owner only) — cascades all related data
+  router.delete('/:id', requireAuth, (req: any, res) => {
+    const campaignId = req.params.id;
+
+    const membership = get(db,
+      'SELECT * FROM campaign_players WHERE campaign_id = ? AND player_id = ? AND is_owner = 1',
+      [campaignId, req.player.id]);
+    if (!membership) {
+      res.status(403).json({ ok: false, error: 'Only the campaign owner can delete it' });
+      return;
+    }
+
+    // Delete combatants via encounter ids first
+    const encounterIds = (all(db, 'SELECT id FROM encounters WHERE campaign_id = ?', [campaignId]) as any[]).map((e: any) => e.id);
+    if (encounterIds.length > 0) {
+      const placeholders = encounterIds.map(() => '?').join(',');
+      run(db, `DELETE FROM combatants WHERE encounter_id IN (${placeholders})`, encounterIds);
+    }
+
+    const tables: Array<[string, string]> = [
+      ['encounters', 'campaign_id'],
+      ['game_log', 'campaign_id'],
+      ['scene_state', 'campaign_id'],
+      ['world_lore', 'campaign_id'],
+      ['campaign_rumours', 'campaign_id'],
+      ['chronicle', 'campaign_id'],
+      ['rival_parties', 'campaign_id'],
+      ['campaign_state', 'campaign_id'],
+      ['ai_queue', 'campaign_id'],
+      ['npcs', 'campaign_id'],
+      ['characters', 'campaign_id'],
+      ['scenes', 'campaign_id'],
+      ['campaign_players', 'campaign_id'],
+      ['campaigns', 'id'],
+    ];
+
+    for (const [table, col] of tables) {
+      run(db, `DELETE FROM ${table} WHERE ${col} = ?`, [campaignId]);
+    }
+
+    res.json({ ok: true });
+  });
+
   return router;
 }
