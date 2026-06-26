@@ -553,7 +553,11 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
     : openPanel === 'expedition' ? 'Expedition'
     : 'Map';
 
-  const renderLogEntries = () => (
+  const renderLogEntries = () => {
+    // Build companion name set for O(1) actor detection
+    const companionNames = new Set(companions.map((c) => c.name));
+
+    return (
     <>
       {gameLog.length === 0 && (
         <div className="text-center py-16 text-ink-faint font-body italic">
@@ -561,34 +565,55 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
           <p className="text-xs mt-2">Type an action below to begin.</p>
         </div>
       )}
-      {gameLog.map(entry => (
-        <div key={entry.id} className={`animate-fade-in ${getLogEntryClass(entry.type)}`}>
+      {gameLog.map(entry => {
+        // Companion speech: narration whose actor is a companion, not the DM
+        const isCompanionSpeech =
+          entry.type === 'narration' &&
+          entry.actor !== '' &&
+          entry.actor !== 'DM' &&
+          entry.actor !== 'System' &&
+          companionNames.has(entry.actor);
+
+        return (
+        <div
+          key={entry.id}
+          className={`animate-fade-in ${
+            isCompanionSpeech
+              ? 'pl-5 ml-2 border-l-2 border-amber-400/30'
+              : getLogEntryClass(entry.type)
+          }`}
+        >
           {entry.actor && entry.type !== 'system' && (
             <span className={`font-heading font-bold text-xs uppercase tracking-wide ${
-              entry.type === 'narration' || entry.type === 'dm_response' || entry.type === 'scene_enter'
-                ? 'text-leather'
-                : entry.type === 'combat'
-                  ? 'text-blood'
-                  : 'text-ink-light'
+              isCompanionSpeech
+                ? 'text-amber-400'
+                : entry.type === 'narration' || entry.type === 'dm_response' || entry.type === 'scene_enter'
+                  ? 'text-leather'
+                  : entry.type === 'combat'
+                    ? 'text-blood'
+                    : 'text-ink-light'
             }`}>
               {entry.actor}
             </span>
           )}
           <p className={`font-body text-sm leading-relaxed ${
-            entry.type === 'narration' || entry.type === 'dm_response' || entry.type === 'scene_enter'
-              ? 'text-ink-light italic'
-              : entry.type === 'combat'
-                ? 'text-ink font-mono text-xs'
-                : entry.type === 'roll'
-                  ? 'text-silver font-mono text-xs'
-                  : entry.type === 'system'
-                    ? 'text-ink-faint italic text-xs'
-                    : 'text-ink'
+            isCompanionSpeech
+              ? 'text-amber-200 italic'
+              : entry.type === 'narration' || entry.type === 'dm_response' || entry.type === 'scene_enter'
+                ? 'text-ink-light italic'
+                : entry.type === 'combat'
+                  ? 'text-ink font-mono text-xs'
+                  : entry.type === 'roll'
+                    ? 'text-silver font-mono text-xs'
+                    : entry.type === 'system'
+                      ? 'text-ink-faint italic text-xs'
+                      : 'text-ink'
           }`}>
             {entry.content}
           </p>
         </div>
-      ))}
+        );
+      })}
       {dmThinking && (
         <div className="animate-fade-in">
           <p className="text-sm text-leather/60 font-body italic flex items-center gap-2">
@@ -600,6 +625,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
       <div ref={logEndRef} />
     </>
   );
+  };
 
   // ── Town phase: hand off to TownView ────────────────────────────────────
   if (campaignPhase === 'town') {

@@ -42,6 +42,7 @@ import {
 } from './game/companions.js';
 import { returnToTown } from './game/town.js';
 import { generate } from './ai/ollama.js';
+import { getCompanionReaction, inferReactionTrigger } from './game/companionReactions.js';
 
 interface ConnectedPlayer {
   socketId: string;
@@ -316,6 +317,20 @@ export function setupSocketHandlers(
             type: 'companions_update',
             payload: getPartyCompanions(db, campaignId),
           });
+          // ── Companion reaction: combat resolved ──────────────────────────
+          try {
+            const killCompanions = getPartyCompanions(db, campaignId).filter((c) => c.joinedParty);
+            const killReaction = getCompanionReaction('combat_kill', killCompanions, character.name);
+            if (killReaction) {
+              run(db,
+                'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                [crypto.randomUUID(), campaignId, 1, 'narration', killReaction.companion.name, killReaction.line]);
+              io.to(`campaign:${campaignId}`).emit('game:narration', {
+                content: killReaction.line,
+                actor: killReaction.companion.name,
+              });
+            }
+          } catch {}
         }
         if (resolution.turnPrompt) {
           io.to(`campaign:${campaignId}`).emit('game:turn_prompt', resolution.turnPrompt);
@@ -655,6 +670,22 @@ export function setupSocketHandlers(
           'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
           [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', orientDesc]);
         io.to(`campaign:${campaignId}`).emit('game:narration', { content: orientDesc, actor: 'DM' });
+        // ── Companion reaction: darkness ──────────────────────────────────
+        if ((scene.light_level || 'normal') === 'dark') {
+          try {
+            const darkCompanions = getPartyCompanions(db, campaignId).filter((c) => c.joinedParty);
+            const darkReaction = getCompanionReaction('darkness', darkCompanions, character.name);
+            if (darkReaction) {
+              run(db,
+                'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                [crypto.randomUUID(), campaignId, 1, 'narration', darkReaction.companion.name, darkReaction.line]);
+              io.to(`campaign:${campaignId}`).emit('game:narration', {
+                content: darkReaction.line,
+                actor: darkReaction.companion.name,
+              });
+            }
+          } catch {}
+        }
         emitCampaignState(io, db, campaignId);
         return;
       }
@@ -743,6 +774,20 @@ Rules:
         run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
           [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', aiMsg]);
         io.to(`campaign:${campaignId}`).emit('game:narration', { content: aiMsg, actor: 'DM' });
+        // ── Companion reaction: strange/fallback action ───────────────────
+        try {
+          const strangeCompanions = getPartyCompanions(db, campaignId).filter((c) => c.joinedParty);
+          const strangeReaction = getCompanionReaction('strange_action', strangeCompanions, character.name);
+          if (strangeReaction) {
+            run(db,
+              'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+              [crypto.randomUUID(), campaignId, 1, 'narration', strangeReaction.companion.name, strangeReaction.line]);
+            io.to(`campaign:${campaignId}`).emit('game:narration', {
+              content: strangeReaction.line,
+              actor: strangeReaction.companion.name,
+            });
+          }
+        } catch {}
         emitCampaignState(io, db, campaignId);
         return;
       }
@@ -932,6 +977,32 @@ Rules:
         content: outcome.content,
         actor: outcome.actor || 'DM',
       });
+      // ── Companion reaction: exploration outcome ───────────────────────────
+      try {
+        const explCompanions = getPartyCompanions(db, campaignId).filter((c) => c.joinedParty);
+        const hpPct = updatedCharacter && updatedCharacter.max_hp > 0
+          ? updatedCharacter.hp / updatedCharacter.max_hp
+          : 1;
+        const trigger = inferReactionTrigger(
+          action,
+          outcome.content,
+          outcome.hpDelta ?? 0,
+          hpPct,
+          scene.light_level || 'normal',
+        );
+        if (trigger) {
+          const explReaction = getCompanionReaction(trigger, explCompanions, character.name);
+          if (explReaction) {
+            run(db,
+              'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+              [crypto.randomUUID(), campaignId, 1, 'narration', explReaction.companion.name, explReaction.line]);
+            io.to(`campaign:${campaignId}`).emit('game:narration', {
+              content: explReaction.line,
+              actor: explReaction.companion.name,
+            });
+          }
+        }
+      } catch {}
       for (const note of riskyNotes) {
         run(db,
           'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',          [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', note]);
@@ -975,6 +1046,20 @@ Rules:
             content: `${outcome.encounter.description} ${started.surpriseSummary}`,
           });
           emitEncounterStart(io, campaignId, started);
+          // ── Companion reaction: combat starting ──────────────────────────
+          try {
+            const startCompanions = getPartyCompanions(db, campaignId).filter((c) => c.joinedParty);
+            const startReaction = getCompanionReaction('combat_start', startCompanions, character.name);
+            if (startReaction) {
+              run(db,
+                'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                [crypto.randomUUID(), campaignId, 1, 'narration', startReaction.companion.name, startReaction.line]);
+              io.to(`campaign:${campaignId}`).emit('game:narration', {
+                content: startReaction.line,
+                actor: startReaction.companion.name,
+              });
+            }
+          } catch {}
         }
       }
     });
