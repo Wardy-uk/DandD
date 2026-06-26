@@ -478,8 +478,11 @@ export function setupSocketHandlers(
 
       // ── Faction parley ───────────────────────────────────────────────
       if (isParleyAction(action)) {
-        const campRow = get(db, 'SELECT * FROM campaigns WHERE id = ?', [campaignId]) as any;
-        const parleyFactionKey = campRow?.dominant_faction || 'locals';
+        const campRow = get(db, 'SELECT dominant_faction, current_scene_id FROM campaigns WHERE id = ?', [campaignId]) as any;
+        const sceneFactionRow = campRow?.current_scene_id
+          ? get(db, 'SELECT dominant_faction FROM scenes WHERE id = ?', [campRow.current_scene_id]) as any
+          : null;
+        const parleyFactionKey = sceneFactionRow?.dominant_faction || campRow?.dominant_faction || 'locals';
         const parleyState = getCampaignState(db, campaignId);
         const parleyResult = resolveParley({
           state: parleyState,
@@ -594,8 +597,9 @@ export function setupSocketHandlers(
         }
 
         // ── Faction patrol check on scene entry ─────────────────────────
-        const campaignRowFaction = get(db, 'SELECT * FROM campaigns WHERE id = ?', [campaignId]) as any;
-        const sceneFactionKey = campaignRowFaction?.dominant_faction || 'locals';
+        const campaignRowFaction = get(db, 'SELECT dominant_faction, exploration_turn FROM campaigns WHERE id = ?', [campaignId]) as any;
+        const sceneFactionRow = get(db, 'SELECT dominant_faction FROM scenes WHERE id = ?', [nextScene.id]) as any;
+        const sceneFactionKey = sceneFactionRow?.dominant_faction || campaignRowFaction?.dominant_faction || 'locals';
         const factionEntryNotes = checkFactionSceneEntry({
           db, campaignId, sceneId: nextScene.id, factionKey: sceneFactionKey,
           explorationTurn: Number(campaignRowFaction?.exploration_turn || 0),

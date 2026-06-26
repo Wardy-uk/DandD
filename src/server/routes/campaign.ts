@@ -21,6 +21,7 @@ import {
 } from '../../shared/campaignModes.js';
 import { buildCampaignMapIntel } from '../game/mapIntel.js';
 import { getChronicle } from '../game/chronicle.js';
+import { seedCampaignStarterPack } from '../game/starterPacks.js';
 
 export function createCampaignRoutes(db: Database, io: SocketServer): Router {
   const router = Router();
@@ -188,10 +189,18 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
       'INSERT INTO campaign_players (campaign_id, player_id, is_owner) VALUES (?, ?, 1)',
       [id, req.player.id]);
 
-    // Create starting scene
+    // Create placeholder starting scene, then replace it with a setting-specific opening pack.
     run(db,
       'INSERT INTO scenes (id, campaign_id, name, brief) VALUES (?, ?, ?, ?)',
       [startSceneId, id, 'Starting Location', '']);
+
+    seedCampaignStarterPack({
+      db,
+      campaignId: id,
+      startSceneId,
+      settingId: selectedSetting.id,
+      campaignName,
+    });
 
     res.json({ ok: true, data: { id, name: campaignName, setting: selectedSetting.name, settingId: selectedSetting.id, startMode: chosenStartMode } });
   });

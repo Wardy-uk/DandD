@@ -101,6 +101,7 @@ function runMigrations() {
   try { db.run('ALTER TABLE campaigns ADD COLUMN campaign_phase TEXT DEFAULT "dungeon"'); } catch {}
   try { db.run('ALTER TABLE campaigns ADD COLUMN town_name TEXT DEFAULT ""'); } catch {}
   try { db.run('ALTER TABLE campaigns ADD COLUMN town_contracts TEXT DEFAULT "[]"'); } catch {}
+  try { db.run('ALTER TABLE campaigns ADD COLUMN dominant_faction TEXT DEFAULT "locals"'); } catch {}
 
   db.run(`
     CREATE TABLE IF NOT EXISTS campaign_players (
@@ -184,6 +185,7 @@ function runMigrations() {
       notes TEXT DEFAULT ''
     )
   `);
+  try { db.run('ALTER TABLE scenes ADD COLUMN dominant_faction TEXT DEFAULT "locals"'); } catch {}
 
   db.run(`
     CREATE TABLE IF NOT EXISTS npcs (
