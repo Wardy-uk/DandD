@@ -261,11 +261,45 @@ export function setupSocketHandlers(
           io.to(`campaign:${campaignId}`).emit('game:combat_result', { result });
         }
 
+        let expansionsThisRound = 0;
         for (const note of resolution.narration) {
           run(db,
             'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
             [crypto.randomUUID(), campaignId, 1, 'narration', note.actor, note.content]);
           io.to(`campaign:${campaignId}`).emit('game:narration', note);
+          if (note.content.length < 120 && expansionsThisRound < 2) {
+            expansionsThisRound++;
+            (async () => {
+              try {
+                const combatScene = campaign.current_scene_id
+                  ? get(db, 'SELECT * FROM scenes WHERE id = ?', [campaign.current_scene_id]) as any
+                  : null;
+                const combatBlueprint = combatScene ? buildSceneBlueprint(combatScene) : null;
+                const combatExpansion = await Promise.race([
+                  generate({
+                    system: `You are a masterful AD&D DM narrating a single combat moment. Write exactly 1-2 sentences.
+Rules:
+- Describe the physical reality of the hit or miss — what the weapon felt like, the sound, the impact site, the attacker's expression
+- If a kill: one vivid sentence of how the creature falls
+- If a miss: what went wrong, how the attacker overcorrects, what the defender does
+- No game terms like "hit points", "damage", "roll". Pure physical description
+- Voice: brutal, specific, immediate — no dramatic flourishes`,
+                    prompt: `Scene: ${combatScene?.name ?? 'Unknown'}. ${combatBlueprint?.roomAmbience ?? ''}
+Combat: "${note.content}"
+Add 1-2 sentences of physical combat description.`,
+                    maxTokens: 90,
+                    temperature: 0.85,
+                  }),
+                  new Promise<string>((_, reject) => setTimeout(() => reject(new Error('combat narration timeout')), 8_000)),
+                ]) as string;
+                if (combatExpansion?.trim()) {
+                  run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                    [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', combatExpansion.trim()]);
+                  io.to(`campaign:${campaignId}`).emit('game:narration', { content: combatExpansion.trim(), actor: 'DM' });
+                }
+              } catch {}
+            })();
+          }
         }
 
         for (const updatedCharacterId of resolution.updatedCharacterIds) {
