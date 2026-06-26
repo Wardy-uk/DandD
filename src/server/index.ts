@@ -111,13 +111,26 @@ start().catch((err) => {
 
 // ─── Shutdown ───────────────────────────────────────────────────────────────
 
-process.on('SIGINT', () => {
-  console.log('[QUEST] Shutting down...');
-  closeDb();
-  process.exit(0);
-});
+function gracefulShutdown(signal: string) {
+  console.log(`[QUEST] ${signal} received — shutting down gracefully...`);
+  httpServer.close(() => {
+    closeDb();
+    console.log('[QUEST] Server closed.');
+    process.exit(0);
+  });
+  // Force exit after 5s if close stalls
+  setTimeout(() => {
+    closeDb();
+    process.exit(0);
+  }, 5_000).unref();
+}
 
-process.on('SIGTERM', () => {
-  closeDb();
-  process.exit(0);
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('uncaughtException', (err) => {
+  console.error('[QUEST] Uncaught exception:', err);
+  gracefulShutdown('uncaughtException');
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[QUEST] Unhandled rejection:', reason);
 });

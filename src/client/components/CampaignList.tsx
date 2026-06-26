@@ -38,6 +38,8 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
   const [newSettingId, setNewSettingId] = useState('');
   const [newStartMode, setNewStartMode] = useState<CampaignStartMode>('solo');
   const [chronicleCampaign, setChronicle] = useState<{ id: string; name: string } | null>(null);
+  const [settingsLoading, setSettingsLoading] = useState(true);
+  const [settingsError, setSettingsError] = useState('');
 
   const headers = { Authorization: `Bearer ${player.token}`, 'Content-Type': 'application/json' };
 
@@ -60,8 +62,17 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
   };
 
   const fetchSettingOptions = async () => {
+    setSettingsLoading(true);
+    setSettingsError('');
     try {
-      const res = await fetch(`${apiUrl}/api/campaigns/settings`, { headers });
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 10_000);
+      let res: Response;
+      try {
+        res = await fetch(`${apiUrl}/api/campaigns/settings`, { headers, signal: ctrl.signal });
+      } finally {
+        clearTimeout(t);
+      }
       const data = await res.json();
       if (data.ok) {
         setSettingOptions(data.data.options || []);
@@ -70,9 +81,14 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
         setDefaultStartMode(data.data.defaultStartMode || 'solo');
         setNewSettingId((current: string) => current || data.data.defaultSettingId || '');
         setNewStartMode(data.data.defaultStartMode || 'solo');
+      } else {
+        setSettingsError(data.error || 'Failed to load campaign settings.');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to fetch campaign settings', err);
+      setSettingsError(err?.name === 'AbortError' ? 'Settings timed out — check your connection.' : 'Could not load campaign settings.');
+    } finally {
+      setSettingsLoading(false);
     }
   };
 
@@ -82,11 +98,19 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
     setCreating(true);
     setCreateError('');
     try {
-      const res = await fetch(`${apiUrl}/api/campaigns`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ name: newName.trim() || suggestedName, settingId: newSettingId, startMode: newStartMode }),
-      });
+      const cc = new AbortController();
+      const ct = setTimeout(() => cc.abort(), 15_000);
+      let res: Response;
+      try {
+        res = await fetch(`${apiUrl}/api/campaigns`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ name: newName.trim() || suggestedName, settingId: newSettingId, startMode: newStartMode }),
+          signal: cc.signal,
+        });
+      } finally {
+        clearTimeout(ct);
+      }
       const data = await res.json();
       if (data.ok) {
         setShowCreate(false);
@@ -176,9 +200,10 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
           </button>
           <button
             onClick={() => { setShowCreate(true); setCreateError(''); }}
-            className="px-4 py-2 rounded-lg bg-leather text-parchment-light text-sm font-heading font-semibold hover:bg-leather-dark transition-colors"
+            disabled={settingsLoading}
+            className="px-4 py-2 rounded-lg bg-leather text-parchment-light text-sm font-heading font-semibold hover:bg-leather-dark transition-colors disabled:opacity-60 disabled:cursor-wait"
           >
-            New Campaign
+            {settingsLoading ? 'Loading…' : 'New Campaign'}
           </button>
         </div>
       </div>
@@ -264,6 +289,11 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
             <p className="mb-4 text-sm font-body italic text-ink-faint">
               Pick a setting first. The campaign title is optional.
             </p>
+            {settingsError && (
+              <p className="mb-4 rounded-lg border border-blood/20 bg-blood/5 px-3 py-2 text-sm font-body text-blood">
+                {settingsError} <button onClick={fetchSettingOptions} className="underline ml-1">Retry</button>
+              </p>
+            )}
             <div className="grid gap-4 lg:grid-cols-[1.05fr_0.95fr]">
               <div className="space-y-4">
                 <label className="block text-xs font-heading font-semibold text-ink-faint uppercase tracking-wider mb-1">
