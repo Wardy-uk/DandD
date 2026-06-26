@@ -36,6 +36,10 @@ interface MapNode {
     trapDisarmed: boolean;
     obstacleCleared: boolean;
     lockOpened: boolean;
+    trapStudied: boolean;
+    lockStudied: boolean;
+    obstaclePrepared: boolean;
+    ropeRigged: boolean;
     stashFound: boolean;
     secured: boolean;
     fallbackPoint: boolean;
@@ -119,6 +123,14 @@ export function buildCampaignMapIntel(db: Database, campaignId: string) {
     currentSceneId,
     nodes: laidOutNodes,
     edges,
+    stats: {
+      discoveredSites: laidOutNodes.filter((node) => node.discovered).length,
+      fallbackPoints: laidOutNodes.filter((node) => node.roomState?.fallbackPoint).length,
+      campReady: laidOutNodes.filter((node) => node.roomState?.safeCamp).length,
+      hazardMarks: laidOutNodes.filter((node) => node.roomState?.knownHazard).length,
+      treasureMarks: laidOutNodes.filter((node) => node.roomState?.knownTreasure).length,
+      secretRoutes: laidOutNodes.filter((node) => node.roomState?.hiddenExitFound).length,
+    },
   };
 }
 
@@ -188,6 +200,10 @@ function normalizeRoomState(raw: any) {
     trapDisarmed: Boolean(raw?.trapDisarmed),
     obstacleCleared: Boolean(raw?.obstacleCleared),
     lockOpened: Boolean(raw?.lockOpened),
+    trapStudied: Boolean(raw?.trapStudied),
+    lockStudied: Boolean(raw?.lockStudied),
+    obstaclePrepared: Boolean(raw?.obstaclePrepared),
+    ropeRigged: Boolean(raw?.ropeRigged),
     stashFound: Boolean(raw?.stashFound),
     secured: Boolean(raw?.secured),
     fallbackPoint: Boolean(raw?.fallbackPoint),

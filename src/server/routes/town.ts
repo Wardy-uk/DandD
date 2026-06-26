@@ -24,6 +24,7 @@ import { getPartyCompanions, processTownDowntime } from '../game/companions.js';
 import { surfaceRumours } from '../game/nightlyGrowth.js';
 import { getCampaignState, saveCampaignState } from '../game/campaignState.js';
 import { v4 as uuid } from 'uuid';
+import { buildCampaignMapIntel } from '../game/mapIntel.js';
 
 export function createTownRoutes(db: Database, io: SocketServer): Router {
   const router = Router();
@@ -50,6 +51,7 @@ export function createTownRoutes(db: Database, io: SocketServer): Router {
       [campaignId]) as any[];
 
     const state = getCampaignState(db, campaignId);
+    const mapIntel = buildCampaignMapIntel(db, campaignId);
     const catalogue = getCatalogue(db, campaignId);
 
     const partyClasses = companions.filter(c => c.joinedParty).map(c => c.charClass);
@@ -90,6 +92,15 @@ export function createTownRoutes(db: Database, io: SocketServer): Router {
         contracts,
         healQuote,
         lootAppraisal,
+        expeditionSummary: {
+          discoveredSites: mapIntel.stats?.discoveredSites || 0,
+          fallbackPoints: mapIntel.stats?.fallbackPoints || 0,
+          campReady: mapIntel.stats?.campReady || 0,
+          hazardMarks: mapIntel.stats?.hazardMarks || 0,
+          treasureMarks: mapIntel.stats?.treasureMarks || 0,
+          encounterPressure: state.encounterPressure,
+          recentEvents: [...state.recentEvents].slice(-4).reverse(),
+        },
         factions: Object.entries(state.factions).map(([key, f]) => ({
           key, name: f.name, reputation: f.reputation, heat: f.heat,
         })),

@@ -558,9 +558,20 @@ export function returnToTown(db: Database, campaignId: string): {
 
   // Advance day count
   run(db, `UPDATE campaigns SET
-    campaign_phase = 'town',
-    session_number = session_number + 1
-  WHERE id = ?`, [campaignId]);
+      campaign_phase = 'town',
+      session_number = session_number + 1
+    WHERE id = ?`, [campaignId]);
+
+  const activeChars = all(db, 'SELECT id, conditions FROM characters WHERE campaign_id = ? AND status != "dead"', [campaignId]) as any[];
+  for (const row of activeChars) {
+    try {
+      const conditions = JSON.parse(row.conditions || '[]') as string[];
+      const cleaned = conditions.filter((condition) => condition !== 'lay_on_hands_spent');
+      if (cleaned.length !== conditions.length) {
+        run(db, 'UPDATE characters SET conditions = ? WHERE id = ?', [JSON.stringify(cleaned), row.id]);
+      }
+    } catch {}
+  }
 
   // Reset delve conditions on arrival (fresh torches are from inventory, not here)
   const state = getCampaignState(db, campaignId);

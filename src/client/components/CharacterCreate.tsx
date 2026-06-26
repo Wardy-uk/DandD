@@ -126,6 +126,11 @@ interface RosterCharacter {
   status: string;
   campaignId: string;
   campaignName: string;
+  rootCharacterId: string;
+  rootCharacterName: string;
+  sourceCharacterId: string | null;
+  sourceCampaignId: string | null;
+  isCampaignCopy: boolean;
   createdAt: string;
 }
 
@@ -326,12 +331,22 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
                 <div key={character.id} className="rounded-lg border border-leather/10 bg-parchment/60 p-3">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="min-w-0">
-                      <div className="font-heading font-bold text-leather-dark">{character.name}</div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="font-heading font-bold text-leather-dark">{character.name}</div>
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-heading uppercase tracking-wide ${
+                          character.isCampaignCopy
+                            ? 'border border-gold/20 bg-gold/10 text-gold'
+                            : 'border border-heal/20 bg-heal/10 text-heal'
+                        }`}>
+                          {character.isCampaignCopy ? 'Campaign Copy' : 'Original Build'}
+                        </span>
+                      </div>
                       <div className="text-xs font-body italic text-ink-faint">
                         Level {character.level} {RACE_LABELS[character.race] || character.race} {CLASS_LABELS[character.charClass] || character.charClass} · {character.alignment}
                       </div>
                       <div className="mt-1 text-xs font-body text-ink-faint">
                         Source: {character.campaignName} · HP {character.hp}/{character.maxHp} · XP {character.xp}
+                        {character.isCampaignCopy ? ` · Root hero: ${character.rootCharacterName}` : ''}
                       </div>
                     </div>
                     <button

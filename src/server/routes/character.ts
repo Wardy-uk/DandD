@@ -44,6 +44,12 @@ export function createCharacterRoutes(db: Database): Router {
         status: char.status,
         campaignId: char.campaign_id,
         campaignName: char.campaign_name || 'Unknown campaign',
+        rootCharacterId: char.root_character_id || char.id,
+        rootCharacterName: char.root_character_name || char.name,
+        rootCampaignId: char.root_campaign_id || char.campaign_id,
+        sourceCharacterId: char.source_character_id || null,
+        sourceCampaignId: char.source_campaign_id || null,
+        isCampaignCopy: Boolean(char.source_character_id),
         createdAt: char.created_at,
       })),
     });
@@ -166,7 +172,8 @@ export function createCharacterRoutes(db: Database): Router {
         weapon_prof_slots, nonweapon_prof_slots, weapon_profs, nonweapon_profs,
         spell_slots, memorised_spells, spellbook, priest_spheres, thief_skills,
         inventory, gold, silver, copper, electrum, platinum,
-        conditions, notes, status
+        conditions, notes, status,
+        root_character_id, root_character_name, root_campaign_id, source_character_id, source_campaign_id
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
@@ -175,7 +182,8 @@ export function createCharacterRoutes(db: Database): Router {
         ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
-        ?, ?, ?
+        ?, ?, ?,
+        ?, ?, ?, ?, ?
       )
     `, [
       character.id, character.campaignId, character.playerId, character.playerName,
@@ -196,6 +204,7 @@ export function createCharacterRoutes(db: Database): Router {
       JSON.stringify(character.inventory), character.gold, character.silver,
       character.copper, character.electrum, character.platinum,
       JSON.stringify(character.conditions), character.notes, character.status,
+      character.id, character.name, campaignId, null, null,
     ]);
 
     seedStarterCompanions(db, campaignId);
@@ -251,6 +260,9 @@ export function createCharacterRoutes(db: Database): Router {
     const sourcePriestSpheres = source.priest_spheres ? JSON.parse(source.priest_spheres) : null;
     const sourceThiefSkills = source.thief_skills ? JSON.parse(source.thief_skills) : null;
     const sourceInjuries = source.injuries ? JSON.parse(source.injuries) : [];
+    const rootCharacterId = source.root_character_id || source.id;
+    const rootCharacterName = source.root_character_name || source.name;
+    const rootCampaignId = source.root_campaign_id || source.campaign_id;
 
     run(db, `
       INSERT INTO characters (
@@ -261,7 +273,8 @@ export function createCharacterRoutes(db: Database): Router {
         weapon_prof_slots, nonweapon_prof_slots, weapon_profs, nonweapon_profs,
         spell_slots, memorised_spells, spellbook, priest_spheres, thief_skills,
         inventory, gold, silver, copper, electrum, platinum,
-        conditions, notes, status, injuries
+        conditions, notes, status, injuries,
+        root_character_id, root_character_name, root_campaign_id, source_character_id, source_campaign_id
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
@@ -270,7 +283,8 @@ export function createCharacterRoutes(db: Database): Router {
         ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?
+        ?, ?, ?, ?,
+        ?, ?, ?, ?, ?
       )
     `, [
       clonedId, campaignId, req.player.id, player.display_name || player.username,
@@ -287,6 +301,7 @@ export function createCharacterRoutes(db: Database): Router {
       sourceThiefSkills ? JSON.stringify(sourceThiefSkills) : null,
       JSON.stringify(sourceInventory), source.gold, source.silver, source.copper, source.electrum, source.platinum,
       JSON.stringify(sourceConditions), source.notes, 'active', JSON.stringify(sourceInjuries),
+      rootCharacterId, rootCharacterName, rootCampaignId, source.id, source.campaign_id,
     ]);
 
     seedStarterCompanions(db, campaignId);

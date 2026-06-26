@@ -24,6 +24,9 @@ export interface CompanionRelationshipState {
   riskyDecisionCount: number;   // reckless calls the leader has made (accumulates)
   refusalHistory: string[];     // action-category slugs this companion won't repeat
   disagreementCount: number;    // total logged disagreements (degrades bond over time)
+  socialBonds: Record<string, number>;
+  socialFriction: Record<string, number>;
+  heartbreak: number;
 }
 
 type CompanionDuty = 'scout' | 'vanguard' | 'warden' | 'envoy' | 'watch' | 'torch';
@@ -637,15 +640,24 @@ export function resolveCompanionDrama(params: {
       continue;
     }
 
-    if ((/rest|camp|watch|comfort|confide/.test(lowered) || eventSeed % 7 === 0) && state.trust >= 3 && state.bond >= 3 && state.romance <= 2) {
-      state.romance += 1;
-      state.lastBeat = `${npc.name} opened up to the company around a quiet moment.`;
-      run(db, 'UPDATE npcs SET disposition = ?, relationship_state = ? WHERE id = ?',
-        [deriveDisposition(state), JSON.stringify(state), npc.id]);
-      notes.push(`${npc.name} lets the guard slip for a moment, and the company feels more intimate afterwards.`);
-      break;
+      if ((/rest|camp|watch|comfort|confide/.test(lowered) || eventSeed % 7 === 0) && state.trust >= 3 && state.bond >= 3 && state.romance <= 2) {
+        state.romance += 1;
+        state.lastBeat = `${npc.name} opened up to the company around a quiet moment.`;
+        run(db, 'UPDATE npcs SET disposition = ?, relationship_state = ? WHERE id = ?',
+          [deriveDisposition(state), JSON.stringify(state), npc.id]);
+        notes.push(`${npc.name} lets the guard slip for a moment, and the company feels more intimate afterwards.`);
+        break;
+      }
+
+      if (/apologize|apologise|comfort|confide|share food|share loot|rest|camp/.test(lowered) && state.tension >= 2 && state.trust >= 2) {
+        state.tension = Math.max(0, state.tension - 1);
+        state.lastBeat = `${npc.name} let some of the strain go after a steadier moment with the company.`;
+        run(db, 'UPDATE npcs SET disposition = ?, relationship_state = ? WHERE id = ?',
+          [deriveDisposition(state), JSON.stringify(state), npc.id]);
+        notes.push(`${npc.name} is not all the way at ease, but the atmosphere around them softens a notch.`);
+        break;
+      }
     }
-  }
 
   if (joined.length >= 2) {
     for (let index = 0; index < joined.length - 1; index += 1) {
@@ -655,31 +667,43 @@ export function resolveCompanionDrama(params: {
       const rightState = hydrateRelationshipState(right);
       const pairSeed = hashValue(`${left.id}:${right.id}:${turn}:${lowered}`);
 
-      if ((/force|divide|loot|risk|trap|danger/.test(lowered) || pairSeed % 5 === 0) && (leftState.tension + rightState.tension) >= 5) {
-        leftState.tension += 1;
-        rightState.tension += 1;
-        leftState.lastBeat = `${left.name} and ${right.name} argued about the risks the company is taking.`;
-        rightState.lastBeat = leftState.lastBeat;
-        run(db, 'UPDATE npcs SET disposition = ?, relationship_state = ? WHERE id = ?',
-          [deriveDisposition(leftState), JSON.stringify(leftState), left.id]);
-        run(db, 'UPDATE npcs SET disposition = ?, relationship_state = ? WHERE id = ?',
-          [deriveDisposition(rightState), JSON.stringify(rightState), right.id]);
-        notes.push(`${left.name} and ${right.name} snap at each other over the mounting pressure, and everyone feels it.`);
-        break;
-      }
-
-      if ((/rest|camp|parley|share|celebrate|secure/.test(lowered) || pairSeed % 6 === 0) && leftState.trust >= 2 && rightState.trust >= 2) {
-        leftState.bond += 1;
-        rightState.bond += 1;
-        leftState.lastBeat = `${left.name} and ${right.name} found an easier rhythm with one another.`;
-        rightState.lastBeat = leftState.lastBeat;
-        run(db, 'UPDATE npcs SET disposition = ?, relationship_state = ? WHERE id = ?',
-          [deriveDisposition(leftState), JSON.stringify(leftState), left.id]);
-        run(db, 'UPDATE npcs SET disposition = ?, relationship_state = ? WHERE id = ?',
-          [deriveDisposition(rightState), JSON.stringify(rightState), right.id]);
-        notes.push(`${left.name} and ${right.name} fall into an easy rhythm, like companions who are starting to choose each other.`);
-        break;
-      }
+        if ((/force|divide|loot|risk|trap|danger/.test(lowered) || pairSeed % 5 === 0) && (leftState.tension + rightState.tension) >= 5) {
+          leftState.tension += 1;
+          rightState.tension += 1;
+          strengthenPairFriction(leftState, right.id, 1);
+          strengthenPairFriction(rightState, left.id, 1);
+          leftState.lastBeat = `${left.name} and ${right.name} argued about the risks the company is taking.`;
+          rightState.lastBeat = leftState.lastBeat;
+          run(db, 'UPDATE npcs SET disposition = ?, relationship_state = ? WHERE id = ?',
+            [deriveDisposition(leftState), JSON.stringify(leftState), left.id]);
+          run(db, 'UPDATE npcs SET disposition = ?, relationship_state = ? WHERE id = ?',
+            [deriveDisposition(rightState), JSON.stringify(rightState), right.id]);
+          notes.push(`${left.name} and ${right.name} snap at each other over the mounting pressure, and everyone feels it.`);
+          if (pairFriction(leftState, right.id) >= 4 || pairFriction(rightState, left.id) >= 4) {
+            notes.push(`${left.name} and ${right.name} are no longer just sniping. A real rivalry is taking shape inside the company.`);
+          }
+          break;
+        }
+  
+        if ((/rest|camp|parley|share|celebrate|secure/.test(lowered) || pairSeed % 6 === 0) && leftState.trust >= 2 && rightState.trust >= 2) {
+          leftState.bond += 1;
+          rightState.bond += 1;
+          strengthenPairBond(leftState, right.id, 1);
+          strengthenPairBond(rightState, left.id, 1);
+          easePairFriction(leftState, right.id, 1);
+          easePairFriction(rightState, left.id, 1);
+          leftState.lastBeat = `${left.name} and ${right.name} found an easier rhythm with one another.`;
+          rightState.lastBeat = leftState.lastBeat;
+          run(db, 'UPDATE npcs SET disposition = ?, relationship_state = ? WHERE id = ?',
+            [deriveDisposition(leftState), JSON.stringify(leftState), left.id]);
+          run(db, 'UPDATE npcs SET disposition = ?, relationship_state = ? WHERE id = ?',
+            [deriveDisposition(rightState), JSON.stringify(rightState), right.id]);
+          notes.push(`${left.name} and ${right.name} fall into an easy rhythm, like companions who are starting to choose each other.`);
+          if (pairBond(leftState, right.id) >= 4 || pairBond(rightState, left.id) >= 4) {
+            notes.push(`${left.name} and ${right.name} are becoming genuine friends rather than mere fellow travellers.`);
+          }
+          break;
+        }
     }
   }
 
@@ -714,10 +738,14 @@ export function normalizeRelationshipState(raw: any): CompanionRelationshipState
     riskyDecisionCount: Number(raw?.riskyDecisionCount || 0),
     refusalHistory: Array.isArray(raw?.refusalHistory) ? raw.refusalHistory : [],
     disagreementCount: Number(raw?.disagreementCount || 0),
+    socialBonds: typeof raw?.socialBonds === 'object' && raw?.socialBonds ? raw.socialBonds : {},
+    socialFriction: typeof raw?.socialFriction === 'object' && raw?.socialFriction ? raw.socialFriction : {},
+    heartbreak: Number(raw?.heartbreak || 0),
   };
 }
 
 export function describeRelationship(state: CompanionRelationshipState) {
+  if (state.heartbreak >= 2 && state.tension >= 4) return 'heart-sore';
   if (state.romance >= 4 && state.tension <= 2) return 'romantic';
   if (state.tension >= 5) return 'volatile';
   if (state.loyalty >= 5 && state.respect >= 3) return 'sworn';
@@ -1263,6 +1291,35 @@ function persistRelationshipState(db: Database, npcId: string, state: CompanionR
     [JSON.stringify(state), deriveDisposition(state), npcId]);
 }
 
+function pairBond(state: CompanionRelationshipState, npcId: string) {
+  return Number(state.socialBonds[npcId] || 0);
+}
+
+function pairFriction(state: CompanionRelationshipState, npcId: string) {
+  return Number(state.socialFriction[npcId] || 0);
+}
+
+function strengthenPairBond(state: CompanionRelationshipState, npcId: string, amount: number) {
+  state.socialBonds = {
+    ...state.socialBonds,
+    [npcId]: Math.max(-5, Math.min(10, pairBond(state, npcId) + amount)),
+  };
+}
+
+function strengthenPairFriction(state: CompanionRelationshipState, npcId: string, amount: number) {
+  state.socialFriction = {
+    ...state.socialFriction,
+    [npcId]: Math.max(0, Math.min(10, pairFriction(state, npcId) + amount)),
+  };
+}
+
+function easePairFriction(state: CompanionRelationshipState, npcId: string, amount: number) {
+  state.socialFriction = {
+    ...state.socialFriction,
+    [npcId]: Math.max(0, pairFriction(state, npcId) - amount),
+  };
+}
+
 function extractGoldAmount(action: string) {
   const match = action.match(/(\d+)\s*gp/i) || action.match(/(\d+)\s*gold/i);
   return match ? Number(match[1]) : 0;
@@ -1486,22 +1543,42 @@ export function processTownDowntime(db: Database, campaignId: string, leaderName
     }
 
     // ── Romance / jealousy dynamics ────────────────────────────────
-    if (state.romance >= 3 && state.tension <= 1) {
-      state.bond += 1;
-      changed = true;
-      notes.push(`${comp.name} and ${leaderName} find time away from the others. Nothing is said directly, but something shifts — a steadiness that wasn't quite there before.`);
-    } else if (state.romance >= 2 && state.tension >= 3) {
-      state.tension += 1;
-      state.morale -= 1;
-      changed = true;
-      notes.push(`${comp.name} is distant tonight. They're polite when pressed. Whatever is between them and ${leaderName} is tangled, and town hasn't untangled it.`);
-    }
+      if (state.romance >= 3 && state.tension <= 1) {
+        state.bond += 1;
+        changed = true;
+        notes.push(`${comp.name} and ${leaderName} find time away from the others. Nothing is said directly, but something shifts — a steadiness that wasn't quite there before.`);
+      } else if (state.romance >= 2 && state.tension >= 3) {
+        state.tension += 1;
+        state.morale -= 1;
+        changed = true;
+        notes.push(`${comp.name} is distant tonight. They're polite when pressed. Whatever is between them and ${leaderName} is tangled, and town hasn't untangled it.`);
+        if (state.tension >= 5) {
+          state.heartbreak += 1;
+          state.romance = Math.max(0, state.romance - 1);
+          notes.push(`${comp.name} finally stops pretending this is only a rough patch. Something between them and ${leaderName} breaks instead of bending.`);
+        }
+      }
 
-    // ── Loyalty warning — may leave ───────────────────────────────
-    if (state.loyalty <= -2 && state.tension >= 4) {
-      changed = true;
-      notes.push(`${comp.name} pulls ${leaderName} aside before the night is out. "I've been thinking," they say. The rest of it is quiet and direct: they're not sure they're going back in. If this is going to change, it needs to change now.`);
-    }
+      // ── Reconciliation beat ────────────────────────────────────────
+      if (state.tension >= 2 && state.trust >= 2 && state.morale >= 0 && state.disagreementCount >= 2) {
+        state.tension = Math.max(0, state.tension - 1);
+        state.disagreementCount = Math.max(0, state.disagreementCount - 1);
+        changed = true;
+        notes.push(`${comp.name} and ${leaderName} finally talk like adults instead of pretending the strain will sort itself out. Not everything is fixed, but the edge comes off it.`);
+      }
+
+      // ── Loyalty warning — may leave ───────────────────────────────
+      if (state.loyalty <= -2 && state.tension >= 4) {
+        changed = true;
+        notes.push(`${comp.name} pulls ${leaderName} aside before the night is out. "I've been thinking," they say. The rest of it is quiet and direct: they're not sure they're going back in. If this is going to change, it needs to change now.`);
+      }
+
+      if (state.loyalty <= -3 && state.tension >= 6) {
+        state.companionStatus = 'departed';
+        changed = true;
+        run(db, 'UPDATE npcs SET joined_party = 0 WHERE id = ?', [npc.id]);
+        notes.push(`${comp.name} does not come back to the room before dawn. Their kit is gone. Whatever trust remained is spent, and they have left the company for good.`);
+      }
 
     // Apply clamp limits
     state.bond = Math.max(-5, Math.min(10, state.bond));
@@ -1521,6 +1598,50 @@ export function processTownDowntime(db: Database, campaignId: string, leaderName
     notes.push(`The company settles in for the night. Food, a roof, no monsters. It does what it can.`);
   } else if (joined.length === 0) {
     notes.push(`You're alone tonight. The common room is full enough, but it's not company. You drink your drink and turn in early.`);
+  }
+
+  notes.push(...processCompanionPairDowntime(db, campaignId));
+
+  return notes;
+}
+
+function processCompanionPairDowntime(db: Database, campaignId: string): string[] {
+  const joined = all(db, `
+    SELECT id, campaign_id, name, race, char_class, level, personality, disposition, location_scene_id,
+      stats, relationship_state, joined_party, companion_role, companion_order, alive
+    FROM npcs
+    WHERE campaign_id = ? AND joined_party = 1 AND alive = 1
+    ORDER BY companion_order ASC, name ASC
+  `, [campaignId]) as CompanionRow[];
+
+  const notes: string[] = [];
+  for (let index = 0; index < joined.length - 1; index += 1) {
+    const left = joined[index];
+    const right = joined[index + 1];
+    const leftState = hydrateRelationshipState(left);
+    const rightState = hydrateRelationshipState(right);
+
+    if (pairBond(leftState, right.id) >= 4 && pairBond(rightState, left.id) >= 4 && leftState.tension <= 2 && rightState.tension <= 2) {
+      leftState.morale += 1;
+      rightState.morale += 1;
+      leftState.lastBeat = `${left.name} and ${right.name} were easy in each other's company in town.`;
+      rightState.lastBeat = leftState.lastBeat;
+      persistRelationshipState(db, left.id, leftState);
+      persistRelationshipState(db, right.id, rightState);
+      notes.push(`${left.name} and ${right.name} spend most of the evening together. By now it reads as friendship, not accident.`);
+      break;
+    }
+
+    if (pairFriction(leftState, right.id) >= 4 || pairFriction(rightState, left.id) >= 4) {
+      leftState.tension += 1;
+      rightState.tension += 1;
+      leftState.lastBeat = `${left.name} and ${right.name} cannot keep their dislike fully hidden in town.`;
+      rightState.lastBeat = leftState.lastBeat;
+      persistRelationshipState(db, left.id, leftState);
+      persistRelationshipState(db, right.id, rightState);
+      notes.push(`${left.name} and ${right.name} keep finding reasons to needle each other. The rivalry is no longer subtle.`);
+      break;
+    }
   }
 
   return notes;

@@ -86,6 +86,15 @@ interface TownData {
   contracts: Contract[];
   healQuote: HealQuote;
   lootAppraisal: { items: LootItem[]; totalGp: number };
+  expeditionSummary: {
+    discoveredSites: number;
+    fallbackPoints: number;
+    campReady: number;
+    hazardMarks: number;
+    treasureMarks: number;
+    encounterPressure: number;
+    recentEvents: string[];
+  };
   factions: Array<{ key: string; name: string; reputation: number; heat: number }>;
 }
 
@@ -490,6 +499,34 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
               </div>
             </div>
 
+            <div className="rounded-lg border border-leather/15 bg-parchment-light/50 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-heading font-bold text-leather-dark">Last Expedition</h3>
+                  <p className="text-xs font-body italic text-ink-faint">What the delve actually bought you.</p>
+                </div>
+                <span className="text-[10px] font-heading uppercase tracking-wide text-amber-700">
+                  Pressure {townData.expeditionSummary.encounterPressure}/10
+                </span>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
+                <SummaryStat label="Sites" value={String(townData.expeditionSummary.discoveredSites)} />
+                <SummaryStat label="Fallbacks" value={String(townData.expeditionSummary.fallbackPoints)} />
+                <SummaryStat label="Camps" value={String(townData.expeditionSummary.campReady)} />
+                <SummaryStat label="Hazards" value={String(townData.expeditionSummary.hazardMarks)} />
+                <SummaryStat label="Loot Marks" value={String(townData.expeditionSummary.treasureMarks)} />
+              </div>
+              {townData.expeditionSummary.recentEvents.length > 0 && (
+                <div className="mt-3 space-y-1">
+                  {townData.expeditionSummary.recentEvents.map((event) => (
+                    <p key={event} className="text-[11px] font-body text-ink-faint">
+                      {event}
+                    </p>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {/* Prospects for hire */}
             {prospects.length > 0 && (
               <div className="rounded-lg border border-leather/15 bg-parchment-light/50 p-4">
@@ -790,6 +827,15 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function SummaryStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-leather/10 bg-parchment/60 p-2 text-center">
+      <div className="text-[10px] font-heading uppercase tracking-wide text-ink-faint">{label}</div>
+      <div className="mt-0.5 text-sm font-heading font-bold text-leather-dark">{value}</div>
     </div>
   );
 }

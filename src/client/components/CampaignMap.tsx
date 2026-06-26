@@ -25,6 +25,10 @@ interface MapNode {
     trapDisarmed: boolean;
     obstacleCleared: boolean;
     lockOpened: boolean;
+    trapStudied: boolean;
+    lockStudied: boolean;
+    obstaclePrepared: boolean;
+    ropeRigged: boolean;
     stashFound: boolean;
     secured: boolean;
     fallbackPoint: boolean;
@@ -46,6 +50,14 @@ interface CampaignMapData {
   currentSceneId: string;
   nodes: MapNode[];
   edges: MapEdge[];
+  stats?: {
+    discoveredSites: number;
+    fallbackPoints: number;
+    campReady: number;
+    hazardMarks: number;
+    treasureMarks: number;
+    secretRoutes: number;
+  };
 }
 
 interface Props {
@@ -85,9 +97,17 @@ export default function CampaignMap({ mapData }: Props) {
           Delver Map
         </div>
         <div className="text-[10px] font-body text-ink-faint">
-          {positioned.filter((node) => node.discovered).length} sites known
+          {(mapData.stats?.discoveredSites ?? positioned.filter((node) => node.discovered).length)} sites known
         </div>
       </div>
+
+      {mapData.stats && (
+        <div className="mb-3 grid grid-cols-3 gap-2 text-center">
+          <MiniStat label="Hazards" value={String(mapData.stats.hazardMarks)} />
+          <MiniStat label="Loot" value={String(mapData.stats.treasureMarks)} />
+          <MiniStat label="Secrets" value={String(mapData.stats.secretRoutes)} />
+        </div>
+      )}
 
       <div className="overflow-x-auto overflow-y-hidden rounded-lg border border-leather/10 bg-parchment/70 [-webkit-overflow-scrolling:touch]">
         <div style={{ width: maxX, height: maxY, position: 'relative' }}>
@@ -150,6 +170,9 @@ export default function CampaignMap({ mapData }: Props) {
                   {node.roomState?.knownTreasure && <Marker label="Loot" tone="gold" />}
                   {node.roomState?.knownHazard && <Marker label="Haz" tone="red" />}
                   {node.roomState?.hiddenExitFound && <Marker label="Secret" tone="ink" />}
+                  {node.roomState?.trapStudied && <Marker label="Trap Read" tone="red" />}
+                  {node.roomState?.lockStudied && <Marker label="Lock Read" tone="ink" />}
+                  {node.roomState?.ropeRigged && <Marker label="Rope" tone="green" />}
                 </div>
               )}
               {node.current && (
@@ -190,9 +213,22 @@ export default function CampaignMap({ mapData }: Props) {
             {focus.roomState.knownTreasure && <Marker label="Treasure Found" tone="gold" />}
             {focus.roomState.knownHazard && <Marker label="Hazard Known" tone="red" />}
             {focus.roomState.hiddenExitFound && <Marker label="Secret Route Found" tone="ink" />}
+            {focus.roomState.trapStudied && <Marker label="Trap Studied" tone="red" />}
+            {focus.roomState.lockStudied && <Marker label="Lock Studied" tone="ink" />}
+            {focus.roomState.obstaclePrepared && <Marker label="Force Prepared" tone="gold" />}
+            {focus.roomState.ropeRigged && <Marker label="Rope Rigged" tone="green" />}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-leather/10 bg-parchment/60 px-2 py-2">
+      <div className="text-[9px] font-heading uppercase tracking-wide text-ink-faint">{label}</div>
+      <div className="mt-0.5 text-sm font-heading font-bold text-leather-dark">{value}</div>
     </div>
   );
 }

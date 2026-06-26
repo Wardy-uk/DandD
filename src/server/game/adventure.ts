@@ -52,6 +52,10 @@ interface CharacterRecord {
   status?: string;
   thief_skills?: string | null;
   inventory?: string | null;
+  spellbook?: string | null;
+  memorised_spells?: string | null;
+  spell_slots?: string | null;
+  conditions?: string | null;
 }
 
 interface NpcRecord {
@@ -79,6 +83,10 @@ interface SceneState {
   cleared: boolean;
   knownHazard: boolean;
   knownTreasure: boolean;
+  trapStudied: boolean;
+  lockStudied: boolean;
+  obstaclePrepared: boolean;
+  ropeRigged: boolean;
   restCount: number;
   loreFragmentsFound: string[];
 }
@@ -359,6 +367,147 @@ export function resolveRichExploration(params: {
     }, turn, campaignState, blueprint, action);
   }
 
+  if (/lay on hands|hands on wound|paladin's touch/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    if (character.char_class !== 'paladin') {
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
+        content: 'You can offer reassurance and discipline, but lay on hands belongs to a paladin\'s calling.',
+        explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action);
+    }
+    const conditions = parseStringArray(character.conditions);
+    if (conditions.includes('lay_on_hands_spent')) {
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
+        content: 'The grace is there, but not again today. You have already called on that mercy once.',
+        explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action);
+    }
+    if (character.hp >= character.max_hp) {
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
+        content: 'There is no wound here that needs the touch right now.',
+        explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action);
+    }
+    const heal = Math.min(character.max_hp - character.hp, Math.max(2, character.level * 2));
+    applyHp(db, character.id, character.hp + heal);
+    run(db, 'UPDATE characters SET conditions = ? WHERE id = ?', [JSON.stringify([...conditions, 'lay_on_hands_spent']), character.id]);
+    shiftFactionStanding(campaignState, 'watch', { reputation: 1 }, `${character.name} used paladin grace in the depths.`);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: `You set a gauntleted hand over the hurt and call on the vow behind the title. Warmth answers. ${heal} hit point${heal === 1 ? '' : 's'} return, and the company is reminded why paladins unsettle the dark.`,
+      hpDelta: heal,
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
+  if (/track|read the trail|follow tracks|read spoor|hunt the sign/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    const rangerEdge = character.char_class === 'ranger' ? 3 : character.char_class === 'thief' ? 1 : 0;
+    const trackRoll = d20() + Math.floor((character.wis - 10) / 2) + rangerEdge + companionMods.scoutBonus;
+    state.tracksFound = true;
+    if (trackRoll >= 13) {
+      campaignState.encounterPressure = Math.max(0, campaignState.encounterPressure - 1);
+      state.hiddenExitFound = state.hiddenExitFound || trackRoll >= 17;
+      saveSceneState(db, campaignId, scene.id, state);
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
+        content: `You read the ground properly. ${blueprint.tracks} It points toward ${blueprint.faction}, and the pattern says "${blueprint.encounterTheme}" more than accident.${trackRoll >= 17 ? ` Better still, the trail hints at a quieter way ${blueprint.hiddenExitDirection}.` : ''}`,
+        explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action);
+    }
+    saveSceneState(db, campaignId, scene.id, state);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: `You get fragments — enough to know traffic passed this way, not enough to own the pattern. The room keeps some of its trailcraft to itself.`,
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
+  if (/check supplies|check the supplies|count supplies|take stock/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    const torches = getItemQuantity(inventory, 'Torch');
+    const rations = getItemQuantity(inventory, 'Ration');
+    const lockpicks = getItemQuantity(inventory, 'Lockpick Set');
+    const bandages = getItemQuantity(inventory, 'Bandage Roll');
+    const arrows = getItemQuantity(inventory, 'Arrow');
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: `${character.name} takes stock instead of guessing: torches ${torches}, rations ${rations}, lockpick sets ${lockpicks}, bandage rolls ${bandages}, arrows ${arrows}. In a real delve, this is the sort of arithmetic that keeps people alive.`,
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
+  if (/study spellbook|consult spellbook|review the spellbook/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    if (character.char_class !== 'mage') {
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
+        content: 'You can study your notes if you like, but a spellbook only answers to a mage.',
+        explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action);
+    }
+    const spellbook = parseStringArray(character.spellbook);
+    const memorised = parseStringArray(character.memorised_spells);
+    if (spellbook.length === 0) {
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
+        content: 'The book is thin on useful patterns just now. There is knowledge there, but not much immediately ready to hand.',
+        explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action);
+    }
+    if (memorised.length === 0) {
+      const firstReady = spellbook.find((spell) => spell !== 'Read Magic') || spellbook[0];
+      run(db, 'UPDATE characters SET memorised_spells = ? WHERE id = ?', [JSON.stringify([firstReady]), character.id]);
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
+        content: `You crouch over the spellbook, re-fix ${firstReady} in mind, and feel the pattern click into its waiting shape. The dungeon is still trying to kill you, but at least now it will have to argue with a prepared wizard.`,
+        explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action);
+    }
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: `You review the book long enough to steady the arcane patterning already in your head. Ready at hand: ${memorised.join(', ')}.`,
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
+  if (/study.*trap|inspect.*trap|examine.*trap mechanism|read.*trap/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    state.knownHazard = true;
+    state.trapStudied = true;
+    saveSceneState(db, campaignId, scene.id, state);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: `You take the trap apart with your eyes before you touch it. ${blueprint.trap.kind} stops being a nasty surprise and becomes a mechanism with habits, blind spots, and a sequence you can work against.`,
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
+  if (/study.*lock|inspect.*lock|examine.*lock mechanism|read.*lock/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    state.lockStudied = true;
+    saveSceneState(db, campaignId, scene.id, state);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: `You take time to read ${blueprint.lock.kind} properly. It is still stubborn, but no longer mysterious. The next attempt will be based on information instead of hope.`,
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
+  if (/brace.*door|set.*leverage|prepare.*force|get purchase on.*door|ready to force/.test(lowered)) {
+    const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
+    state.obstaclePrepared = true;
+    saveSceneState(db, campaignId, scene.id, state);
+    saveCampaignState(db, campaignId, campaignState);
+    return finalizeOutcome(db, campaignId, {
+      content: `You stop treating ${blueprint.obstacle} like a wall and start treating it like a problem. Angles, footing, hand placement, where the weight really wants to go — the next forcing attempt will be cleaner.`,
+      explorationTurnAdvanced: turn.turn,
+    }, turn, campaignState, blueprint, action);
+  }
+
   if (/pick lock|pick the lock|unlock|work the lock/.test(lowered)) {
     const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
     if (state.lockOpened) {
@@ -369,7 +518,11 @@ export function resolveRichExploration(params: {
       return finalizeOutcome(db, campaignId, { content: `You study ${blueprint.lock.kind}, but without proper picks you can only guess at its weaknesses.`, explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action);
     }
 
-    const pickScore = d20() + Math.floor((character.dex - 10) / 2) + thiefBonus(character, 'open_locks') + companionMods.scoutBonus;
+    const pickScore = d20()
+      + Math.floor((character.dex - 10) / 2)
+      + thiefBonus(character, 'open_locks')
+      + companionMods.scoutBonus
+      + (state.lockStudied ? 2 : 0);
     if (pickScore >= blueprint.lock.dc) {
       state.lockOpened = true;
       state.cleared = false;
@@ -378,7 +531,7 @@ export function resolveRichExploration(params: {
       shiftFactionStanding(campaignState, 'delvers', { reputation: 1 }, 'The party solved a lock cleanly instead of smashing it.');
       saveCampaignState(db, campaignId, campaignState);
       return finalizeOutcome(db, campaignId, {
-        content: `With a patient touch, you defeat ${blueprint.lock.kind}. The mechanism yields with a quiet, deeply satisfying click.`,
+        content: `With a patient touch, you defeat ${blueprint.lock.kind}. The mechanism yields with a quiet, deeply satisfying click.${state.lockStudied ? ' The earlier study pays off immediately.' : ''}`,
         xpDelta: 25,
         explorationTurnAdvanced: turn.turn,
       }, turn, campaignState, blueprint, action);
@@ -402,7 +555,12 @@ export function resolveRichExploration(params: {
       return finalizeOutcome(db, campaignId, { content: 'Whatever trap was here has already been neutralised.', explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action);
     }
 
-    const disarmScore = d20() + Math.floor((character.dex - 10) / 2) + thiefBonus(character, 'find_traps') + companionMods.scoutBonus;
+    const disarmScore = d20()
+      + Math.floor((character.dex - 10) / 2)
+      + thiefBonus(character, 'find_traps')
+      + companionMods.scoutBonus
+      + (state.trapStudied ? 2 : 0)
+      + (state.ropeRigged ? 1 : 0);
     if (disarmScore >= blueprint.trap.dc) {
       state.trapDisarmed = true;
       state.knownHazard = true;
@@ -410,8 +568,18 @@ export function resolveRichExploration(params: {
       awardXp(db, character, 30);
       saveCampaignState(db, campaignId, campaignState);
       return finalizeOutcome(db, campaignId, {
-        content: `You identify the working heart of ${blueprint.trap.kind} and disable it before it can punish the party.`,
+        content: `You identify the working heart of ${blueprint.trap.kind} and disable it before it can punish the party.${state.trapStudied || state.ropeRigged ? ' Preparation turns danger into procedure.' : ''}`,
         xpDelta: 30,
+        explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action);
+    }
+
+    if (state.trapStudied || state.ropeRigged) {
+      state.knownHazard = true;
+      saveSceneState(db, campaignId, scene.id, state);
+      saveCampaignState(db, campaignId, campaignState);
+      return finalizeOutcome(db, campaignId, {
+        content: `You nearly have ${blueprint.trap.kind}, but nearly is the whole problem. It stays live, though your preparation keeps it from snapping immediately.`,
         explorationTurnAdvanced: turn.turn,
       }, turn, campaignState, blueprint, action);
     }
@@ -470,7 +638,12 @@ export function resolveRichExploration(params: {
       return finalizeOutcome(db, campaignId, { content: 'The way is already clear enough to pass.', explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action);
     }
     const strMods = getStrengthMods(character.str, character.str_percentile);
-    const effort = d20() + strMods.hitAdj + Math.floor((character.level - 1) / 2) + companionMods.vanguardBonus;
+    const effort = d20()
+      + strMods.hitAdj
+      + Math.floor((character.level - 1) / 2)
+      + companionMods.vanguardBonus
+      + (state.obstaclePrepared ? 2 : 0)
+      + (state.ropeRigged ? 1 : 0);
     if (effort >= 13) {
       state.obstacleCleared = true;
       state.secured = false;
@@ -479,7 +652,7 @@ export function resolveRichExploration(params: {
       shiftFactionStanding(campaignState, blueprint.faction, { heat: 2 }, 'The party is forcing their way through loudly.');
       saveCampaignState(db, campaignId, campaignState);
       return finalizeOutcome(db, campaignId, {
-        content: `With a committed effort, you overcome ${blueprint.obstacle}. The noise is terrible, but the path yields.`,
+        content: `With a committed effort, you overcome ${blueprint.obstacle}. The noise is terrible, but the path yields.${state.obstaclePrepared ? ' Preparation mattered.' : ''}`,
         xpDelta: 20,
         explorationTurnAdvanced: turn.turn,
       }, turn, campaignState, blueprint, action, true);
@@ -876,20 +1049,22 @@ export function resolveRichExploration(params: {
       }, turn, campaignState, blueprint, action);
     }
 
+    consumeItem(db, character.id, inventory, 'Rope (50 ft)', 1);
     state.fallbackPoint = true;
     state.knownHazard = true;
     state.secured = true;
+    state.ropeRigged = true;
     if (!state.obstacleCleared && /slab|hatch|portcullis|crawlspace/.test(blueprint.obstacle)) {
       state.obstacleCleared = true;
     }
     saveSceneState(db, campaignId, scene.id, state);
     noteCampaignEvent(campaignState, `${character.name} rigged rope lines in ${scene.name}.`);
     saveCampaignState(db, campaignId, campaignState);
-    return finalizeOutcome(db, campaignId, {
-      content: `You rig rope where it matters, turning dangerous ground into manageable ground. The route is manageable now.`,
-      xpDelta: 10,
-      explorationTurnAdvanced: turn.turn,
-    }, turn, campaignState, blueprint, action);
+      return finalizeOutcome(db, campaignId, {
+        content: `You commit real rope to the problem and rig it where it matters, turning dangerous ground into manageable ground. The route is manageable now, but the rope is now part of the dungeon rather than part of your spare kit.`,
+        xpDelta: 10,
+        explorationTurnAdvanced: turn.turn,
+      }, turn, campaignState, blueprint, action);
   }
 
 
@@ -1591,6 +1766,15 @@ function getInventory(character: CharacterRecord): InventoryItem[] {
   }
 }
 
+function parseStringArray(raw: string | null | undefined): string[] {
+  try {
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.map((entry) => String(entry)) : [];
+  } catch {
+    return [];
+  }
+}
+
 function saveInventory(db: Database, characterId: string, inventory: InventoryItem[]) {
   run(db, 'UPDATE characters SET inventory = ? WHERE id = ?', [JSON.stringify(inventory), characterId]);
 }
@@ -1670,6 +1854,10 @@ function normalizeState(state: Partial<SceneState>): SceneState {
     cleared: Boolean((state as any).cleared),
     knownHazard: Boolean((state as any).knownHazard),
     knownTreasure: Boolean((state as any).knownTreasure),
+    trapStudied: Boolean((state as any).trapStudied),
+    lockStudied: Boolean((state as any).lockStudied),
+    obstaclePrepared: Boolean((state as any).obstaclePrepared),
+    ropeRigged: Boolean((state as any).ropeRigged),
     restCount: Number(state.restCount || 0),
     loreFragmentsFound: Array.isArray((state as any).loreFragmentsFound)
       ? (state as any).loreFragmentsFound

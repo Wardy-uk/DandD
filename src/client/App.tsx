@@ -5,6 +5,7 @@ import CampaignList from './components/CampaignList.js';
 import CharacterCreate from './components/CharacterCreate.js';
 import GameView from './components/GameView.js';
 import AdminPanel from './components/AdminPanel.js';
+import AdventurerRoster from './components/AdventurerRoster.js';
 import PwaPrompt from './components/PwaPrompt.js';
 import VolumeControl from './components/VolumeControl.js';
 
@@ -19,7 +20,7 @@ interface Player {
   token: string;
 }
 
-type View = 'login' | 'campaigns' | 'create-character' | 'game' | 'admin';
+type View = 'login' | 'campaigns' | 'roster' | 'create-character' | 'game' | 'admin';
 
 export default function App() {
   const [player, setPlayer] = useState<Player | null>(null);
@@ -159,6 +160,14 @@ export default function App() {
             apiUrl={API_URL}
             player={player}
             onJoinCampaign={handleJoinCampaign}
+            onOpenRoster={() => setView('roster')}
+          />
+        )}
+        {view === 'roster' && player && (
+          <AdventurerRoster
+            apiUrl={API_URL}
+            player={player}
+            onBack={() => setView('campaigns')}
           />
         )}
         {view === 'create-character' && player && campaignId && (

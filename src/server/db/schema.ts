@@ -164,6 +164,11 @@ function runMigrations() {
       created_at TEXT DEFAULT (datetime('now'))
     )
   `);
+  try { db.run('ALTER TABLE characters ADD COLUMN root_character_id TEXT'); } catch {}
+  try { db.run('ALTER TABLE characters ADD COLUMN root_character_name TEXT DEFAULT ""'); } catch {}
+  try { db.run('ALTER TABLE characters ADD COLUMN root_campaign_id TEXT'); } catch {}
+  try { db.run('ALTER TABLE characters ADD COLUMN source_character_id TEXT'); } catch {}
+  try { db.run('ALTER TABLE characters ADD COLUMN source_campaign_id TEXT'); } catch {}
 
   db.run(`
     CREATE TABLE IF NOT EXISTS scenes (

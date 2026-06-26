@@ -18,9 +18,10 @@ interface Props {
   apiUrl: string;
   player: { id: string; token: string; displayName: string };
   onJoinCampaign: (campaignId: string, characterId: string | null) => void;
+  onOpenRoster: () => void;
 }
 
-export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) {
+export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRoster }: Props) {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [settingOptions, setSettingOptions] = useState<CampaignSettingOption[]>([]);
   const [defaultSettingId, setDefaultSettingId] = useState('');
@@ -147,7 +148,13 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign }: Props) 
         <h2 className="text-2xl font-heading font-bold text-leather-dark tracking-wide sm:text-3xl">
           Your Campaigns
         </h2>
-        <div className="grid grid-cols-2 gap-2 sm:flex">
+        <div className="grid grid-cols-3 gap-2 sm:flex">
+          <button
+            onClick={onOpenRoster}
+            className="px-4 py-2 rounded-lg border border-leather/20 text-sm font-heading font-semibold text-leather hover:bg-leather/5 transition-colors"
+          >
+            My Adventurers
+          </button>
           <button
             onClick={() => { setShowJoin(true); fetchBrowseCampaigns(); }}
             className="px-4 py-2 rounded-lg border border-leather/20 text-sm font-heading font-semibold text-leather hover:bg-leather/5 transition-colors"
