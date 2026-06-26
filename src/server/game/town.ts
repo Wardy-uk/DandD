@@ -453,6 +453,8 @@ interface FollowUpContext {
   campaignName: string;
   previousReward: number;
   factionRep: number;
+  sceneName?: string; // a visited scene from this campaign — personalises template text
+  npcName?: string;   // a living NPC name in this campaign — for shadow/faction flavour
 }
 
 type FollowUpTemplate = {
@@ -469,8 +471,12 @@ type FollowUpTemplate = {
 const FOLLOW_UP_CHAINS: Record<string, FollowUpTemplate[]> = {
   watch: [
     {
-      titleFn: () => 'Secure the second passage',
-      descriptionFn: () => 'The garrison noted your work. The adjacent passage needs the same treatment — clear it and report back.',
+      titleFn: (ctx) => ctx.sceneName
+        ? `Return to ${ctx.sceneName} — finish the job`
+        : 'Secure the second passage',
+      descriptionFn: (ctx) => ctx.sceneName
+        ? `Something is still moving in ${ctx.sceneName}. The garrison wants it cleared properly this time, with a marker left as proof.`
+        : 'The garrison noted your work. The adjacent passage needs the same treatment — clear it and report back.',
       rewardMultiplier: 1.4,
       objectiveType: 'cleared_scenes',
       objectiveTarget: 2,
@@ -478,7 +484,9 @@ const FOLLOW_UP_CHAINS: Record<string, FollowUpTemplate[]> = {
       narrationFn: () => 'The duty officer doesn\'t look up. "Another posting. You\'ve been recommended." She slides the contract across without ceremony.',
     },
     {
-      titleFn: () => 'Hold the front corridor',
+      titleFn: (ctx) => ctx.sceneName
+        ? `Suppress the incursion — ${ctx.sceneName} and beyond`
+        : 'Hold the front corridor',
       descriptionFn: () => 'What you cleared is filling back up. The garrison wants it suppressed properly this time — more sections, more proof.',
       rewardMultiplier: 1.5,
       objectiveType: 'cleared_scenes',
@@ -490,13 +498,17 @@ const FOLLOW_UP_CHAINS: Record<string, FollowUpTemplate[]> = {
   ],
   locals: [
     {
-      titleFn: (ctx) => `Retrieve the surveyor's documentation`,
-      descriptionFn: () => 'You found his trail. The guild now wants the actual work — maps, notes, survey markers. Whatever survived.',
+      titleFn: () => 'Retrieve the surveyor\'s documentation',
+      descriptionFn: (ctx) => ctx.sceneName
+        ? `You found his trail. The guild now wants the actual work — maps and notes from ${ctx.sceneName} and the sections beyond. Whatever survived.`
+        : 'You found his trail. The guild now wants the actual work — maps, notes, survey markers. Whatever survived.',
       rewardMultiplier: 1.35,
       objectiveType: 'discovered_sites',
       objectiveTarget: 5,
       objectiveLabel: 'sites documented',
-      narrationFn: (ctx) => `A guild representative places a heavier purse on the table without sitting down. "The documentation, not just proof of life. ${ctx.townName} has uses for proper maps."`,
+      narrationFn: (ctx) => ctx.sceneName
+        ? `A guild representative places a heavier purse on the table. "The documentation. Coverage past ${ctx.sceneName} is what we need." She doesn't sit.`
+        : `A guild representative places a heavier purse on the table without sitting down. "The documentation, not just proof of life. ${ctx.townName} has uses for proper maps."`,
     },
     {
       titleFn: () => 'Full survey of the northern sectors',
@@ -517,7 +529,9 @@ const FOLLOW_UP_CHAINS: Record<string, FollowUpTemplate[]> = {
       objectiveType: 'treasure_marks',
       objectiveTarget: 3,
       objectiveLabel: 'treasure leads secured',
-      narrationFn: () => 'The message arrives at your door before you\'re awake. No signature. The description of what they want is precise. The fee offered is not modest.',
+      narrationFn: (ctx) => ctx.npcName
+        ? `A message at your door before you're awake. No signature. "Find the second seal. Don't mention it to ${ctx.npcName}." The fee makes the injunction interesting.`
+        : 'The message arrives at your door before you\'re awake. No signature. The description of what they want is precise. The fee offered is not modest.',
     },
     {
       titleFn: () => 'Identify the contractor',
@@ -532,8 +546,12 @@ const FOLLOW_UP_CHAINS: Record<string, FollowUpTemplate[]> = {
   ],
   delvers: [
     {
-      titleFn: () => 'Chart the mid-dungeon approaches',
-      descriptionFn: () => 'The first routes are mapped. Now the guild wants the middle approaches — fallbacks, emergency exits, supply-cache candidates.',
+      titleFn: (ctx) => ctx.sceneName
+        ? `Map the approaches beyond ${ctx.sceneName}`
+        : 'Chart the mid-dungeon approaches',
+      descriptionFn: (ctx) => ctx.sceneName
+        ? `The cartographer wants systematic coverage past ${ctx.sceneName} — fallbacks, emergency exits, supply-cache candidates. Get in and mark it.`
+        : 'The first routes are mapped. Now the guild wants the middle approaches — fallbacks, emergency exits, supply-cache candidates.',
       rewardMultiplier: 1.4,
       objectiveType: 'fallback_points',
       objectiveTarget: 3,
@@ -596,11 +614,36 @@ export function generateFollowUpContract(
   if (pendingExists) return null;
 
   const townName = String(campRow.town_name || '').trim() || generateTownName(campaignId);
+
+  // Pull campaign-specific names to personalise template text
+  const visitedScenes = all(db,
+    `SELECT s.name FROM scenes s
+     LEFT JOIN scene_state ss ON ss.scene_id = s.id AND ss.campaign_id = s.campaign_id
+     WHERE s.campaign_id = ? AND s.visited = 1
+       AND s.name != 'Starting Location'
+       AND (ss.state_json IS NULL OR json_extract(ss.state_json, '$.cleared') != 1)
+     ORDER BY RANDOM() LIMIT 1`,
+    [campaignId],
+  ) as Array<{name: string}>;
+  // Fallback: any visited scene if none uncleared
+  const sceneName = visitedScenes[0]?.name
+    || (all(db,
+      `SELECT name FROM scenes WHERE campaign_id = ? AND visited = 1 AND name != 'Starting Location' ORDER BY RANDOM() LIMIT 1`,
+      [campaignId],
+    ) as Array<{name: string}>)[0]?.name;
+
+  const npcName = (all(db,
+    'SELECT name FROM npcs WHERE campaign_id = ? AND alive = 1 AND joined_party = 0 LIMIT 1',
+    [campaignId],
+  ) as Array<{name: string}>)[0]?.name;
+
   const ctx: FollowUpContext = {
     townName,
     campaignName: String(campRow.name || ''),
     previousReward: completedContract.reward,
     factionRep,
+    sceneName,
+    npcName,
   };
 
   const reward = Math.ceil((completedContract.reward * template.rewardMultiplier) / 5) * 5;

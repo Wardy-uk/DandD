@@ -64,6 +64,7 @@ interface Contract {
   factionKey: string;
   taken: boolean;
   openingContract?: boolean;
+  followUpOf?: string;
   objectiveLabel?: string;
   objectiveTarget?: number;
   progress?: number;
@@ -224,6 +225,7 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
   const [log, setLog] = useState<Array<{ actor: string; content: string; id: string }>>([]);
   const [buyCart, setBuyCart] = useState<Record<string, number>>({});
   const [leaving, setLeaving] = useState(false);
+  const [newContractId, setNewContractId] = useState<string | null>(null);
 
   const headers = { Authorization: `Bearer ${player.token}`, 'Content-Type': 'application/json' };
 
@@ -253,6 +255,19 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
     socket.on('game:narration', onNarration);
     return () => { socket.off('game:narration', onNarration); };
   }, [socket]);
+
+  // React to new follow-up contracts posted by the server
+  useEffect(() => {
+    const onContractsUpdated = (data: { followUpId: string }) => {
+      setNewContractId(data.followUpId);
+      setTab('garrison'); // bring player to the board
+      fetchTownData();
+      // Clear highlight after 15 seconds
+      setTimeout(() => setNewContractId(null), 15_000);
+    };
+    socket.on('game:contracts_updated', onContractsUpdated);
+    return () => { socket.off('game:contracts_updated', onContractsUpdated); };
+  }, [socket, fetchTownData]);
 
   const showMsg = (msg: string) => {
     setActionMsg(msg);
@@ -772,16 +787,29 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
               {contracts.length > 0 ? (
                 <div className="space-y-3">
                   {contracts.map(contract => (
-                    <div key={contract.id} className={`p-3 rounded-lg border ${
-                      contract.taken ? 'border-green-600/30 bg-green-50/30' : 'border-leather/15 bg-parchment/40'
+                    <div key={contract.id} className={`p-3 rounded-lg border transition-colors ${
+                      contract.id === newContractId
+                        ? 'border-leather/50 bg-leather/8 ring-1 ring-leather/25'
+                        : contract.taken ? 'border-green-600/30 bg-green-50/30'
+                        : 'border-leather/15 bg-parchment/40'
                     }`}>
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex-1">
                           <div className="flex flex-wrap items-center gap-2">
                             <p className="font-heading font-bold text-sm text-leather-dark">{contract.title}</p>
+                            {contract.id === newContractId && (
+                              <span className="rounded-full border border-leather/40 bg-leather px-2 py-0.5 text-[10px] font-heading uppercase tracking-wide text-parchment-light animate-pulse">
+                                New
+                              </span>
+                            )}
                             {contract.openingContract && (
                               <span className="rounded-full border border-blood/20 bg-blood/5 px-2 py-0.5 text-[10px] font-heading uppercase tracking-wide text-blood">
                                 Opening Hook
+                              </span>
+                            )}
+                            {contract.followUpOf && contract.id !== newContractId && (
+                              <span className="rounded-full border border-leather/20 bg-parchment px-2 py-0.5 text-[10px] font-heading text-ink-faint">
+                                follow-up
                               </span>
                             )}
                           </div>
