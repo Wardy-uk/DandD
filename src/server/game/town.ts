@@ -274,7 +274,8 @@ export interface TownContract {
   completedAt: string | null;
   claimedAt?: string | null;
   openingContract?: boolean;
-  objectiveType?: 'discovered_sites' | 'cleared_scenes' | 'fallback_points' | 'treasure_marks' | 'lore_entries' | 'revelations';
+  objectiveType?: 'discovered_sites' | 'cleared_scenes' | 'fallback_points' | 'treasure_marks' | 'lore_entries' | 'revelations' | 'named_scene_visited' | 'npc_recruited' | 'faction_standing';
+  objectiveDetail?: string;
   objectiveTarget?: number;
   objectiveLabel?: string;
   progress?: number;
@@ -320,7 +321,20 @@ export function evaluateContracts(db: Database, campaignId: string, contracts: T
   return contracts.map((contract) => {
     const objectiveType = contract.objectiveType || 'discovered_sites';
     const objectiveTarget = Number(contract.objectiveTarget || 1);
-    const progress = Number(metrics[objectiveType] || 0);
+    let progress = Number(metrics[objectiveType] || 0);
+
+    // Bespoke per-contract objective types
+    if (objectiveType === 'named_scene_visited' && contract.objectiveDetail) {
+      const visited = all(db, 'SELECT name FROM scenes WHERE campaign_id = ? AND visited = 1', [campaignId]) as Array<{ name: string }>;
+      progress = visited.some(s => s.name.toLowerCase().includes(contract.objectiveDetail!.toLowerCase())) ? 1 : 0;
+    } else if (objectiveType === 'npc_recruited' && contract.objectiveDetail) {
+      const companions = all(db, 'SELECT name FROM npcs WHERE campaign_id = ? AND joined_party = 1', [campaignId]) as Array<{ name: string }>;
+      progress = companions.some(n => n.name.toLowerCase().includes(contract.objectiveDetail!.toLowerCase())) ? 1 : 0;
+    } else if (objectiveType === 'faction_standing' && contract.objectiveDetail) {
+      const [factionId] = contract.objectiveDetail.split(':');
+      const csState = getCampaignState(db, campaignId);
+      progress = Math.max(0, csState.factions[factionId]?.reputation || 0);
+    }
     const completedAt = contract.completedAt || (contract.taken && progress >= objectiveTarget ? new Date().toISOString() : null);
     return {
       ...contract,
@@ -422,6 +436,9 @@ function describeObjective(objectiveType: NonNullable<TownContract['objectiveTyp
     case 'treasure_marks': return 'treasure leads secured';
     case 'lore_entries': return 'lore proofs gathered';
     case 'revelations': return 'major revelations';
+    case 'named_scene_visited': return 'named location visited';
+    case 'npc_recruited': return 'companion recruited';
+    case 'faction_standing': return 'standing gained';
     case 'discovered_sites':
     default:
       return 'sites discovered';

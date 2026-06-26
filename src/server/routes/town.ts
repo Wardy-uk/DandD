@@ -394,6 +394,21 @@ export function createTownRoutes(db: Database, io: SocketServer): Router {
       return;
     }
 
+    // Chronicle entry for completed contract
+    try {
+      const campRow = get(db, 'SELECT session_number FROM campaigns WHERE id = ?', [campaignId]) as any;
+      const sessionNum = Number(campRow?.session_number || 1);
+      const successResult = result as { ok: true; reward: number; xpAward: number; contract: { title: string } };
+      const xpAmt = successResult.xpAward;
+      const gpAmt = successResult.reward;
+      const contractTitle = successResult.contract?.title ?? contractId;
+      run(db,
+        `INSERT INTO chronicle (id, campaign_id, session_number, entry_type, content, created_at)
+         VALUES (?, ?, ?, 'contract_complete', ?, datetime('now'))`,
+        [uuid(), campaignId, sessionNum, `Contract "${contractTitle}" completed — ${gpAmt}gp, ${xpAmt}xp awarded.`],
+      );
+    } catch {}
+
     run(db, 'INSERT INTO game_log (id, campaign_id, type, actor, content) VALUES (?, ?, ?, ?, ?)',
       [uuid(), campaignId, 'narration', 'DM', result.narration]);
     io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: result.narration });

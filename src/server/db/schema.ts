@@ -359,6 +359,19 @@ function runMigrations() {
     )
   `);
 
+  // Chronicle — campaign event log for significant moments
+  db.run(`
+    CREATE TABLE IF NOT EXISTS chronicle (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL,
+      session_number INTEGER DEFAULT 1,
+      entry_type TEXT DEFAULT 'general',
+      content TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  try { db.run('CREATE INDEX IF NOT EXISTS idx_chronicle_campaign ON chronicle(campaign_id)'); } catch {}
+
   // Rival parties table
   db.run(`
     CREATE TABLE IF NOT EXISTS rival_parties (

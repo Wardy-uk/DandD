@@ -343,6 +343,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
       // Analyse DM narration for combat/environmental sounds
       const detected = detectSoundFromNarration(data.content);
       if (detected) playSound(detected);
+      fetchContracts();
     };
     const onSceneEnter = (data: { scene: Scene; description: string }) => {
       setCurrentScene(data.scene);
@@ -461,7 +462,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
       socket.off('game:encounter_update', onEncounterUpdate);
       socket.off('game:turn_prompt', onTurnPrompt);
     };
-  }, [socket]);
+  }, [socket, fetchContracts]);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -794,7 +795,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
               onClick={() => setContractsOpen(o => !o)}
             >
               <span className="text-[10px] font-heading uppercase tracking-wider text-leather">
-                📋 Jobs ({activeContracts.length})
+                📋 Contracts ({activeContracts.length})
               </span>
               <span className="text-[10px] font-heading text-ink-faint">
                 {contractsOpen ? '▲' : '▼'}

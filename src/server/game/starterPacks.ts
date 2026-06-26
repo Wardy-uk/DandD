@@ -47,7 +47,8 @@ export interface StarterContractSeed {
   completedAt: string | null;
   openingContract: boolean;
   claimedAt?: string | null;
-  objectiveType?: 'discovered_sites' | 'cleared_scenes' | 'fallback_points' | 'treasure_marks' | 'lore_entries' | 'revelations';
+  objectiveType?: 'discovered_sites' | 'cleared_scenes' | 'fallback_points' | 'treasure_marks' | 'lore_entries' | 'revelations' | 'named_scene_visited' | 'npc_recruited' | 'faction_standing';
+  objectiveDetail?: string;
   objectiveTarget?: number;
   objectiveLabel?: string;
 }
@@ -428,6 +429,17 @@ const STARTER_CONTRACTS: Record<string, Array<Omit<StarterContractSeed, 'id' | '
       objectiveTarget: 1,
       objectiveLabel: 'hard evidence brought back',
     },
+    {
+      title: 'Reach the Black Barrow Mouth',
+      description: 'The reeve wants confirmation that the barrow entrance is accessible. Set eyes on it and report back.',
+      reward: 50,
+      factionKey: 'watch',
+      openingContract: false,
+      objectiveType: 'named_scene_visited',
+      objectiveDetail: 'Black Barrow Mouth',
+      objectiveTarget: 1,
+      objectiveLabel: 'barrow entrance reached',
+    },
   ],
   'grim-border-kingdoms': [
     {
@@ -459,6 +471,17 @@ const STARTER_CONTRACTS: Record<string, Array<Omit<StarterContractSeed, 'id' | '
       objectiveType: 'treasure_marks',
       objectiveTarget: 1,
       objectiveLabel: 'evidence caches taken',
+    },
+    {
+      title: 'Descend into the Shrine Undercroft',
+      description: 'The wardens have sealed the undercroft but want reliable witnesses who have been inside. Go down and come back.',
+      reward: 60,
+      factionKey: 'watch',
+      openingContract: false,
+      objectiveType: 'named_scene_visited',
+      objectiveDetail: 'Shrine Undercroft',
+      objectiveTarget: 1,
+      objectiveLabel: 'undercroft entered',
     },
   ],
   'haunted-empire': [
@@ -492,6 +515,17 @@ const STARTER_CONTRACTS: Record<string, Array<Omit<StarterContractSeed, 'id' | '
       objectiveTarget: 3,
       objectiveLabel: 'vault routes charted',
     },
+    {
+      title: 'Enter the Lantern Crypt',
+      description: 'The warden-beadles need a credible report from inside the crypt. They will not go themselves.',
+      reward: 70,
+      factionKey: 'watch',
+      openingContract: false,
+      objectiveType: 'named_scene_visited',
+      objectiveDetail: 'Lantern Crypt',
+      objectiveTarget: 1,
+      objectiveLabel: 'crypt interior reached',
+    },
   ],
   'wildwood-mythic': [
     {
@@ -524,6 +558,17 @@ const STARTER_CONTRACTS: Record<string, Array<Omit<StarterContractSeed, 'id' | '
       objectiveTarget: 1,
       objectiveLabel: 'hollow relic traced',
     },
+    {
+      title: 'Walk the Moonwell Track',
+      description: 'The circle keepers want someone who has walked the track and returned to confirm the terms of passage still hold.',
+      reward: 55,
+      factionKey: 'watch',
+      openingContract: false,
+      objectiveType: 'named_scene_visited',
+      objectiveDetail: 'Moonwell Track',
+      objectiveTarget: 1,
+      objectiveLabel: 'moonwell path traversed',
+    },
   ],
   'sword-and-sorcery-city-states': [
     {
@@ -555,6 +600,17 @@ const STARTER_CONTRACTS: Record<string, Array<Omit<StarterContractSeed, 'id' | '
       objectiveType: 'cleared_scenes',
       objectiveTarget: 1,
       objectiveLabel: 'alley approaches quieted',
+    },
+    {
+      title: 'Reach the Salt Cistern Galleries',
+      description: 'A cautious patron needs eyes inside the cistern before committing coin. Get in and come back with a firsthand account.',
+      reward: 65,
+      factionKey: 'delvers',
+      openingContract: false,
+      objectiveType: 'named_scene_visited',
+      objectiveDetail: 'Salt Cistern Galleries',
+      objectiveTarget: 1,
+      objectiveLabel: 'cistern route confirmed',
     },
   ],
 };
@@ -753,6 +809,72 @@ export function seedCampaignStarterPack(params: {
   run(db,
     'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, 1, ?, ?, ?)',
     [uuid(), campaignId, 'scene_enter', 'DM', pack.scenes[0].aiDescription]);
+
+  // ── Named NPC anchor — one per setting, seeded into the first non-town scene ──
+  const NPC_ANCHORS: Record<string, {
+    name: string; race: string; charClass: string; level: number;
+    personality: string; voiceNotes: string; brief: string;
+  }> = {
+    'classic-fantasy-frontier': {
+      name: 'Old Saric',
+      race: 'human', charClass: 'fighter', level: 3,
+      personality: 'Gruff, cautious, knows exactly how bad this place is',
+      voiceNotes: 'Low, clipped, speaks like every word costs him something',
+      brief: 'A veteran delver who went in alone two nights ago and has not come out. Found sheltering just inside the barrow mouth, gear intact, eyes wide. He is not dead but he is not entirely well either.',
+    },
+    'grim-border-kingdoms': {
+      name: 'Mira Dusk',
+      race: 'human', charClass: 'thief', level: 2,
+      personality: 'Wary, sharp, has information worth buying if you can earn her trust',
+      voiceNotes: 'Flat border accent, speaks low and direct, never repeats herself',
+      brief: 'A courier who knows the deserter network beneath the shrine. She has been hiding in the undercroft for a day and a half and will deal with whoever arrives first.',
+    },
+    'haunted-empire': {
+      name: 'Curator Vael',
+      race: 'human', charClass: 'mage', level: 2,
+      personality: 'Obsessive, brilliant, frightened of what his research has uncovered',
+      voiceNotes: 'Precise academic diction cracking at the edges, mutters archive references under stress',
+      brief: 'A ward archivist who entered the crypt to recover a misfiled imperial writ and found something far worse. He will not leave without the document. He may not be able to leave at all.',
+    },
+    'wildwood-mythic': {
+      name: 'Hawthorn',
+      race: 'half-elf', charClass: 'druid', level: 1,
+      personality: 'Still, watchful, speaks rarely and means everything she says',
+      voiceNotes: 'Soft, unhurried, long pauses between sentences that feel deliberate rather than slow',
+      brief: 'A young warden apprentice who tends the moonwell track in her teacher\'s absence. She knows the path\'s terms and will share them — once — with people who approach with visible respect.',
+    },
+    'sword-and-sorcery-city-states': {
+      name: 'Brek the Cistern',
+      race: 'human', charClass: 'fighter', level: 2,
+      personality: 'Wounded, practical, wants out alive more than anything else',
+      voiceNotes: 'Port drawl, talks fast when scared, slower when he thinks he has leverage',
+      brief: 'The sole survivor of the first crew to push the cistern route. Cornered in the galleries with a bad leg and a good memory of every chalk arrow and ambush point ahead.',
+    },
+  };
+
+  const anchorData = NPC_ANCHORS[settingId] || NPC_ANCHORS['classic-fantasy-frontier'];
+  const firstNonTownSceneId = sceneIds[1]; // index 0 is the opening scene; index 1 is the first dungeon/world scene
+  run(db, `
+    INSERT INTO npcs (id, campaign_id, name, race, char_class, level, personality, voice_notes, disposition, location_scene_id, stats, joined_party, companion_order)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'neutral', ?, ?, 0, 0)
+  `, [
+    uuid(),
+    campaignId,
+    anchorData.name,
+    anchorData.race,
+    anchorData.charClass,
+    anchorData.level,
+    `${anchorData.personality}. ${anchorData.brief}`,
+    anchorData.voiceNotes,
+    firstNonTownSceneId,
+    JSON.stringify({
+      hp: anchorData.level * 4,
+      maxHp: anchorData.level * 4,
+      currentHp: anchorData.level * 4,
+      ac: 8,
+      thac0: 20 - anchorData.level,
+    }),
+  ]);
 
   for (const rumour of pack.rumours) {
     run(db,
