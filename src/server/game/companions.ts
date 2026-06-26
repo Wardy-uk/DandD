@@ -335,14 +335,39 @@ export function resolveCompanionInteraction(params: {
     return updateCompanionOrder(db, target, state, 'front', character.name);
   }
 
-  if (/put .* last|move .* back|fall back|rear of the marching order/.test(lowered)) {
-    return updateCompanionOrder(db, target, state, 'rear', character.name);
-  }
+    if (/put .* last|move .* back|fall back|rear of the marching order/.test(lowered)) {
+      return updateCompanionOrder(db, target, state, 'rear', character.name);
+    }
 
-  if (/comfort|confide|apologize|apologise|praise|thank/.test(lowered)) {
-    state.trust += 1;
-    state.bond += 1;
-    state.morale += 1;
+    if (/read .* intent|read .* mood|size .* up|gauge .* intent|measure .* intent/.test(lowered)) {
+      return {
+        handled: true,
+        narration: [buildIntentRead(target, state, getCampaignState(db, campaignId).encounterPressure)],
+        characterUpdated: false,
+      };
+    }
+
+    if (/talk to|speak to|check in with|ask .* what .* think|ask .* how .* doing|ask .* what .* want/.test(lowered)) {
+      if (Number(target.joined_party || 0) === 1) {
+        state.bond += 1;
+        state.morale += 1;
+      } else {
+        state.trust += 1;
+        state.respect += 1;
+      }
+      state.lastBeat = `${character.name} took time to talk with ${target.name} instead of only giving orders.`;
+      persistRelationshipState(db, target.id, state);
+      return {
+        handled: true,
+        narration: [buildConversationBeat(target, state, getCampaignState(db, campaignId).encounterPressure)],
+        characterUpdated: false,
+      };
+    }
+  
+    if (/comfort|confide|apologize|apologise|praise|thank/.test(lowered)) {
+      state.trust += 1;
+      state.bond += 1;
+      state.morale += 1;
     state.lastBeat = `${character.name} took time to speak to ${target.name} as a person, not just a piece on the board.`;
     persistRelationshipState(db, target.id, state);
     return {
@@ -1096,6 +1121,89 @@ function buildInnerLife(row: CompanionRow) {
   };
 }
 
+function buildConversationBeat(
+  row: CompanionRow,
+  state: CompanionRelationshipState,
+  encounterPressure: number,
+) {
+  const role = String(row.companion_role || inferCompanionRole(row.char_class)).toLowerCase();
+  const tone = String(row.personality || row.disposition || 'guarded').toLowerCase();
+  const pressureLine = encounterPressure >= 7
+    ? 'Their eyes keep cutting back to the dark between sentences. Whatever is coming, they can feel it too.'
+    : encounterPressure >= 4
+      ? 'They keep the exchange short, like someone who knows the dungeon is listening.'
+      : 'For a moment the place feels almost human again.';
+  const wantsLine = state.personalQuestNeed
+    ? `What matters to ${row.name} is plain enough: ${lcFirst(state.personalQuestNeed)}`
+    : state.aspiration
+      ? `${row.name} comes back to the same point in different words: ${state.aspiration}`
+      : `${row.name} is watching to see whether this company is becoming something worth trusting.`;
+
+  if (Number(row.joined_party || 0) === 1) {
+    if (state.tension >= 5) {
+      return `${row.name} answers, but there is a hard edge on it. ${wantsLine} ${pressureLine}`;
+    }
+    if (state.romance >= 2 && state.trust >= 2) {
+      return `${row.name} lingers a beat longer than duty requires, voice lowering once the others drift off. ${wantsLine} ${pressureLine}`;
+    }
+    if (role === 'scout') {
+      return `${row.name} reports in the manner of a good scout: quick, precise, already thinking three corners ahead. ${wantsLine} ${pressureLine}`;
+    }
+    if (role === 'vanguard') {
+      return `${row.name} speaks like someone measuring every word against the next hard minute. ${wantsLine} ${pressureLine}`;
+    }
+    if (role === 'warden') {
+      return `${row.name} answers quietly, attention split between you and everyone else's condition. ${wantsLine} ${pressureLine}`;
+    }
+    return `${row.name} gives you more than a yes-or-no answer, which in a place like this counts as trust. ${wantsLine} ${pressureLine}`;
+  }
+
+  if (state.trust <= 0 || /unfriendly|hostile|cold/.test(tone)) {
+    return `${row.name} gives you just enough conversation to stay civil. ${wantsLine} They are not writing you off, but they are not sold either.`;
+  }
+  if (/wry|dry|sharp|sarcas/.test(tone)) {
+    return `${row.name} answers with a slantwise half-smile and the sort of dry honesty that can either become loyalty or trouble. ${wantsLine}`;
+  }
+  return `${row.name} opens up a little once you stop treating them like background scenery. ${wantsLine}`;
+}
+
+function buildIntentRead(
+  row: CompanionRow,
+  state: CompanionRelationshipState,
+  encounterPressure: number,
+) {
+  const stance = state.trust + state.respect + state.loyalty - state.tension;
+  const pressureLine = encounterPressure >= 6
+    ? 'The dungeon pressure is amplifying everything; nerves and motives are both closer to the surface.'
+    : 'At least for the moment, you can read them without the room forcing the pace.';
+
+  if (Number(row.joined_party || 0) === 1) {
+    if (state.tension >= 5) {
+      return `${row.name} is still with you, but not comfortably. The strain is real, and one more reckless call could turn compliance into open resistance. ${pressureLine}`;
+    }
+    if (state.romance >= 2 && state.trust >= 2) {
+      return `${row.name} is invested beyond mere contract now. There is affection in the way they watch you, which makes disappointment more dangerous as well as devotion more useful. ${pressureLine}`;
+    }
+    if (stance >= 6) {
+      return `${row.name} is firmly in your corner. Their instinct is to back your play first and question it later, so long as you do not make them regret that faith. ${pressureLine}`;
+    }
+    return `${row.name} means to stay useful, but usefulness is still the language they trust more than sentiment. ${state.grievance ? `Push too hard on ${lcFirst(state.grievance)} and the relationship will fray.` : pressureLine}`;
+  }
+
+  if (stance >= 4) {
+    return `${row.name} is recruitable if given a reason that sounds like purpose instead of need. ${state.aspiration ? `The hook is obvious: ${lcFirst(state.aspiration)}` : ''} ${pressureLine}`.trim();
+  }
+  if (state.tension >= 3 || stance <= 0) {
+    return `${row.name} is wary. They want proof that your company is disciplined enough to survive before they put their neck on the same block. ${pressureLine}`;
+  }
+  return `${row.name} is interested, but still evaluating your measure. ${state.personalQuestNeed ? `What will win them is simple: ${lcFirst(state.personalQuestNeed)}` : pressureLine}`;
+}
+
+function lcFirst(text: string) {
+  if (!text) return text;
+  return text.charAt(0).toLowerCase() + text.slice(1);
+}
+
 function assignCompanionDuty(
   db: Database,
   target: CompanionRow,
@@ -1417,4 +1525,3 @@ export function processTownDowntime(db: Database, campaignId: string, leaderName
 
   return notes;
 }
-

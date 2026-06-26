@@ -17,6 +17,7 @@ import {
   PRIEST_SPELL_SLOTS, WIZARD_SPELL_SLOTS, THIEF_SKILLS_BASE,
 } from './tables.js';
 import { getThac0, getSavingThrows } from './combat.js';
+import { getStartingSpellbook } from '../game/spells.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -519,15 +520,19 @@ export function assembleCharacter(params: {
   let spellSlots: Record<number, number> | undefined;
   let priestSpheres: string[] | undefined;
   let spellbook: string[] | undefined;
+  let memorisedSpells: string[] | undefined;
 
   if (charClass === 'cleric' || charClass === 'druid') {
     spellSlots = getPriestSpellSlots(1, adjusted.wis);
     priestSpheres = charClass === 'cleric'
       ? ['All', 'Astral', 'Charm', 'Combat', 'Creation', 'Divination', 'Guardian', 'Healing', 'Necromantic', 'Protection', 'Summoning', 'Sun']
       : ['All', 'Animal', 'Elemental', 'Healing', 'Plant', 'Weather'];
+    memorisedSpells = [charClass === 'cleric' ? 'Cure Light Wounds' : 'Entangle'];
   } else if (charClass === 'mage') {
     spellSlots = getWizardSpellSlots(1);
-    spellbook = []; // Player chooses starting spells
+    const seed = buildStarterSpellSeed(name, race, charClass);
+    spellbook = getStartingSpellbook(seed);
+    memorisedSpells = spellbook.filter((spell) => spell !== 'Read Magic').slice(0, 1);
   }
 
   // Thief skills
@@ -569,7 +574,7 @@ export function assembleCharacter(params: {
     weaponProfs: [],
     nonweaponProfs: [],
     spellSlots,
-    memorisedSpells: spellSlots ? [] : undefined,
+    memorisedSpells,
     spellbook,
     priestSpheres,
     thiefSkills,
@@ -583,4 +588,8 @@ export function assembleCharacter(params: {
     notes: '',
     status: 'active',
   };
+}
+
+function buildStarterSpellSeed(name: string, race: Race, charClass: CharClass) {
+  return `${name}:${race}:${charClass}`.split('').reduce((sum, char, index) => sum + char.charCodeAt(0) * (index + 1), 0);
 }
