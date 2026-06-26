@@ -538,6 +538,7 @@ export function setupSocketHandlers(
 
       const movementTarget = findMovementTarget(action, scene);
       if (movementTarget) {
+        try {
         const nextScene = get(db, 'SELECT * FROM scenes WHERE id = ? AND campaign_id = ?',
           [movementTarget.targetSceneId, campaignId]) as any;
         if (!nextScene) {
@@ -673,6 +674,15 @@ export function setupSocketHandlers(
         });
         emitCampaignState(io, db, campaignId);
         return;
+        } catch (moveErr) {
+          console.error('[movement handler error]', moveErr);
+          io.to(`campaign:${campaignId}`).emit('game:narration', {
+            actor: 'DM',
+            content: `The way ${movementTarget.direction} is passable — but something went wrong in the passage. Try again.`,
+          });
+          emitCampaignState(io, db, campaignId);
+          return;
+        }
       }
       // ── Orientation queries — any question asking "where am I / what do I see" ─
       // Note: "look around" intentionally excluded here — resolveRichExploration handles it with variety
