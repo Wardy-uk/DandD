@@ -297,6 +297,8 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
     rivalRelation: string; rivalStrength: number; leaderName: string;
   } | null>(null);
   const [sceneContextActions, setSceneContextActions] = useState<Array<{ label: string; action: string; hint: string }>>([]);
+  const [journalText, setJournalText] = useState<string | null>(null);
+  const [journalLoading, setJournalLoading] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const headers = { Authorization: `Bearer ${player.token}`, 'Content-Type': 'application/json' };
@@ -522,6 +524,21 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
 
   const quickAction = (action: string) => {
     socket.emit('game:action', { campaignId, action });
+  };
+
+  const generateJournal = async () => {
+    if (journalLoading) return;
+    setJournalLoading(true);
+    setJournalText(null);
+    try {
+      const res = await fetch(`${apiUrl}/api/campaigns/${campaignId}/journal/generate`, {
+        method: 'POST',
+        headers,
+      });
+      const data = await res.json();
+      if (data.ok) setJournalText(data.data.journal);
+    } catch {}
+    setJournalLoading(false);
   };
 
   const recruitableNpc = sceneNpcs.find((npc) => !npc.joinedParty);
@@ -1483,6 +1500,33 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                       </div>
                     </div>
                   )}
+                  <div className="pt-2 border-t border-leather/10">
+                    <button
+                      onClick={generateJournal}
+                      disabled={journalLoading}
+                      className="w-full rounded-lg border border-leather/20 bg-parchment px-3 py-2.5 text-left touch-manipulation disabled:opacity-40"
+                    >
+                      <span className="text-xs font-heading font-semibold text-leather-dark">
+                        {journalLoading ? 'Writing journal…' : '📜 Write session journal'}
+                      </span>
+                      <span className="block text-[10px] font-body text-ink-faint mt-0.5">AI narrates this session in your character's voice</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Journal modal */}
+              {journalText && (
+                <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/60 backdrop-blur-sm p-4">
+                  <div className="w-full max-w-lg rounded-2xl border border-leather/20 bg-parchment-light shadow-2xl max-h-[80vh] flex flex-col">
+                    <div className="flex items-center justify-between px-4 py-3 border-b border-leather/10">
+                      <span className="font-heading font-bold text-sm text-leather-dark">Session Journal</span>
+                      <button onClick={() => setJournalText(null)} className="text-ink-faint text-lg leading-none touch-manipulation">×</button>
+                    </div>
+                    <div className="overflow-y-auto px-5 py-4">
+                      <p className="font-body text-sm text-ink leading-relaxed whitespace-pre-line italic">{journalText}</p>
+                    </div>
+                  </div>
                 </div>
               )}
               {openPanel === 'map' && (

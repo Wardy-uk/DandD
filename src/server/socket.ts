@@ -910,6 +910,104 @@ Rules:
       }
 
       if (!outcome) {
+        // ── B: Spell resolution — mechanical handling for cast actions ──────────
+        const spellCastMatch = /^(?:i\s+)?(?:cast|invoke|channel|use)\s+(?:the\s+spell\s+)?(.+?)(?:\s+(?:at|on|upon|targeting|into|to)\s+.+)?$/i.exec(action.trim());
+        if (spellCastMatch) {
+          const spellName = spellCastMatch[1].trim();
+          // Spell table: name pattern → { brief description, dice, school }
+          const SPELL_TABLE: Record<string, { desc: string; heal?: { dice: number; sides: number; bonus: number }; isHeal?: boolean }> = {
+            'cure light wounds':    { desc: 'Channels divine energy to close wounds', heal: { dice: 1, sides: 8, bonus: 0 }, isHeal: true },
+            'cure serious wounds':  { desc: 'A deeper healing that knits bone and tissue', heal: { dice: 2, sides: 8, bonus: 1 }, isHeal: true },
+            'cure critical wounds': { desc: 'A surge of divine power that reverses grievous harm', heal: { dice: 3, sides: 8, bonus: 3 }, isHeal: true },
+            'magic missile':  { desc: '1d4+1 force damage, auto-hits, no save' },
+            'sleep':          { desc: 'Drops 2d4 HD of creatures into magical slumber, lowest HD first, no save' },
+            'charm person':   { desc: 'Target sees caster as trusted friend — save vs spell negates' },
+            'shield':         { desc: 'Magical barrier: AC 2 vs melee, AC 4 vs missiles until dispelled' },
+            'detect magic':   { desc: 'Reveals magical auras in a 10×60 ft path for 2 turns' },
+            'light':          { desc: 'Creates a 20 ft globe of torchlight, duration 6 turns/level' },
+            'read magic':     { desc: 'Deciphers magical inscriptions and scrolls for 2 rounds/level' },
+            'hold portal':    { desc: 'Seals a door or gate as if locked for 1 round/level' },
+            'fireball':       { desc: '1d6 fire damage per caster level in 20 ft radius, save vs spell for half' },
+            'lightning bolt': { desc: '1d6 lightning per caster level in a line, save vs spell for half' },
+            'web':            { desc: 'Sticky webs fill area, entangling all within for 2 turns/level' },
+            'invisibility':   { desc: 'Caster becomes invisible until they attack or cast another spell' },
+            'fly':            { desc: 'Grants flight at movement rate 18 for 1 turn/level' },
+            'knock':          { desc: 'Opens any stuck, locked, or magically held door or container' },
+            'bless':          { desc: '+1 to hit and saves vs fear for all allies within 50 ft, 6 turns' },
+            'detect evil':    { desc: 'Reveals evil auras and intentions in a 10×120 ft path, 1 turn/level' },
+            'find traps':     { desc: 'Reveals all traps — mechanical and magical — within 30 ft, 3 turns' },
+            'silence':        { desc: 'No sound in a 15 ft radius around target for 2 rounds/level' },
+            'slow poison':    { desc: 'Delays poison effects until cured or Slow Poison expires, 1 hour/level' },
+            'protection from evil': { desc: '+2 AC and saves vs evil; blocks bodily contact from summoned creatures, 2 rounds/level' },
+            'sanctuary':      { desc: 'Enemies save vs spell to attack you; broken if you attack, 1 round/level' },
+            'spiritual hammer': { desc: 'Magic hammer attacks at THAC0 level for 1d4+1 damage, 1 round/level' },
+          };
+          const spellKey = spellName.toLowerCase().replace(/\s+/g, ' ');
+          const matchedSpell = Object.entries(SPELL_TABLE).find(([k]) => spellKey.includes(k));
+
+          if (matchedSpell) {
+            const [matchedName, spellDef] = matchedSpell;
+            actionLocks.add(campaignId);
+            io.to(`campaign:${campaignId}`).emit('game:narration', { content: '…', actor: 'DM', thinking: true });
+            try {
+              let mechanicalNote = '';
+              let hpRestored = 0;
+
+              if (spellDef.isHeal && spellDef.heal) {
+                // Roll healing
+                let total = spellDef.heal.bonus;
+                for (let d = 0; d < spellDef.heal.dice; d++) total += Math.ceil(Math.random() * spellDef.heal.sides);
+                hpRestored = Math.min(character.max_hp - character.hp, total);
+                if (hpRestored > 0) {
+                  run(db, 'UPDATE characters SET hp = MIN(max_hp, hp + ?) WHERE id = ?', [hpRestored, character.id]);
+                  const updChar = get(db, 'SELECT * FROM characters WHERE id = ?', [character.id]) as any;
+                  if (updChar) io.to(`campaign:${campaignId}`).emit('game:state_update', { type: 'character_update', payload: updChar });
+                }
+                mechanicalNote = `Rolled ${total} healing; ${hpRestored > 0 ? `${hpRestored} HP restored (${character.hp + hpRestored}/${character.max_hp})` : 'already at full HP'}`;
+              } else {
+                mechanicalNote = `Effect: ${spellDef.desc}`;
+              }
+
+              const spellContext = [
+                `Scene: ${scene.name}${scene.brief ? ` — ${scene.brief}` : ''}`,
+                `Character: ${character.name} (${character.char_class} level ${character.level})`,
+                `Spell: ${spellName}`,
+                `Mechanical result: ${mechanicalNote}`,
+                `Scene light: ${scene.light_level || 'normal'}`,
+              ].join('. ');
+
+              const spellNarration = await Promise.race([
+                generate({
+                  system: `You are a masterful AD&D Dungeon Master narrating a spell being cast. 3-4 vivid sentences, present tense.
+Rules:
+- Describe the casting: the words, gestures, what the magic looks and feels like in this specific room
+- Incorporate the mechanical result naturally — healing spells close wounds, light spells fill the room, utility spells change something tangible
+- Do not list game statistics; the effect should be felt, not stated
+- Voice: specific, atmospheric, the magic feels real and earned`,
+                  prompt: `${spellContext}.\nPlayer action: "${action}". Narrate the spell and its effect.`,
+                  maxTokens: 260,
+                  temperature: 0.85,
+                }),
+                new Promise<string>((_, reject) => setTimeout(() => reject(new Error('spell timeout')), 12_000)),
+              ]) as string;
+
+              if (spellNarration?.trim()) {
+                run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                  [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', spellNarration.trim()]);
+                io.to(`campaign:${campaignId}`).emit('game:narration', { content: spellNarration.trim(), actor: 'DM' });
+              }
+              // Ignore matchedName lint warning — used for key lookup above
+              void matchedName;
+            } catch {
+              io.to(`campaign:${campaignId}`).emit('game:narration', { content: `The words of ${spellName} take shape. Something in the air responds.`, actor: 'DM' });
+            } finally {
+              actionLocks.delete(campaignId);
+            }
+            emitCampaignState(io, db, campaignId);
+            return;
+          }
+        }
+
         // ── C: NPC voice — directed speech at a named NPC ───────────────────
         const npcVoiceTarget = npcsInScene.find((npc: any) => {
           const npcLower = String(npc.name || '').toLowerCase();
@@ -1093,6 +1191,38 @@ Rules:
         payload: buildCampaignMapIntel(db, campaignId),
       });
       emitCampaignState(io, db, campaignId);
+
+      // ── A: Loot description — give found items a voice (async, fire-and-forget) ──
+      const lootFindMatch = /reveals?\s+(.+?),\s+along with|you also recover\s+(.+?),\s+enough/i.exec(outcome.content);
+      if (lootFindMatch) {
+        const foundItem = (lootFindMatch[1] || lootFindMatch[2] || '').trim();
+        if (foundItem) {
+          (async () => {
+            try {
+              const lootBlueprint = buildSceneBlueprint(scene);
+              const lootNarration = await Promise.race([
+                generate({
+                  system: `You are a masterful AD&D Dungeon Master giving a found object its moment. Exactly 2 sentences.
+Rules:
+- Describe physical details: material, weight, condition, marks, smell, temperature
+- Imply history — who owned it, how long it has been here, what it witnessed
+- No game statistics, no "you find", no mechanical language
+- Voice: specific, weighted, atmospheric`,
+                  prompt: `Room: ${scene.name} — ${lootBlueprint.roomAmbience}. Found: "${foundItem}". Describe this object.`,
+                  maxTokens: 110,
+                  temperature: 0.9,
+                }),
+                new Promise<string>((_, reject) => setTimeout(() => reject(new Error('loot timeout')), 10_000)),
+              ]) as string;
+              if (lootNarration?.trim()) {
+                run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                  [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', lootNarration.trim()]);
+                io.to(`campaign:${campaignId}`).emit('game:narration', { content: lootNarration.trim(), actor: 'DM' });
+              }
+            } catch {}
+          })();
+        }
+      }
 
       const companionIds = getJoinedCompanionIdsInScene(db, campaignId, scene.id);
 

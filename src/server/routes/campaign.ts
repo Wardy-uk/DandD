@@ -21,6 +21,7 @@ import {
 } from '../../shared/campaignModes.js';
 import { buildCampaignMapIntel } from '../game/mapIntel.js';
 import { getChronicle } from '../game/chronicle.js';
+import { generate } from '../ai/ollama.js';
 import { seedCampaignStarterPack } from '../game/starterPacks.js';
 
 export function createCampaignRoutes(db: Database, io: SocketServer): Router {
@@ -257,6 +258,48 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
       res.json({ ok: true, data: chronicle });
     } catch (err) {
       res.json({ ok: false, error: 'Failed to build chronicle' });
+    }
+  });
+
+  // Generate AI session journal
+  router.post('/:id/journal/generate', requireAuth, async (req: any, res) => {
+    const campaign = get(db, 'SELECT * FROM campaigns WHERE id = ?', [req.params.id]) as any;
+    if (!campaign) { res.json({ ok: false, error: 'Campaign not found' }); return; }
+    const membership = get(db, 'SELECT * FROM campaign_players WHERE campaign_id = ? AND player_id = ?', [req.params.id, req.player.id]);
+    if (!membership) { res.json({ ok: false, error: 'Not a member' }); return; }
+
+    try {
+      const logs = all(db,
+        'SELECT type, actor, content FROM game_log WHERE campaign_id = ? AND type IN (\'scene_enter\',\'narration\',\'dm_response\',\'combat\',\'player_action\',\'level_up\') ORDER BY timestamp DESC LIMIT 80',
+        [req.params.id]) as any[];
+      if (logs.length < 5) { res.json({ ok: false, error: 'Not enough log entries yet' }); return; }
+
+      const logText = logs.reverse().map((l: any) => {
+        if (l.type === 'player_action') return `> ${l.actor}: ${l.content}`;
+        if (l.type === 'scene_enter') return `[Entered: ${l.content.split('.')[0]}]`;
+        if (l.type === 'level_up') return `[${l.content}]`;
+        return l.content;
+      }).join('\n').slice(0, 3500);
+
+      const character = get(db, 'SELECT name, char_class, level FROM characters WHERE campaign_id = ? AND status != \'dead\' LIMIT 1', [req.params.id]) as any;
+      const charNote = character ? `${character.name}, a level ${character.level} ${character.char_class}` : 'an adventurer';
+
+      const journal = await generate({
+        system: `You are writing an in-world journal entry for ${charNote} in an AD&D campaign. 3-4 paragraphs, first person past tense, as if written at day's end by candlelight.
+Rules:
+- Voice the character's perspective: what they feared, what surprised them, what cost them something
+- Name specific moments: a room entered, an enemy faced, a companion's reaction, something found
+- Include texture and atmosphere — this is a personal record, not a report
+- End on a mood: cautious hope, grim resolve, or unease about what comes next
+- Do not list statistics or mechanics`,
+        prompt: `Recent session log:\n${logText}\n\nWrite the journal entry.`,
+        maxTokens: 520,
+        temperature: 0.88,
+      });
+
+      res.json({ ok: true, data: { journal, sessionNumber: logs.length } });
+    } catch (err) {
+      res.json({ ok: false, error: 'Journal generation failed' });
     }
   });
 
