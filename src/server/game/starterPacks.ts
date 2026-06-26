@@ -1,6 +1,6 @@
 import { v4 as uuid } from 'uuid';
 import type { Database } from 'sql.js';
-import { run } from '../db/helpers.js';
+import { get, run } from '../db/helpers.js';
 import { getCampaignState, noteCampaignEvent, saveCampaignState } from './campaignState.js';
 
 interface StarterConnection {
@@ -35,6 +35,28 @@ interface StarterPack {
     notes: string;
   }>>;
   scenes: StarterScene[];
+}
+
+export interface StarterContractSeed {
+  id: string;
+  title: string;
+  description: string;
+  reward: number;
+  factionKey: string;
+  taken: boolean;
+  completedAt: string | null;
+  openingContract: boolean;
+}
+
+export interface StarterProspectSeed {
+  name: string;
+  race: string;
+  charClass: string;
+  level: number;
+  personality: string;
+  ask: number;
+  voiceNotes: string;
+  hook?: string;
 }
 
 const STARTER_PACKS: Record<string, StarterPack> = {
@@ -370,6 +392,233 @@ const STARTER_PACKS: Record<string, StarterPack> = {
   },
 };
 
+const STARTER_CONTRACTS: Record<string, Array<Omit<StarterContractSeed, 'id' | 'taken' | 'completedAt'>>> = {
+  'classic-fantasy-frontier': [
+    {
+      title: 'Break the Black Barrow Pickets',
+      description: 'Border scouts want the goblin and grave-robber lookout chain around the barrow route broken before it hardens into a permanent screen.',
+      reward: 90,
+      factionKey: 'watch',
+      openingContract: true,
+    },
+    {
+      title: 'Recover the Surveyor\'s Chalk Maps',
+      description: 'A survey team left marked route sketches in the hill cut. Bring them back before rival delvers do.',
+      reward: 75,
+      factionKey: 'delvers',
+      openingContract: false,
+    },
+    {
+      title: 'Bring Word of the Missing Teamster',
+      description: 'A carter vanished on the barrow road. The keepfolk want certainty more than comfort.',
+      reward: 65,
+      factionKey: 'locals',
+      openingContract: false,
+    },
+  ],
+  'grim-border-kingdoms': [
+    {
+      title: 'Hold the Causeway Before Nightfall',
+      description: 'The wardens need the bridge approach stabilised before deserters or toll-bandits claim it again.',
+      reward: 110,
+      factionKey: 'watch',
+      openingContract: true,
+    },
+    {
+      title: 'Find the Bell-Ringer Below the Shrine',
+      description: 'Someone or something has been sounding the broken shrine bell before raids. Find out which.',
+      reward: 95,
+      factionKey: 'locals',
+      openingContract: false,
+    },
+    {
+      title: 'Seize the Muster Ledger',
+      description: 'A deserter sergeant is said to be keeping names, bribes, and loyalties in a coded field ledger.',
+      reward: 120,
+      factionKey: 'shadows',
+      openingContract: false,
+    },
+  ],
+  'haunted-empire': [
+    {
+      title: 'Seal the Lantern Crypt Breach',
+      description: 'The wardens want the lower breach closed or at least made survivable before the whole quarter panics.',
+      reward: 115,
+      factionKey: 'watch',
+      openingContract: true,
+    },
+    {
+      title: 'Recover the Advocate\'s Writ Tube',
+      description: 'A dead imperial advocate is said to be walking with a document tube that certain patrons would kill to read first.',
+      reward: 140,
+      factionKey: 'shadows',
+      openingContract: false,
+    },
+    {
+      title: 'Map the Archive Intersections',
+      description: 'Vault scavengers want a reliable sketch of where the record vaults touch the burial corridors.',
+      reward: 80,
+      factionKey: 'delvers',
+      openingContract: false,
+    },
+  ],
+  'wildwood-mythic': [
+    {
+      title: 'Cross the Moonwell Path Cleanly',
+      description: 'The wardens need proof that the moonwell route can still be traversed without losing people or promises.',
+      reward: 85,
+      factionKey: 'watch',
+      openingContract: true,
+    },
+    {
+      title: 'Learn What Took the Offerings',
+      description: 'Offerings left at the boundary stones are being accepted by something new. Find out what it wants.',
+      reward: 90,
+      factionKey: 'locals',
+      openingContract: false,
+    },
+    {
+      title: 'Take the Antler Token from the Hollow',
+      description: 'A relic marker in the stag hollow is drawing hunters, spirits, and fools in equal measure.',
+      reward: 105,
+      factionKey: 'shadows',
+      openingContract: false,
+    },
+  ],
+  'sword-and-sorcery-city-states': [
+    {
+      title: 'Beat the Rival Crew to the Cistern Route',
+      description: 'A paying patron wants the smuggler approach secured before another treasure crew owns it outright.',
+      reward: 125,
+      factionKey: 'delvers',
+      openingContract: true,
+    },
+    {
+      title: 'Lift the Red Idol Ledger',
+      description: 'Somebody financing the digs keeps records of who is paying whom. Bring the ledger back unread if you can manage the restraint.',
+      reward: 135,
+      factionKey: 'shadows',
+      openingContract: false,
+    },
+    {
+      title: 'Quiet the Brass Lantern Alley Entrance',
+      description: 'The guards want the alley route to stop producing bodies, panic, and obvious scandal.',
+      reward: 90,
+      factionKey: 'watch',
+      openingContract: false,
+    },
+  ],
+};
+
+const STARTER_PROSPECTS: Record<string, StarterProspectSeed[]> = {
+  'classic-fantasy-frontier': [
+    { name: 'Bev Crowmantle', race: 'human', charClass: 'ranger', level: 2, personality: 'rangy, unsentimental, knows the road cuts', ask: 13, voiceNotes: 'Speaks like every sentence should end in practical advice.', hook: 'Claims to know which barrow path the goblin pickets are not watching yet.' },
+    { name: 'Iven Pike', race: 'dwarf', charClass: 'fighter', level: 1, personality: 'broad-shouldered, stubborn, frontier-born', ask: 9, voiceNotes: 'Dry frontier mutter, deeply unimpressed by drama.', hook: 'Worked the hill once before the surveyors broke through the wrong wall.' },
+  ],
+  'grim-border-kingdoms': [
+    { name: 'Ysra Flint', race: 'human', charClass: 'cleric', level: 2, personality: 'battle-weary, devout, impossible to fluster', ask: 12, voiceNotes: 'Measured, soldierly calm with the cadence of a field sermon.', hook: 'Saw the shrine bell rope from the road and has not liked the look of it since.' },
+    { name: 'Col Marr', race: 'human', charClass: 'fighter', level: 2, personality: 'former levy sergeant, disciplined, suspicious', ask: 11, voiceNotes: 'Short commands, tired confidence, expects plans.', hook: 'Can tell deserter habits from honest patrol discipline at a glance.' },
+  ],
+  'haunted-empire': [
+    { name: 'Lucan Vale', race: 'human', charClass: 'mage', level: 2, personality: 'grave, scholarly, mildly obsessed with legal ghosts', ask: 16, voiceNotes: 'Formal diction with sudden flashes of hungry curiosity.', hook: 'Insists the revenant advocate is after a document, not a body count.' },
+    { name: 'Sister Celandra', race: 'half-elf', charClass: 'cleric', level: 1, personality: 'gentle, sharp-minded, not easily fooled by piety', ask: 10, voiceNotes: 'Quiet and exact, with no wasted words.', hook: 'Knows which ward prayers still hold in the basilica quarter and which only sound comforting.' },
+  ],
+  'wildwood-mythic': [
+    { name: 'Rook Hazel', race: 'half-elf', charClass: 'bard', level: 2, personality: 'bright-eyed, respectful of old places, too brave by half', ask: 12, voiceNotes: 'Warm voice, speaks in stories and cautions.', hook: 'Swears the moonwell path changes depending on who speaks first.' },
+    { name: 'Edda Moss', race: 'human', charClass: 'druid', level: 1, personality: 'reserved, attentive, listens before judging', ask: 11, voiceNotes: 'Soft, rooted, never seems hurried.', hook: 'Recognises the old offering customs and which ones should never be skipped.' },
+  ],
+  'sword-and-sorcery-city-states': [
+    { name: 'Neral Silt', race: 'human', charClass: 'thief', level: 2, personality: 'slick, amused, very honest about being dangerous', ask: 15, voiceNotes: 'Low, amused, always sounds half a move ahead.', hook: 'Already knows one crew that bled out trying the cistern approach.' },
+    { name: 'Tama Brass', race: 'human', charClass: 'fighter', level: 2, personality: 'arena-bred, confident, loyal if paid cleanly', ask: 14, voiceNotes: 'Fast grin, street cadence, enjoys a challenge.', hook: 'Has fought in alleys like Brass Lantern before and knows how quickly crowds become cover.' },
+  ],
+};
+
+const STARTER_SET_PIECES: Record<string, Array<{
+  sceneName: string;
+  title: string;
+  narration: string;
+  event: string;
+  pressureDelta: number;
+  factionKey: 'locals' | 'delvers' | 'watch' | 'shadows';
+  heatDelta: number;
+  reputationDelta: number;
+}>> = {
+  'classic-fantasy-frontier': [
+    {
+      sceneName: 'The Black Barrow Mouth',
+      title: 'Barrow Alarm',
+      narration: 'Fresh goblin pickets have been here recently. You find tether cuts, cold ash, and a warning bone tied with black twine. The barrow is not dormant ground any more; it is contested territory, and someone expects company.',
+      event: 'The party found clear signs that the Black Barrow is under active hostile watch.',
+      pressureDelta: 1,
+      factionKey: 'shadows',
+      heatDelta: 1,
+      reputationDelta: 0,
+    },
+  ],
+  'grim-border-kingdoms': [
+    {
+      sceneName: 'Shrine Undercroft',
+      title: 'Bell Before Raids',
+      narration: 'A rope from the shrine bell disappears through the undercroft to a blood-smeared beam. Someone has been ringing warning into the village and timing raids around the panic. This place was neutral ground once. It is a kill-box now.',
+      event: 'The party uncovered how the shrine bell has been weaponised to cue road violence.',
+      pressureDelta: 1,
+      factionKey: 'shadows',
+      heatDelta: 2,
+      reputationDelta: -1,
+    },
+  ],
+  'haunted-empire': [
+    {
+      sceneName: 'Lantern Crypt',
+      title: 'The Advocate Walks',
+      narration: 'One of the blue vigil lamps flares on its own and reveals old shoe-scrapes around a single sarcophagus. The dead advocate is real. More troubling: whatever is moving through the crypt is carrying purpose, not mere hunger.',
+      event: 'The party confirmed that a purposeful revenant is moving through the Lantern Crypt.',
+      pressureDelta: 1,
+      factionKey: 'shadows',
+      heatDelta: 1,
+      reputationDelta: 0,
+    },
+  ],
+  'wildwood-mythic': [
+    {
+      sceneName: 'Moonwell Track',
+      title: 'The Path Answers Back',
+      narration: 'The track shifts subtly underfoot. Runes cut into a rootstone answer a spoken lie with a pulse of cold light. Whatever old bargain kept this path passable is still alive enough to judge intent.',
+      event: 'The party discovered that the moonwell path still enforces old terms of passage.',
+      pressureDelta: 0,
+      factionKey: 'watch',
+      heatDelta: 1,
+      reputationDelta: 1,
+    },
+  ],
+  'sword-and-sorcery-city-states': [
+    {
+      sceneName: 'Salt Cistern Galleries',
+      title: 'Another Crew Was Here First',
+      narration: 'Chalk arrows, snapped lamp glass, and a body dragged just out of sight tell the story fast: another crew already pushed this route and paid for it. You are not opening virgin ground. You are entering a live race with knives already out.',
+      event: 'The party entered an active treasure race in the Salt Cistern galleries.',
+      pressureDelta: 1,
+      factionKey: 'delvers',
+      heatDelta: 2,
+      reputationDelta: 0,
+    },
+  ],
+};
+
+export function buildStarterContracts(settingId: string): StarterContractSeed[] {
+  const seeds = STARTER_CONTRACTS[settingId] || STARTER_CONTRACTS['classic-fantasy-frontier'];
+  return seeds.map((seed) => ({
+    ...seed,
+    id: uuid(),
+    taken: false,
+    completedAt: null,
+  }));
+}
+
+export function getStarterProspects(settingId: string): StarterProspectSeed[] {
+  return STARTER_PROSPECTS[settingId] || STARTER_PROSPECTS['classic-fantasy-frontier'];
+}
+
 export function seedCampaignStarterPack(params: {
   db: Database;
   campaignId: string;
@@ -382,8 +631,8 @@ export function seedCampaignStarterPack(params: {
   const sceneIds = pack.scenes.map((_scene, index) => index === 0 ? startSceneId : uuid());
 
   run(db,
-    'UPDATE campaigns SET town_name = ?, danger_level = ?, dominant_faction = ? WHERE id = ?',
-    [pack.townName, pack.dangerLevel, pack.dominantFaction, campaignId]);
+    'UPDATE campaigns SET town_name = ?, danger_level = ?, dominant_faction = ?, town_contracts = ? WHERE id = ?',
+    [pack.townName, pack.dangerLevel, pack.dominantFaction, JSON.stringify(buildStarterContracts(settingId)), campaignId]);
 
   for (const [index, scene] of pack.scenes.entries()) {
     const sceneId = sceneIds[index];
@@ -466,4 +715,50 @@ export function seedCampaignStarterPack(params: {
       'INSERT INTO world_lore (id, campaign_id, category, title, content) VALUES (?, ?, ?, ?, ?)',
       [uuid(), campaignId, lore.category, lore.title, lore.content]);
   }
+}
+
+export function resolveStarterSetPiece(params: {
+  db: Database;
+  campaignId: string;
+  sceneId: string;
+}) {
+  const { db, campaignId, sceneId } = params;
+  const campaign = get(db, 'SELECT setting_id FROM campaigns WHERE id = ?', [campaignId]) as any;
+  const settingId = String(campaign?.setting_id || 'classic-fantasy-frontier');
+  const scene = get(db, 'SELECT name FROM scenes WHERE id = ? AND campaign_id = ?', [sceneId, campaignId]) as any;
+  if (!scene) return [];
+
+  const setPiece = (STARTER_SET_PIECES[settingId] || []).find((entry) => entry.sceneName === scene.name);
+  if (!setPiece) return [];
+
+  const stateRow = get(db, 'SELECT state_json FROM scene_state WHERE scene_id = ?', [sceneId]) as any;
+  let state: Record<string, any> = {};
+  try { state = JSON.parse(stateRow?.state_json || '{}'); } catch {}
+  if (state.starterSetPieceTriggered) return [];
+
+  state.starterSetPieceTriggered = true;
+  run(db,
+    'INSERT OR REPLACE INTO scene_state (scene_id, campaign_id, state_json, updated_at) VALUES (?, ?, ?, datetime("now"))',
+    [sceneId, campaignId, JSON.stringify(state)]);
+
+  const campaignState = getCampaignState(db, campaignId);
+  campaignState.encounterPressure = Math.max(0, Math.min(10, campaignState.encounterPressure + setPiece.pressureDelta));
+  const faction = campaignState.factions[setPiece.factionKey];
+  if (faction) {
+    faction.heat = Math.max(0, Math.min(12, faction.heat + setPiece.heatDelta));
+    faction.reputation = Math.max(-10, Math.min(10, faction.reputation + setPiece.reputationDelta));
+    faction.notes = setPiece.event;
+    campaignState.factions[setPiece.factionKey] = faction;
+  }
+  noteCampaignEvent(campaignState, setPiece.event);
+  saveCampaignState(db, campaignId, campaignState);
+
+  const loreExists = get(db, 'SELECT id FROM world_lore WHERE campaign_id = ? AND title = ?', [campaignId, setPiece.title]) as any;
+  if (!loreExists) {
+    run(db,
+      'INSERT INTO world_lore (id, campaign_id, category, title, content) VALUES (?, ?, ?, ?, ?)',
+      [uuid(), campaignId, 'revelation', setPiece.title, setPiece.narration]);
+  }
+
+  return [setPiece.narration];
 }

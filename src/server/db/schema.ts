@@ -102,6 +102,7 @@ function runMigrations() {
   try { db.run('ALTER TABLE campaigns ADD COLUMN town_name TEXT DEFAULT ""'); } catch {}
   try { db.run('ALTER TABLE campaigns ADD COLUMN town_contracts TEXT DEFAULT "[]"'); } catch {}
   try { db.run('ALTER TABLE campaigns ADD COLUMN dominant_faction TEXT DEFAULT "locals"'); } catch {}
+  try { db.run('ALTER TABLE campaigns ADD COLUMN setting_id TEXT DEFAULT ""'); } catch {}
 
   db.run(`
     CREATE TABLE IF NOT EXISTS campaign_players (

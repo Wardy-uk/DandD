@@ -26,6 +26,7 @@ import {
 } from './campaignState.js';
 import { surfaceRumours, popDawnSummary } from './nightlyGrowth.js';
 import { getPartyCompanions, normalizeRelationshipState } from './companions.js';
+import { getStarterProspects } from './starterPacks.js';
 
 // ─── Town Name Generator ────────────────────────────────────────────────────
 
@@ -255,9 +256,10 @@ export interface TownContract {
   completedAt: string | null;
 }
 
-export function generateContracts(state: CampaignSimulationState, campaignName: string): TownContract[] {
+export function generateContracts(state: CampaignSimulationState, campaignName: string, settingId = ''): TownContract[] {
   let h = 0;
-  for (let i = 0; i < campaignName.length; i++) h = (Math.imul(37, h) + campaignName.charCodeAt(i)) | 0;
+  const seedText = `${campaignName}:${settingId}`;
+  for (let i = 0; i < seedText.length; i++) h = (Math.imul(37, h) + seedText.charCodeAt(i)) | 0;
 
   const count = 2 + (Math.abs(h) % 2); // 2-3 contracts
   const selected: TownContract[] = [];
@@ -286,7 +288,7 @@ export function generateContracts(state: CampaignSimulationState, campaignName: 
 
 const PROSPECT_POOL: Array<{
   name: string; race: string; charClass: string; level: number;
-  personality: string; ask: number; voiceNotes: string;
+  personality: string; ask: number; voiceNotes: string; hook?: string;
 }> = [
   { name: 'Gareth the Stout',   race: 'human',   charClass: 'fighter', level: 2, personality: 'Reliable, doesn\'t ask questions', ask: 10, voiceNotes: 'Blunt, northern accent, short sentences' },
   { name: 'Syla Moonwhisper',   race: 'half-elf', charClass: 'ranger',  level: 2, personality: 'Quiet, capable, watchful',         ask: 12, voiceNotes: 'Soft voice, pauses before speaking, precise' },
@@ -300,14 +302,18 @@ const PROSPECT_POOL: Array<{
   { name: 'Hector of the Wall', race: 'human',   charClass: 'paladin', level: 2, personality: 'Earnest, inflexible, brave',       ask: 12, voiceNotes: 'Formal, moralistic, means every word of it' },
 ];
 
-export function getProspects(campaignId: string, partyClasses: string[], dayCount: number): typeof PROSPECT_POOL {
+export function getProspects(campaignId: string, partyClasses: string[], dayCount: number, settingId = ''): Array<(typeof PROSPECT_POOL)[number]> {
   let h = 0;
   for (let i = 0; i < campaignId.length; i++) h = (Math.imul(31, h) + campaignId.charCodeAt(i)) | 0;
   h += dayCount * 13;
+  const starterProspects = getStarterProspects(settingId);
+  const combinedPool = [...starterProspects, ...PROSPECT_POOL.filter((prospect) =>
+    !starterProspects.some((starter) => starter.name === prospect.name)
+  )];
 
   // Pick 2 prospects, biased away from classes already in party
   const partyClassSet = new Set(partyClasses.map(c => c.toLowerCase()));
-  const sorted = [...PROSPECT_POOL].sort((a, b) => {
+  const sorted = [...combinedPool].sort((a, b) => {
     const aInParty = partyClassSet.has(a.charClass) ? 1 : 0;
     const bInParty = partyClassSet.has(b.charClass) ? 1 : 0;
     return aInParty - bInParty;

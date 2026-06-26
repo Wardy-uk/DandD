@@ -56,14 +56,15 @@ export function createTownRoutes(db: Database, io: SocketServer): Router {
 
     const partyClasses = companions.filter(c => c.joinedParty).map(c => c.charClass);
     const sessionNumber = Number(campaign.session_number || 1);
-    const prospects = getProspects(campaignId, partyClasses, sessionNumber);
+    const settingId = String(campaign.setting_id || '');
+    const prospects = getProspects(campaignId, partyClasses, sessionNumber, settingId);
 
     let contracts: any[] = [];
     try {
       contracts = JSON.parse(campaign.town_contracts || '[]');
     } catch {}
     if (contracts.length === 0) {
-      contracts = generateContracts(state, String(campaign.name || ''));
+      contracts = generateContracts(state, String(campaign.name || ''), settingId);
       run(db, 'UPDATE campaigns SET town_contracts = ? WHERE id = ?', [JSON.stringify(contracts), campaignId]);
     }
 
@@ -284,7 +285,7 @@ export function createTownRoutes(db: Database, io: SocketServer): Router {
 
     const partyClasses = getPartyCompanions(db, campaignId).filter(c => c.joinedParty).map(c => c.charClass);
     const sessionNumber = Number(campaign?.session_number || 1);
-    const prospects = getProspects(campaignId, partyClasses, sessionNumber);
+    const prospects = getProspects(campaignId, partyClasses, sessionNumber, String(campaign?.setting_id || ''));
     const prospect = prospects.find(p => p.name.toLowerCase() === prospectName.toLowerCase());
     if (!prospect) { res.json({ ok: false, error: 'Prospect not available' }); return; }
 

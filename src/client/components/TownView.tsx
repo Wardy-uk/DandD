@@ -63,6 +63,7 @@ interface Contract {
   reward: number;
   factionKey: string;
   taken: boolean;
+  openingContract?: boolean;
 }
 
 interface Prospect {
@@ -72,6 +73,7 @@ interface Prospect {
   level: number;
   personality: string;
   ask: number;
+  hook?: string;
 }
 
 interface TownData {
@@ -542,6 +544,9 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
                             <span className="text-[10px] text-ink-faint font-heading">{p.race} {p.charClass} {p.level}</span>
                           </div>
                           <p className="text-xs font-body text-ink-faint italic">{p.personality}</p>
+                          {p.hook && (
+                            <p className="mt-1 text-[11px] font-body text-leather">{p.hook}</p>
+                          )}
                           <p className="text-xs font-heading text-amber-700 mt-1">{p.ask} GP/week</p>
                         </div>
                         {!alreadyHired && (
@@ -754,7 +759,14 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
                     }`}>
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex-1">
-                          <p className="font-heading font-bold text-sm text-leather-dark">{contract.title}</p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="font-heading font-bold text-sm text-leather-dark">{contract.title}</p>
+                            {contract.openingContract && (
+                              <span className="rounded-full border border-blood/20 bg-blood/5 px-2 py-0.5 text-[10px] font-heading uppercase tracking-wide text-blood">
+                                Opening Hook
+                              </span>
+                            )}
+                          </div>
                           <p className="text-xs font-body text-ink-faint mt-1">{contract.description}</p>
                           <div className="flex items-center gap-3 mt-2">
                             <span className="text-xs font-heading text-amber-700">{contract.reward} GP reward</span>

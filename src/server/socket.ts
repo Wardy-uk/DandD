@@ -43,6 +43,7 @@ import {
 import { returnToTown } from './game/town.js';
 import { generate } from './ai/ollama.js';
 import { getCompanionReaction, inferReactionTrigger } from './game/companionReactions.js';
+import { resolveStarterSetPiece } from './game/starterPacks.js';
 
 interface ConnectedPlayer {
   socketId: string;
@@ -609,6 +610,16 @@ export function setupSocketHandlers(
           run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
             [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', note]);
           io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: note });
+        }
+
+        const starterSetPieceNotes = resolveStarterSetPiece({ db, campaignId, sceneId: nextScene.id });
+        for (const note of starterSetPieceNotes) {
+          run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+            [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', note]);
+          io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: note });
+        }
+        if (starterSetPieceNotes.length > 0) {
+          emitCampaignState(io, db, campaignId);
         }
 
         const npcsInScene = all(db,

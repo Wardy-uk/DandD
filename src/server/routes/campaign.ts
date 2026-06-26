@@ -169,13 +169,14 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
 
     run(db,
       `INSERT INTO campaigns (
-        id, name, setting, current_scene_id, created_by,
+        id, name, setting, setting_id, current_scene_id, created_by,
         ai_growth_enabled, target_scene_buffer, target_npc_buffer, start_mode
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         campaignName,
         selectedSetting.name,
+        selectedSetting.id,
         startSceneId,
         req.player.id,
         settings.defaultAiGrowthEnabled ? 1 : 0,
