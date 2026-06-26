@@ -46,6 +46,10 @@ export interface StarterContractSeed {
   taken: boolean;
   completedAt: string | null;
   openingContract: boolean;
+  claimedAt?: string | null;
+  objectiveType?: 'discovered_sites' | 'cleared_scenes' | 'fallback_points' | 'treasure_marks' | 'lore_entries' | 'revelations';
+  objectiveTarget?: number;
+  objectiveLabel?: string;
 }
 
 export interface StarterProspectSeed {
@@ -400,6 +404,9 @@ const STARTER_CONTRACTS: Record<string, Array<Omit<StarterContractSeed, 'id' | '
       reward: 90,
       factionKey: 'watch',
       openingContract: true,
+      objectiveType: 'discovered_sites',
+      objectiveTarget: 2,
+      objectiveLabel: 'frontier sites secured',
     },
     {
       title: 'Recover the Surveyor\'s Chalk Maps',
@@ -407,6 +414,9 @@ const STARTER_CONTRACTS: Record<string, Array<Omit<StarterContractSeed, 'id' | '
       reward: 75,
       factionKey: 'delvers',
       openingContract: false,
+      objectiveType: 'treasure_marks',
+      objectiveTarget: 1,
+      objectiveLabel: 'route caches recovered',
     },
     {
       title: 'Bring Word of the Missing Teamster',
@@ -414,6 +424,9 @@ const STARTER_CONTRACTS: Record<string, Array<Omit<StarterContractSeed, 'id' | '
       reward: 65,
       factionKey: 'locals',
       openingContract: false,
+      objectiveType: 'lore_entries',
+      objectiveTarget: 1,
+      objectiveLabel: 'hard evidence brought back',
     },
   ],
   'grim-border-kingdoms': [
@@ -423,6 +436,9 @@ const STARTER_CONTRACTS: Record<string, Array<Omit<StarterContractSeed, 'id' | '
       reward: 110,
       factionKey: 'watch',
       openingContract: true,
+      objectiveType: 'cleared_scenes',
+      objectiveTarget: 1,
+      objectiveLabel: 'causeway positions cleared',
     },
     {
       title: 'Find the Bell-Ringer Below the Shrine',
@@ -430,6 +446,9 @@ const STARTER_CONTRACTS: Record<string, Array<Omit<StarterContractSeed, 'id' | '
       reward: 95,
       factionKey: 'locals',
       openingContract: false,
+      objectiveType: 'revelations',
+      objectiveTarget: 1,
+      objectiveLabel: 'bell conspiracy exposed',
     },
     {
       title: 'Seize the Muster Ledger',
@@ -437,6 +456,9 @@ const STARTER_CONTRACTS: Record<string, Array<Omit<StarterContractSeed, 'id' | '
       reward: 120,
       factionKey: 'shadows',
       openingContract: false,
+      objectiveType: 'treasure_marks',
+      objectiveTarget: 1,
+      objectiveLabel: 'evidence caches taken',
     },
   ],
   'haunted-empire': [
@@ -446,6 +468,9 @@ const STARTER_CONTRACTS: Record<string, Array<Omit<StarterContractSeed, 'id' | '
       reward: 115,
       factionKey: 'watch',
       openingContract: true,
+      objectiveType: 'cleared_scenes',
+      objectiveTarget: 1,
+      objectiveLabel: 'crypt breaches stabilised',
     },
     {
       title: 'Recover the Advocate\'s Writ Tube',
@@ -453,6 +478,9 @@ const STARTER_CONTRACTS: Record<string, Array<Omit<StarterContractSeed, 'id' | '
       reward: 140,
       factionKey: 'shadows',
       openingContract: false,
+      objectiveType: 'revelations',
+      objectiveTarget: 1,
+      objectiveLabel: 'advocate trail proven',
     },
     {
       title: 'Map the Archive Intersections',
@@ -460,6 +488,9 @@ const STARTER_CONTRACTS: Record<string, Array<Omit<StarterContractSeed, 'id' | '
       reward: 80,
       factionKey: 'delvers',
       openingContract: false,
+      objectiveType: 'discovered_sites',
+      objectiveTarget: 3,
+      objectiveLabel: 'vault routes charted',
     },
   ],
   'wildwood-mythic': [
@@ -469,6 +500,9 @@ const STARTER_CONTRACTS: Record<string, Array<Omit<StarterContractSeed, 'id' | '
       reward: 85,
       factionKey: 'watch',
       openingContract: true,
+      objectiveType: 'discovered_sites',
+      objectiveTarget: 2,
+      objectiveLabel: 'paths walked cleanly',
     },
     {
       title: 'Learn What Took the Offerings',
@@ -476,6 +510,9 @@ const STARTER_CONTRACTS: Record<string, Array<Omit<StarterContractSeed, 'id' | '
       reward: 90,
       factionKey: 'locals',
       openingContract: false,
+      objectiveType: 'revelations',
+      objectiveTarget: 1,
+      objectiveLabel: 'boundary mystery solved',
     },
     {
       title: 'Take the Antler Token from the Hollow',
@@ -483,6 +520,9 @@ const STARTER_CONTRACTS: Record<string, Array<Omit<StarterContractSeed, 'id' | '
       reward: 105,
       factionKey: 'shadows',
       openingContract: false,
+      objectiveType: 'treasure_marks',
+      objectiveTarget: 1,
+      objectiveLabel: 'hollow relic traced',
     },
   ],
   'sword-and-sorcery-city-states': [
@@ -492,6 +532,9 @@ const STARTER_CONTRACTS: Record<string, Array<Omit<StarterContractSeed, 'id' | '
       reward: 125,
       factionKey: 'delvers',
       openingContract: true,
+      objectiveType: 'discovered_sites',
+      objectiveTarget: 2,
+      objectiveLabel: 'routes beaten to first claim',
     },
     {
       title: 'Lift the Red Idol Ledger',
@@ -499,6 +542,9 @@ const STARTER_CONTRACTS: Record<string, Array<Omit<StarterContractSeed, 'id' | '
       reward: 135,
       factionKey: 'shadows',
       openingContract: false,
+      objectiveType: 'lore_entries',
+      objectiveTarget: 2,
+      objectiveLabel: 'ledger proof secured',
     },
     {
       title: 'Quiet the Brass Lantern Alley Entrance',
@@ -506,6 +552,9 @@ const STARTER_CONTRACTS: Record<string, Array<Omit<StarterContractSeed, 'id' | '
       reward: 90,
       factionKey: 'watch',
       openingContract: false,
+      objectiveType: 'cleared_scenes',
+      objectiveTarget: 1,
+      objectiveLabel: 'alley approaches quieted',
     },
   ],
 };
@@ -612,6 +661,7 @@ export function buildStarterContracts(settingId: string): StarterContractSeed[] 
     id: uuid(),
     taken: false,
     completedAt: null,
+    claimedAt: null,
   }));
 }
 

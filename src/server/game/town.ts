@@ -213,36 +213,54 @@ const CONTRACT_TEMPLATES: Array<{
   description: string;
   reward: number;
   factionKey: string;
+  objectiveType: NonNullable<TownContract['objectiveType']>;
+  objectiveTarget: number;
+  objectiveLabel: string;
 }> = [
   {
     title: (f) => `Clear the ${['south passage', 'old shrine', 'collapsed hall', 'flooded level'][Math.abs(f.charCodeAt(0)) % 4]}`,
     description: 'The garrison wants proof of clearance. Kill or drive out whatever is using the space.',
     reward: 75,
     factionKey: 'watch',
+    objectiveType: 'cleared_scenes',
+    objectiveTarget: 1,
+    objectiveLabel: 'cleared scenes',
   },
   {
     title: () => 'Locate the missing surveyor',
     description: 'A guild surveyor went in three days ago and has not come back. Return with news — living or dead.',
     reward: 100,
     factionKey: 'locals',
+    objectiveType: 'discovered_sites',
+    objectiveTarget: 3,
+    objectiveLabel: 'sites discovered',
   },
   {
     title: () => 'Recover the manifold seal',
     description: 'An item of significance to people with money. Described as a flat disc of inscribed bronze.',
     reward: 150,
     factionKey: 'shadows',
+    objectiveType: 'treasure_marks',
+    objectiveTarget: 2,
+    objectiveLabel: 'treasure leads secured',
   },
   {
     title: () => 'Map the third level approaches',
     description: 'The delvers\' guild wants reliable maps of approaches to the deeper levels. Return with sketches.',
     reward: 60,
     factionKey: 'delvers',
+    objectiveType: 'fallback_points',
+    objectiveTarget: 1,
+    objectiveLabel: 'fallback routes marked',
   },
   {
     title: () => 'Eliminate the bounty hunter',
     description: 'Someone has posted a contract on the party. Deal with the contractor before they deal with you.',
     reward: 200,
     factionKey: 'shadows',
+    objectiveType: 'revelations',
+    objectiveTarget: 1,
+    objectiveLabel: 'major revelations',
   },
 ];
 
@@ -254,6 +272,14 @@ export interface TownContract {
   factionKey: string;
   taken: boolean;
   completedAt: string | null;
+  claimedAt?: string | null;
+  openingContract?: boolean;
+  objectiveType?: 'discovered_sites' | 'cleared_scenes' | 'fallback_points' | 'treasure_marks' | 'lore_entries' | 'revelations';
+  objectiveTarget?: number;
+  objectiveLabel?: string;
+  progress?: number;
+  progressText?: string;
+  readyToClaim?: boolean;
 }
 
 export function generateContracts(state: CampaignSimulationState, campaignName: string, settingId = ''): TownContract[] {
@@ -278,10 +304,128 @@ export function generateContracts(state: CampaignSimulationState, campaignName: 
       factionKey: tmpl.factionKey,
       taken: false,
       completedAt: null,
+      claimedAt: null,
+      objectiveType: tmpl.objectiveType,
+      objectiveTarget: tmpl.objectiveTarget,
+      objectiveLabel: tmpl.objectiveLabel,
     });
   }
 
   return selected;
+}
+
+export function evaluateContracts(db: Database, campaignId: string, contracts: TownContract[]): TownContract[] {
+  const metrics = getContractMetrics(db, campaignId);
+
+  return contracts.map((contract) => {
+    const objectiveType = contract.objectiveType || 'discovered_sites';
+    const objectiveTarget = Number(contract.objectiveTarget || 1);
+    const progress = Number(metrics[objectiveType] || 0);
+    const completedAt = contract.completedAt || (contract.taken && progress >= objectiveTarget ? new Date().toISOString() : null);
+    return {
+      ...contract,
+      objectiveType,
+      objectiveTarget,
+      objectiveLabel: contract.objectiveLabel || describeObjective(objectiveType),
+      progress,
+      progressText: `${Math.min(progress, objectiveTarget)}/${objectiveTarget} ${contract.objectiveLabel || describeObjective(objectiveType)}`,
+      completedAt,
+      readyToClaim: Boolean(contract.taken && completedAt && !contract.claimedAt),
+    };
+  });
+}
+
+export function claimContractReward(params: {
+  db: Database;
+  campaignId: string;
+  characterId: string;
+  contractId: string;
+}) {
+  const { db, campaignId, characterId, contractId } = params;
+  const campaign = get(db, 'SELECT town_contracts FROM campaigns WHERE id = ?', [campaignId]) as any;
+  let contracts: TownContract[] = [];
+  try { contracts = JSON.parse(campaign?.town_contracts || '[]'); } catch {}
+
+  const evaluated = evaluateContracts(db, campaignId, contracts);
+  const contract = evaluated.find((entry) => entry.id === contractId);
+  if (!contract) return { ok: false, error: 'Contract not found' };
+  if (!contract.taken) return { ok: false, error: 'Contract has not been taken' };
+  if (!contract.completedAt) return { ok: false, error: 'Contract is not complete yet' };
+  if (contract.claimedAt) return { ok: false, error: 'Contract reward already claimed' };
+
+  const xpAward = Math.max(20, Math.floor(contract.reward / 2));
+  run(db, 'UPDATE characters SET gold = gold + ?, xp = xp + ? WHERE id = ?', [contract.reward, xpAward, characterId]);
+
+  const claimedAt = new Date().toISOString();
+  const patched = evaluated.map((entry) => entry.id === contractId ? {
+    ...entry,
+    claimedAt,
+    readyToClaim: false,
+  } : entry);
+  run(db, 'UPDATE campaigns SET town_contracts = ? WHERE id = ?', [JSON.stringify(patched), campaignId]);
+
+  const state = getCampaignState(db, campaignId);
+  noteCampaignEvent(state, `Contract settled: ${contract.title} for ${contract.reward} GP and ${xpAward} XP.`);
+  shiftFactionStanding(state, contract.factionKey, { reputation: 1 });
+  saveCampaignState(db, campaignId, state);
+
+  return {
+    ok: true,
+    contract: { ...contract, claimedAt, readyToClaim: false },
+    reward: contract.reward,
+    xpAward,
+    narration: `The board clerk checks your proof, scratches out the posting, and pays ${contract.reward} GP. Word spreads quickly enough to count for another ${xpAward} XP.`,
+  };
+}
+
+function getContractMetrics(db: Database, campaignId: string): Record<string, number> {
+  const mapStats = getMapStats(db, campaignId);
+  const loreCount = Number((get(db,
+    'SELECT COUNT(*) as count FROM world_lore WHERE campaign_id = ? AND category != "history" AND category != "faction"',
+    [campaignId]) as any)?.count || 0);
+  const revelationCount = Number((get(db,
+    'SELECT COUNT(*) as count FROM world_lore WHERE campaign_id = ? AND category = "revelation"',
+    [campaignId]) as any)?.count || 0);
+
+  return {
+    discovered_sites: mapStats.discoveredSites,
+    cleared_scenes: mapStats.clearedScenes,
+    fallback_points: mapStats.fallbackPoints,
+    treasure_marks: mapStats.treasureMarks,
+    lore_entries: loreCount,
+    revelations: revelationCount,
+  };
+}
+
+function getMapStats(db: Database, campaignId: string) {
+  const rows = all(db, 'SELECT state_json FROM scene_state WHERE campaign_id = ?', [campaignId]) as Array<{ state_json?: string }>;
+  let clearedScenes = 0;
+  let fallbackPoints = 0;
+  let treasureMarks = 0;
+  for (const row of rows) {
+    let state: any = {};
+    try { state = JSON.parse(row.state_json || '{}'); } catch {}
+    if (state.cleared) clearedScenes += 1;
+    if (state.fallbackPoint) fallbackPoints += 1;
+    if (state.knownTreasure) treasureMarks += 1;
+  }
+  const discoveredSites = Number((get(db,
+    'SELECT COUNT(*) as count FROM scenes WHERE campaign_id = ? AND visited = 1',
+    [campaignId]) as any)?.count || 0);
+  return { discoveredSites, clearedScenes, fallbackPoints, treasureMarks };
+}
+
+function describeObjective(objectiveType: NonNullable<TownContract['objectiveType']>) {
+  switch (objectiveType) {
+    case 'cleared_scenes': return 'cleared scenes';
+    case 'fallback_points': return 'fallback routes marked';
+    case 'treasure_marks': return 'treasure leads secured';
+    case 'lore_entries': return 'lore proofs gathered';
+    case 'revelations': return 'major revelations';
+    case 'discovered_sites':
+    default:
+      return 'sites discovered';
+  }
 }
 
 // ─── Companion hire prospects ────────────────────────────────────────────────

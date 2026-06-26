@@ -10,6 +10,8 @@ import { authMiddleware, requireAuth } from './auth.js';
 import {
   appraiseLoot,
   buySupplies,
+  claimContractReward,
+  evaluateContracts,
   getCatalogue,
   getHealingQuote,
   generateContracts,
@@ -67,6 +69,9 @@ export function createTownRoutes(db: Database, io: SocketServer): Router {
       contracts = generateContracts(state, String(campaign.name || ''), settingId);
       run(db, 'UPDATE campaigns SET town_contracts = ? WHERE id = ?', [JSON.stringify(contracts), campaignId]);
     }
+
+    contracts = evaluateContracts(db, campaignId, contracts);
+    run(db, 'UPDATE campaigns SET town_contracts = ? WHERE id = ?', [JSON.stringify(contracts), campaignId]);
 
     const healQuote = char ? getHealingQuote(db, char.id) : { injuries: [], totalCost: 0 };
     const lootAppraisal = char ? appraiseLoot(db, campaignId, char.id) : { items: [], totalGp: 0 };
@@ -344,6 +349,7 @@ export function createTownRoutes(db: Database, io: SocketServer): Router {
     if (contract.taken) { res.json({ ok: false, error: 'Already taken' }); return; }
 
     contract.taken = true;
+    contracts = evaluateContracts(db, campaignId, contracts);
     run(db, 'UPDATE campaigns SET town_contracts = ? WHERE id = ?', [JSON.stringify(contracts), campaignId]);
 
     const contractNarration = `The garrison scribe marks it down. Contract accepted: ${contract.title}. Reward of ${contract.reward} GP on completion. "Don't come back empty-handed," the duty officer says, though they say that to everyone.`;
@@ -352,6 +358,34 @@ export function createTownRoutes(db: Database, io: SocketServer): Router {
     io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: contractNarration });
 
     res.json({ ok: true, data: { contract, narration: contractNarration } });
+  });
+
+  router.post('/:campaignId/contract/claim', requireAuth, (req: any, res) => {
+    const { campaignId } = req.params;
+    const { contractId } = req.body;
+    if (!contractId) { res.json({ ok: false, error: 'contractId required' }); return; }
+
+    const char = get(db,
+      'SELECT id FROM characters WHERE campaign_id = ? AND player_id = ? AND status != "dead"',
+      [campaignId, req.player.id]) as any;
+    if (!char) { res.json({ ok: false, error: 'No active character' }); return; }
+
+    const result = claimContractReward({ db, campaignId, characterId: char.id, contractId });
+    if (!result.ok) {
+      res.json({ ok: false, error: result.error });
+      return;
+    }
+
+    run(db, 'INSERT INTO game_log (id, campaign_id, type, actor, content) VALUES (?, ?, ?, ?, ?)',
+      [uuid(), campaignId, 'narration', 'DM', result.narration]);
+    io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: result.narration });
+
+    const updatedChar = get(db, 'SELECT * FROM characters WHERE id = ?', [char.id]) as any;
+    if (updatedChar) {
+      io.to(`campaign:${campaignId}`).emit('game:state_update', { type: 'character_update', payload: updatedChar });
+    }
+
+    res.json({ ok: true, data: result });
   });
 
   // ─── POST /town/:campaignId/downtime ─────────────────────────────

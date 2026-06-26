@@ -64,6 +64,13 @@ interface Contract {
   factionKey: string;
   taken: boolean;
   openingContract?: boolean;
+  objectiveLabel?: string;
+  objectiveTarget?: number;
+  progress?: number;
+  progressText?: string;
+  completedAt?: string | null;
+  claimedAt?: string | null;
+  readyToClaim?: boolean;
 }
 
 interface Prospect {
@@ -354,6 +361,17 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
     if (data.ok) {
       fetchTownData();
       showMsg(`Contract accepted: ${data.data.contract.title}`);
+    }
+  };
+
+  const handleClaimContract = async (contractId: string) => {
+    const data = await apiPost('contract/claim', { contractId });
+    if (data.ok) {
+      fetchTownData();
+      showMsg(`Contract settled: +${data.data.reward} GP, +${data.data.xpAward} XP`);
+      playSound('coin_clink');
+    } else {
+      showMsg(data.error || 'Could not settle contract');
     }
   };
 
@@ -772,10 +790,34 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
                             <span className="text-xs font-heading text-amber-700">{contract.reward} GP reward</span>
                             <span className="text-[10px] text-ink-faint capitalize font-body">{contract.factionKey}</span>
                           </div>
+                          {contract.progressText && (
+                            <div className="mt-2">
+                              <p className="text-[11px] font-body text-ink-faint">{contract.progressText}</p>
+                              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-parchment-dark/20">
+                                <div
+                                  className={`h-full rounded-full ${contract.readyToClaim ? 'bg-heal' : 'bg-leather'}`}
+                                  style={{
+                                    width: `${Math.max(8, Math.min(100, ((contract.progress || 0) / Math.max(1, contract.objectiveTarget || 1)) * 100))}%`,
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          )}
                         </div>
                         <div className="flex-shrink-0">
-                          {contract.taken ? (
-                            <span className="text-[10px] text-green-700 font-heading px-2 py-1 rounded bg-green-100/60">Taken</span>
+                          {contract.claimedAt ? (
+                            <span className="text-[10px] text-heal font-heading px-2 py-1 rounded bg-heal/10">Paid</span>
+                          ) : contract.readyToClaim ? (
+                            <button
+                              onClick={() => handleClaimContract(contract.id)}
+                              className="px-3 py-1.5 rounded border border-heal/30 text-xs font-heading text-heal hover:bg-heal/10 transition-colors"
+                            >
+                              Claim
+                            </button>
+                          ) : contract.taken ? (
+                            <span className="text-[10px] text-green-700 font-heading px-2 py-1 rounded bg-green-100/60">
+                              {contract.completedAt ? 'Complete' : 'Taken'}
+                            </span>
                           ) : (
                             <button
                               onClick={() => handleTakeContract(contract.id)}
