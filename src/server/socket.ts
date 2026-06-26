@@ -1714,7 +1714,8 @@ Describe one unprompted environmental detail or ambient change the party notices
       io.to(`campaign:${campaignId}`).emit('game:log_entry', {
         id: crypto.randomUUID(),
         campaignId,
-        sessionNumber: 0,        timestamp: new Date().toISOString(),
+        sessionNumber: 0,
+        timestamp: new Date().toISOString(),
         type: 'system',
         actor: player.playerName,
         content: `[OOC] ${message}`,
@@ -1757,6 +1758,4 @@ Describe one unprompted environmental detail or ambient change the party notices
 /** Get list of players currently in a campaign */
 export function getOnlinePlayers(campaignId: string): ConnectedPlayer[] {
   return Array.from(connectedPlayers.values()).filter(p => p.campaignId === campaignId);
-}
-ilter(p => p.campaignId === campaignId);
 }
