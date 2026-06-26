@@ -31,6 +31,9 @@ export interface DelveConditions {
 
   // Companion tension from supply
   tensionFromSupply: number; // extra tension applied to all companions
+
+  // Pressure event tracking — band (5/7/9) last narrated
+  lastPressureNarration: number;
 }
 
 export interface NightlyWorldEvent {
@@ -220,6 +223,7 @@ function createDefaultCampaignState(): CampaignSimulationState {
       campQuality: 'adequate',
       campTurnNumber: 0,
       tensionFromSupply: 0,
+      lastPressureNarration: 0,
     },
     encounterPressure: 2,
     lastEncounterTurn: 0,
@@ -420,6 +424,23 @@ export function tickDelveConditions(params: {
       d.attritionHp += 1;
       notes.push(`Going without food this long is becoming dangerous. Someone will need to eat or the company will break down.`);
     }
+  }
+
+  // ── Pressure spike events (fire once per band: 5, 7, 9) ─────────────────
+  const pressBand = state.encounterPressure >= 9 ? 9 : state.encounterPressure >= 7 ? 7 : state.encounterPressure >= 5 ? 5 : 0;
+  if (pressBand > 0 && (d.lastPressureNarration || 0) < pressBand) {
+    d.lastPressureNarration = pressBand;
+    if (pressBand === 5) {
+      notes.push(`The dungeon feels tighter than it did. Something has shifted in how it watches you.`);
+    } else if (pressBand === 7) {
+      notes.push(`Something is actively moving through the dungeon around you — not random noise. Deliberate. Tracking.`);
+    } else {
+      notes.push(`Whatever is hunting you is close now. The air carries it. Do not wait much longer.`);
+    }
+  }
+  // Reset narration band when pressure drops back below a threshold
+  if (state.encounterPressure < (d.lastPressureNarration || 0)) {
+    d.lastPressureNarration = pressBand;
   }
 
   return notes;

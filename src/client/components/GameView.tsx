@@ -879,6 +879,9 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                 { key: 'parley',     label: 'Parley',     hint: 'Talk terms; may improve relation' },
                 { key: 'intimidate', label: 'Intimidate', hint: 'Drive them off without a fight' },
                 { key: 'ignore',     label: 'Ignore',     hint: 'Neither side engages' },
+                ...(rivalEncounter.rivalRelation === 'ally' || rivalEncounter.rivalRelation === 'grudging_ally'
+                  ? [{ key: 'request_intel', label: 'Request intel', hint: 'Ask what they\'ve already explored' }]
+                  : []),
               ].map(opt => (
                 <button
                   key={opt.key}

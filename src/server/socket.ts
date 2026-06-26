@@ -942,6 +942,37 @@ Rules:
         });
         delveNotes.push(...campNotes);
 
+        // HP recovery at camp — only in safe-camp scenes
+        try {
+          const sceneStateRow = get(db, 'SELECT state_json FROM scene_state WHERE scene_id = ? AND campaign_id = ?', [scene.id, campaignId]) as any;
+          const sceneRoomState = sceneStateRow ? JSON.parse(sceneStateRow.state_json || '{}') : {};
+          if (sceneRoomState.safeCamp) {
+            const campQ = delveState.delve.campQuality;
+            const restoreRatio = campQ === 'fortified' ? 0.5 : campQ === 'good' ? 0.33 : campQ === 'adequate' ? 0.15 : 0;
+            if (restoreRatio > 0 && character.id) {
+              const maxHp = Number(character.max_hp);
+              const restore = Math.min(maxHp - Number(character.hp), Math.floor(maxHp * restoreRatio));
+              if (restore > 0) {
+                run(db, 'UPDATE characters SET hp = MIN(max_hp, hp + ?) WHERE id = ?', [restore, character.id]);
+                const updChar = get(db, 'SELECT * FROM characters WHERE id = ?', [character.id]) as any;
+                if (updChar) io.to(`campaign:${campaignId}`).emit('game:state_update', { type: 'character_update', payload: updChar });
+                const restNote = campQ === 'fortified'
+                  ? `Proper rest in a secured position. ${character.name} recovers ${restore} hit point${restore === 1 ? '' : 's'}.`
+                  : `The rest helps. ${character.name} recovers ${restore} hit point${restore === 1 ? '' : 's'}.`;
+                run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                  [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', restNote]);
+                io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: restNote });
+              }
+              // Companions also recover
+              const joinedNpcs = all(db, 'SELECT id, hp, max_hp FROM npcs WHERE campaign_id = ? AND joined_party = 1 AND alive = 1', [campaignId]) as any[];
+              for (const npc of joinedNpcs) {
+                const npcRestore = Math.min(Number(npc.max_hp) - Number(npc.hp), Math.floor(Number(npc.max_hp) * restoreRatio));
+                if (npcRestore > 0) run(db, 'UPDATE npcs SET hp = MIN(max_hp, hp + ?) WHERE id = ?', [npcRestore, npc.id]);
+              }
+            }
+          }
+        } catch {}
+
         // Surface a rumour at camp — something the company picks up while resting
         try {
           const rumours = surfaceRumours(db, campaignId, 1);
@@ -1175,8 +1206,8 @@ Rules:
           [campaignId]) as any;
         const companions = getPartyCompanions(db, campaignId).filter((c: any) => c.joinedParty);
         const partyStrength = companions.length + 2; // PC + party size
-        const validChoice = ['fight', 'parley', 'intimidate', 'ignore'].includes(choice)
-          ? choice as 'fight' | 'parley' | 'intimidate' | 'ignore'
+        const validChoice = ['fight', 'parley', 'intimidate', 'ignore', 'request_intel'].includes(choice)
+          ? choice as 'fight' | 'parley' | 'intimidate' | 'ignore' | 'request_intel'
           : 'ignore';
 
         const result = resolveRivalClash({

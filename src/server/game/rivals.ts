@@ -235,7 +235,7 @@ export function resolveRivalClash(params: {
   rivalId: string;
   partyStrength: number;      // derived from party modifiers
   leaderName: string;
-  clashType: 'fight' | 'parley' | 'intimidate' | 'ignore';
+  clashType: 'fight' | 'parley' | 'intimidate' | 'ignore' | 'request_intel';
 }): { notes: string[]; rival: RivalParty } {
   const { db, campaignId, rivalId, partyStrength, leaderName, clashType } = params;
   const rival = loadRival(db, rivalId);
@@ -300,6 +300,22 @@ export function resolveRivalClash(params: {
     } else {
       rival.relation = shiftRelation(rival.relation, -1);
       notes.push(`${rival.name} does not scare easily. The attempt to intimidate them lands badly.`);
+    }
+  } else if (clashType === 'request_intel') {
+    if (rival.relation === 'ally' || rival.relation === 'grudging_ally') {
+      const sceneNames = rival.lootedScenes
+        .map(sId => (get(db, 'SELECT name FROM scenes WHERE id = ?', [sId]) as any)?.name)
+        .filter(Boolean) as string[];
+      if (sceneNames.length > 0) {
+        const sceneList = sceneNames.slice(0, 4).join(', ');
+        const coverage = sceneNames.length >= 3 ? 'Most of it stripped already.' : 'Limited coverage so far.';
+        notes.push(`${rival.name} pauses. "We've worked through ${sceneList}. ${coverage} Your call on what's left."`);
+      } else {
+        notes.push(`${rival.name} shrugs. "Nothing worth reporting. We haven't found much ourselves."`);
+      }
+      rival.memory.push(`Shared scene intel with ${leaderName}.`);
+    } else {
+      notes.push(`${rival.name} looks at you like you've asked for their purse. Information is not something they're giving away.`);
     }
   } else {
     // ignore — neither side engages
