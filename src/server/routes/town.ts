@@ -12,6 +12,7 @@ import {
   buySupplies,
   claimContractReward,
   evaluateContracts,
+  generateFollowUpContract,
   getCatalogue,
   getHealingQuote,
   generateContracts,
@@ -418,7 +419,29 @@ export function createTownRoutes(db: Database, io: SocketServer): Router {
       io.to(`campaign:${campaignId}`).emit('game:state_update', { type: 'character_update', payload: updatedChar });
     }
 
-    res.json({ ok: true, data: result });
+    // Generate faction follow-up contract
+    let followUp: any = null;
+    try {
+      const campaignState = getCampaignState(db, campaignId);
+      const successResult = result as { ok: true; contract: any; reward: number; xpAward: number; narration: string };
+      const followUpResult = generateFollowUpContract(db, campaignId, successResult.contract, campaignState);
+      if (followUpResult) {
+        followUp = followUpResult.contract;
+        const campRow = get(db, 'SELECT town_contracts FROM campaigns WHERE id = ?', [campaignId]) as any;
+        let currentContracts: any[] = [];
+        try { currentContracts = JSON.parse(campRow?.town_contracts || '[]'); } catch {}
+        currentContracts.push(followUp);
+        run(db, 'UPDATE campaigns SET town_contracts = ? WHERE id = ?', [JSON.stringify(currentContracts), campaignId]);
+        run(db, 'INSERT INTO game_log (id, campaign_id, type, actor, content) VALUES (?, ?, ?, ?, ?)',
+          [uuid(), campaignId, 'narration', 'DM', followUpResult.narration]);
+        io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: followUpResult.narration });
+        io.to(`campaign:${campaignId}`).emit('game:contracts_updated', { followUpId: followUp.id });
+      }
+    } catch (err) {
+      console.error('[Town] Follow-up contract generation failed:', err);
+    }
+
+    res.json({ ok: true, data: { ...result, followUp } });
   });
 
   // ─── POST /town/:campaignId/downtime ─────────────────────────────

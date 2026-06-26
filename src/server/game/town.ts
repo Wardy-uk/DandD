@@ -281,6 +281,7 @@ export interface TownContract {
   progress?: number;
   progressText?: string;
   readyToClaim?: boolean;
+  followUpOf?: string; // id of contract this follows up on
 }
 
 export function generateContracts(state: CampaignSimulationState, campaignName: string, settingId = ''): TownContract[] {
@@ -443,6 +444,183 @@ function describeObjective(objectiveType: NonNullable<TownContract['objectiveTyp
     default:
       return 'sites discovered';
   }
+}
+
+// ─── Faction follow-up contract chains ───────────────────────────────────────
+
+interface FollowUpContext {
+  townName: string;
+  campaignName: string;
+  previousReward: number;
+  factionRep: number;
+}
+
+type FollowUpTemplate = {
+  titleFn: (ctx: FollowUpContext) => string;
+  descriptionFn: (ctx: FollowUpContext) => string;
+  rewardMultiplier: number;
+  objectiveType: NonNullable<TownContract['objectiveType']>;
+  objectiveTarget: number;
+  objectiveLabel: string;
+  narrationFn: (ctx: FollowUpContext) => string;
+  minFactionRep?: number;
+};
+
+const FOLLOW_UP_CHAINS: Record<string, FollowUpTemplate[]> = {
+  watch: [
+    {
+      titleFn: () => 'Secure the second passage',
+      descriptionFn: () => 'The garrison noted your work. The adjacent passage needs the same treatment — clear it and report back.',
+      rewardMultiplier: 1.4,
+      objectiveType: 'cleared_scenes',
+      objectiveTarget: 2,
+      objectiveLabel: 'scenes cleared',
+      narrationFn: () => 'The duty officer doesn\'t look up. "Another posting. You\'ve been recommended." She slides the contract across without ceremony.',
+    },
+    {
+      titleFn: () => 'Hold the front corridor',
+      descriptionFn: () => 'What you cleared is filling back up. The garrison wants it suppressed properly this time — more sections, more proof.',
+      rewardMultiplier: 1.5,
+      objectiveType: 'cleared_scenes',
+      objectiveTarget: 3,
+      objectiveLabel: 'scenes cleared',
+      narrationFn: () => 'The captain meets you herself this time. "It didn\'t hold. I want three sections done, and I want it to last." She doesn\'t look like she slept.',
+      minFactionRep: 2,
+    },
+  ],
+  locals: [
+    {
+      titleFn: (ctx) => `Retrieve the surveyor's documentation`,
+      descriptionFn: () => 'You found his trail. The guild now wants the actual work — maps, notes, survey markers. Whatever survived.',
+      rewardMultiplier: 1.35,
+      objectiveType: 'discovered_sites',
+      objectiveTarget: 5,
+      objectiveLabel: 'sites documented',
+      narrationFn: (ctx) => `A guild representative places a heavier purse on the table without sitting down. "The documentation, not just proof of life. ${ctx.townName} has uses for proper maps."`,
+    },
+    {
+      titleFn: () => 'Full survey of the northern sectors',
+      descriptionFn: () => 'The locals want maps that are better than the ones they have. Get in, mark what\'s there, come out.',
+      rewardMultiplier: 1.5,
+      objectiveType: 'discovered_sites',
+      objectiveTarget: 8,
+      objectiveLabel: 'sites documented',
+      narrationFn: () => 'The guild master makes time for you in his schedule. That\'s new. "The preliminary survey gave us enough to want a full one." He names a number that makes the junior scribes look up.',
+      minFactionRep: 3,
+    },
+  ],
+  shadows: [
+    {
+      titleFn: () => 'Locate the second seal',
+      descriptionFn: () => 'The first was a test. There are more seals, and the interested party has more money — proportional to the difficulty.',
+      rewardMultiplier: 1.5,
+      objectiveType: 'treasure_marks',
+      objectiveTarget: 3,
+      objectiveLabel: 'treasure leads secured',
+      narrationFn: () => 'The message arrives at your door before you\'re awake. No signature. The description of what they want is precise. The fee offered is not modest.',
+    },
+    {
+      titleFn: () => 'Identify the contractor',
+      descriptionFn: () => 'Someone has been hired to track the party. The shadows want to know who placed the contract — retrieve the paperwork, whatever form it takes.',
+      rewardMultiplier: 1.6,
+      objectiveType: 'revelations',
+      objectiveTarget: 1,
+      objectiveLabel: 'contractor identified',
+      narrationFn: () => 'The contact sits across from you in a back corner of a better inn than you usually frequent. "There\'s a name on a contract with your name on it. We\'d like to know whose." They\'re paying well.',
+      minFactionRep: 2,
+    },
+  ],
+  delvers: [
+    {
+      titleFn: () => 'Chart the mid-dungeon approaches',
+      descriptionFn: () => 'The first routes are mapped. Now the guild wants the middle approaches — fallbacks, emergency exits, supply-cache candidates.',
+      rewardMultiplier: 1.4,
+      objectiveType: 'fallback_points',
+      objectiveTarget: 3,
+      objectiveLabel: 'fallback routes marked',
+      narrationFn: () => 'The cartographer pins another blank section of map to the wall without preamble. "Good work on the entrance routes. Now we need the mid-level approaches." The board\'s new section has your name on it.',
+    },
+    {
+      titleFn: () => 'Document the deep ways',
+      descriptionFn: () => 'Complete survey of every known fallback point. The guild is building a comprehensive atlas. This is the hard part.',
+      rewardMultiplier: 1.6,
+      objectiveType: 'fallback_points',
+      objectiveTarget: 5,
+      objectiveLabel: 'fallback routes marked',
+      narrationFn: () => 'The guild master, when he finally appears, is older than you expected. "Four parties mapped this dungeon before you. None of them finished." He doesn\'t say it as a warning. He says it as an invitation.',
+      minFactionRep: 3,
+    },
+  ],
+};
+
+/**
+ * After a contract is claimed, generate a follow-up from the same faction —
+ * escalating reward and objectives, deepening the campaign relationship.
+ * Returns null if no follow-up is appropriate (chain exhausted, rep too low,
+ * pending contract already on the board).
+ */
+export function generateFollowUpContract(
+  db: Database,
+  campaignId: string,
+  completedContract: TownContract,
+  state: CampaignSimulationState,
+): { contract: TownContract; narration: string } | null {
+  const factionKey = completedContract.factionKey;
+  const chain = FOLLOW_UP_CHAINS[factionKey];
+  if (!chain || chain.length === 0) return null;
+
+  // Read current contracts (claimContractReward has already persisted the claimedAt)
+  const campRow = get(db,
+    'SELECT town_contracts, name, town_name FROM campaigns WHERE id = ?',
+    [campaignId],
+  ) as any;
+  if (!campRow) return null;
+
+  let contracts: TownContract[] = [];
+  try { contracts = JSON.parse(campRow.town_contracts || '[]'); } catch {}
+
+  // Count prior claimed contracts from this faction (not the one just completed)
+  const priorClaimedCount = contracts.filter(c =>
+    c.factionKey === factionKey && c.claimedAt && c.id !== completedContract.id,
+  ).length;
+
+  const template = chain[priorClaimedCount];
+  if (!template) return null; // chain exhausted
+
+  // Check minimum reputation gate
+  const factionRep = state.factions[factionKey]?.reputation || 0;
+  if (template.minFactionRep && factionRep < template.minFactionRep) return null;
+
+  // Don't add if any unclaimed contract from this faction is still on the board
+  const pendingExists = contracts.some(c => c.factionKey === factionKey && !c.claimedAt);
+  if (pendingExists) return null;
+
+  const townName = String(campRow.town_name || '').trim() || generateTownName(campaignId);
+  const ctx: FollowUpContext = {
+    townName,
+    campaignName: String(campRow.name || ''),
+    previousReward: completedContract.reward,
+    factionRep,
+  };
+
+  const reward = Math.ceil((completedContract.reward * template.rewardMultiplier) / 5) * 5;
+
+  const newContract: TownContract = {
+    id: uuid(),
+    title: template.titleFn(ctx),
+    description: template.descriptionFn(ctx),
+    reward,
+    factionKey,
+    taken: false,
+    completedAt: null,
+    claimedAt: null,
+    objectiveType: template.objectiveType,
+    objectiveTarget: template.objectiveTarget,
+    objectiveLabel: template.objectiveLabel,
+    followUpOf: completedContract.id,
+  };
+
+  return { contract: newContract, narration: template.narrationFn(ctx) };
 }
 
 // ─── Companion hire prospects ────────────────────────────────────────────────
