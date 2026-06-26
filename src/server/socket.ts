@@ -675,7 +675,8 @@ export function setupSocketHandlers(
         return;
       }
       // ── Orientation queries — any question asking "where am I / what do I see" ─
-      const isOrientationQuery = /(where\s+(am\s+i|are\s+we)|what\s+(is|'?s|are)\s+(this\s+place|this\s+room|here)|what\s+(do\s+i|can\s+i)\s+see|what'?s\s+(here|around\s+(me|us))|describe\s+(this\s+place|the\s+room|where\s+(i\s+am|we\s+are))|tell\s+me\s+about\s+this\s+place|look\s+around)/i.test(action);
+      // Note: "look around" intentionally excluded here — resolveRichExploration handles it with variety
+      const isOrientationQuery = /(where\s+(am\s+i|are\s+we)|what\s+(is|'?s|are)\s+(this\s+place|this\s+room|here)|what\s+(do\s+i|can\s+i)\s+see|what'?s\s+(here|around\s+(me|us))|describe\s+(this\s+place|the\s+room|where\s+(i\s+am|we\s+are))|tell\s+me\s+about\s+this\s+place)/i.test(action);
       if (isOrientationQuery) {
         const orientChars = all(db,
           'SELECT name, level, race, char_class FROM characters WHERE campaign_id = ? AND status = "active"',
@@ -739,6 +740,25 @@ export function setupSocketHandlers(
         return;
       }
 
+      // ── Movement intent with no matching exit (prevents AI freeze on "go north") ──
+      if (!outcome) {
+        const movementMatch = /^(?:go|head|move|walk|travel|march|proceed|i\s+(?:go|head|move))\s+(\w+)/i.exec(action.trim());
+        if (movementMatch) {
+          const triedDir = movementMatch[1].toLowerCase();
+          const availableExits = (JSON.parse(scene.connections || '[]') as any[])
+            .filter((c) => !c.hidden)
+            .map((c) => c.direction);
+          if (availableExits.length > 0) {
+            const noExitMsg = `No way ${triedDir} from ${scene.name}. You can go: ${availableExits.join(', ')}.`;
+            run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+              [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', noExitMsg]);
+            io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: noExitMsg });
+            emitCampaignState(io, db, campaignId);
+            return;
+          }
+        }
+      }
+
       if (!outcome) {
         // Unknown action — AI resolves it. No action ever gets a dead rejection.
         const sceneExits = JSON.parse(scene.connections || '[]')
@@ -789,7 +809,7 @@ export function setupSocketHandlers(
         io.to(`campaign:${campaignId}`).emit('game:narration', { content: '…', actor: 'DM', thinking: true });
         actionLocks.add(campaignId);
         try {
-          aiMsg = (await generate({
+          const aiGeneratePromise = generate({
             system: `You are a terse AD&D Dungeon Master narrating in present tense. One short paragraph, 2-3 sentences.
 Rules:
 - Address the player as "you" or by their character name (${character.name})
@@ -801,11 +821,15 @@ Rules:
             prompt: `${contextParts.join('. ')}.\nPlayer action: "${action}". Narrate the outcome.`,
             maxTokens: 180,
             temperature: 0.75,
-          })).trim() || aiMsg;
+          });
+          // Hard 12-second timeout — prevents Ollama latency from freezing the game
+          const aiTimeoutPromise = new Promise<string>((_, reject) =>
+            setTimeout(() => reject(new Error('AI timeout')), 12_000));
+          aiMsg = (await Promise.race([aiGeneratePromise, aiTimeoutPromise])).trim() || aiMsg;
         } catch (aiErr) {
           console.error('[AI fallback error]', aiErr);
-          // Ollama unreachable — still give something real
-          aiMsg = `${aiBlueprint.roomAmbience} The attempt registers. Nothing dramatic shifts, but the room has noted it.`;
+          // Ollama unreachable or timed out — still give something real
+          aiMsg = `${aiBlueprint.roomAmbience} The attempt registers. The room shifts, just slightly.`;
         } finally {
           actionLocks.delete(campaignId);
         }

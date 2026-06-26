@@ -884,19 +884,26 @@ export function resolveRichExploration(params: {
       + Math.max(-2, Math.min(2, Math.floor((factionStanding?.reputation || 0) / 3)))
       + Math.min(2, companionMods.envoyBonus);
     const reaction = getReactionResult(reactionRoll);
-    const npcName = npcs[0].name;
+    const npc0 = npcs[0];
+    const npcName = npc0.name;
+    // Build voiced NPC response using their actual personality + voice notes
+    const npcPersonality = String(npc0.personality || '').trim();
+    const npcVoice = String((npc0 as any).voice_notes || '').trim();
+    const npcFlavour = npcVoice || npcPersonality;
+    const flavourSuffix = npcFlavour ? ` ${npcFlavour.charAt(0).toUpperCase()}${npcFlavour.slice(1)}.` : '';
+    const factionNote = describeFactionResult(campaignState, blueprint.faction);
     const responseMap: Record<string, string> = {
-      hostile: `${npcName} takes your approach as a threat and reaches for violence or retreat.`,
-      unfriendly: `${npcName} keeps distance and answers curtly, offering nothing without leverage.`,
-      indifferent: `${npcName} hears you out but gives away only what costs little.`,
-      friendly: `${npcName} softens and offers a useful warning, route, or rumor.`,
-      enthusiastic: `${npcName} quickly decides you are worth helping and volunteers more than you asked.`,
+      hostile: `${npcName} reads your approach as a threat and shuts the conversation down — a hand drops, distance opens, and it is clear this will not go anywhere good.`,
+      unfriendly: `${npcName} hears you out with the patience of someone who has learned not to trust quickly.${flavourSuffix} You get the minimum they can give without causing a scene.`,
+      indifferent: `${npcName} gives you a measured look and decides you are not worth either warmth or cold.${flavourSuffix} Useful in a pinch, but you are not owed candour here.`,
+      friendly: `${npcName} loosens a fraction.${flavourSuffix} They share something worth knowing — a route, a warning, the shape of whatever trouble sits between you and the next decision.${factionNote ? ` ${factionNote}` : ''}`,
+      enthusiastic: `${npcName} decides immediately that you are worth helping.${flavourSuffix} What comes out is more than you asked for, and most of it turns out to be actually useful.${factionNote ? ` ${factionNote}` : ''}`,
     };
     const xp = reaction === 'friendly' || reaction === 'enthusiastic' ? 15 : 0;
     if (xp > 0) awardXp(db, character, xp);
     updateCompanionRelationships({
       db,
-      npcIds: [npcs[0].id],
+      npcIds: [npc0.id],
       kind: /flirt|comfort|confide|admire/.test(lowered)
         ? 'romance'
         : /insult|threaten|argue|accuse/.test(lowered)
@@ -910,7 +917,7 @@ export function resolveRichExploration(params: {
     }, `${character.name} parleyed in ${scene.name}.`);
     saveCampaignState(db, campaignId, campaignState);
     return finalizeOutcome(db, campaignId, {
-      content: `${responseMap[reaction]} ${describeFactionResult(campaignState, blueprint.faction)} (Reaction ${reactionRoll}: ${reaction}.)`,
+      content: responseMap[reaction],
       xpDelta: xp,
       explorationTurnAdvanced: turn.turn,
     }, turn, campaignState, blueprint, action, reaction === 'hostile');

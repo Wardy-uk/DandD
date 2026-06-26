@@ -1186,13 +1186,18 @@ function buildConversationBeat(
     return `${row.name} gives you more than a yes-or-no answer, which in a place like this counts as trust. ${wantsLine} ${pressureLine}`;
   }
 
+  // Non-joined scene NPC — use their actual personality text, not role archetypes
+  const rawPersonality = String(row.personality || '').trim();
+  const personalityNote = rawPersonality
+    ? `${rawPersonality.charAt(0).toUpperCase()}${rawPersonality.slice(1)}.`
+    : '';
   if (state.trust <= 0 || /unfriendly|hostile|cold/.test(tone)) {
-    return `${row.name} gives you just enough conversation to stay civil. ${wantsLine} They are not writing you off, but they are not sold either.`;
+    return `${row.name} gives you just enough to stay civil. ${personalityNote} They are not writing you off, but they are not sold either. ${pressureLine}`.trim();
   }
   if (/wry|dry|sharp|sarcas/.test(tone)) {
-    return `${row.name} answers with a slantwise half-smile and the sort of dry honesty that can either become loyalty or trouble. ${wantsLine}`;
+    return `${row.name} answers with a slantwise half-smile. ${personalityNote} ${wantsLine} ${pressureLine}`.trim();
   }
-  return `${row.name} opens up a little once you stop treating them like background scenery. ${wantsLine}`;
+  return `${row.name} opens up once you stop treating them like background scenery. ${personalityNote} ${wantsLine} ${pressureLine}`.trim();
 }
 
 function buildIntentRead(
