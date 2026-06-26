@@ -112,7 +112,7 @@ export default function App() {
   return (
     <div className="min-h-screen overflow-x-hidden">
       {/* Header */}
-      <header className="border-b border-leather/20 bg-parchment-dark/30">
+      <header className={`border-b border-leather/20 bg-parchment-dark/30 ${view === 'game' ? 'hidden lg:block' : ''}`}>
         <div className="mx-auto flex max-w-7xl items-center justify-between px-3 py-2 sm:px-6 sm:py-3">
           <div className="min-w-0">
             <span className="block text-base font-heading font-bold tracking-wide text-leather-dark sm:text-xl md:text-2xl">
@@ -150,8 +150,8 @@ export default function App() {
       </header>
 
       {/* Main Content */}
-      <main className="mx-auto max-w-7xl px-3 py-3 sm:px-6 sm:py-6">
-        <PwaPrompt />
+      <main className={view === 'game' ? '' : 'mx-auto max-w-7xl px-3 py-3 sm:px-6 sm:py-6'}>
+        {view !== 'game' && <PwaPrompt />}
         {view === 'login' && (
           <Login apiUrl={API_URL} onLogin={handleLogin} />
         )}

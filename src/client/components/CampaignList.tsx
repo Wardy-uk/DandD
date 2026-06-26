@@ -75,12 +75,13 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
   };
 
   const createCampaign = async () => {
-    if (!newName.trim() || !newSettingId.trim()) return;
+    if (!newSettingId.trim()) return;
+    const suggestedName = selectedSetting?.suggestedNames?.[0] || '';
     try {
       const res = await fetch(`${apiUrl}/api/campaigns`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ name: newName, settingId: newSettingId, startMode: newStartMode }),
+        body: JSON.stringify({ name: newName.trim() || suggestedName, settingId: newSettingId, startMode: newStartMode }),
       });
       const data = await res.json();
       if (data.ok) {
@@ -96,6 +97,7 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
   };
 
   const selectedSetting = settingOptions.find((option) => option.id === newSettingId) || null;
+  const suggestedNames = selectedSetting?.suggestedNames || [];
 
   const fetchBrowseCampaigns = async () => {
     setBrowseLoading(true);
@@ -247,19 +249,56 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
       {showCreate && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-3 backdrop-blur-sm sm:items-center">
           <div className="w-full max-w-md rounded-t-2xl sm:rounded-lg border border-leather/20 bg-parchment p-4 shadow-xl sm:p-8 max-h-[92vh] overflow-y-auto">
-            <h3 className="text-xl font-heading font-bold text-leather-dark mb-4">New Campaign</h3>
+            <h3 className="text-xl font-heading font-bold text-leather-dark mb-1">New Campaign</h3>
+            <p className="mb-4 text-sm font-body italic text-ink-faint">
+              Pick a setting first. The campaign title is optional.
+            </p>
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-heading font-semibold text-ink-faint uppercase tracking-wider mb-1">
-                  Campaign Name
+                  Setting
                 </label>
-                <input
-                  type="text"
-                  value={newName}
-                  onChange={e => setNewName(e.target.value)}
-                  placeholder="e.g. The Tomb of Horrors"
-                  className="w-full px-4 py-2.5 rounded-lg border border-leather/20 bg-parchment-light font-body text-sm focus:outline-none focus:border-leather/50"
-                />
+                <div className="space-y-2 max-h-72 overflow-y-auto rounded-lg border border-leather/15 bg-parchment-light/50 p-2">
+                  {settingOptions.map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => {
+                        setNewSettingId(option.id);
+                        if (!newName.trim()) {
+                          setNewName(option.suggestedNames?.[0] || '');
+                        }
+                      }}
+                      className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${
+                        newSettingId === option.id
+                          ? 'border-leather bg-leather/10'
+                          : 'border-leather/10 bg-parchment hover:border-leather/30 hover:bg-parchment-light'
+                      }`}
+                    >
+                      <div className="font-heading font-semibold text-sm text-leather-dark">{option.name}</div>
+                      <div className="mt-1 text-xs font-body italic text-ink-faint">{option.summary}</div>
+                    </button>
+                  ))}
+                </div>
+                {selectedSetting && (
+                  <div className="mt-2 rounded-lg border border-leather/10 bg-parchment-light/40 p-3">
+                    <p className="text-xs font-body text-ink-faint">{selectedSetting.tone}</p>
+                    {suggestedNames.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {suggestedNames.map((name) => (
+                          <button
+                            key={name}
+                            type="button"
+                            onClick={() => setNewName(name)}
+                            className="rounded-full border border-leather/20 px-3 py-1 text-[11px] font-heading text-leather hover:bg-leather/5"
+                          >
+                            {name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-heading font-semibold text-ink-faint uppercase tracking-wider mb-1">
@@ -285,30 +324,18 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
               </div>
               <div>
                 <label className="block text-xs font-heading font-semibold text-ink-faint uppercase tracking-wider mb-1">
-                  Setting
+                  Campaign Title
                 </label>
-                <div className="space-y-2 max-h-72 overflow-y-auto rounded-lg border border-leather/15 bg-parchment-light/50 p-2">
-                  {settingOptions.map((option) => (
-                    <button
-                      key={option.id}
-                      type="button"
-                      onClick={() => setNewSettingId(option.id)}
-                      className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${
-                        newSettingId === option.id
-                          ? 'border-leather bg-leather/10'
-                          : 'border-leather/10 bg-parchment hover:border-leather/30 hover:bg-parchment-light'
-                      }`}
-                    >
-                      <div className="font-heading font-semibold text-sm text-leather-dark">{option.name}</div>
-                      <div className="mt-1 text-xs font-body italic text-ink-faint">{option.summary}</div>
-                    </button>
-                  ))}
-                </div>
-                {selectedSetting && (
-                  <p className="mt-2 text-xs font-body text-ink-faint">
-                    {selectedSetting.tone}
-                  </p>
-                )}
+                <input
+                  type="text"
+                  value={newName}
+                  onChange={e => setNewName(e.target.value)}
+                  placeholder={selectedSetting?.suggestedNames?.[0] || 'Optional custom title'}
+                  className="w-full px-4 py-2.5 rounded-lg border border-leather/20 bg-parchment-light font-body text-sm focus:outline-none focus:border-leather/50"
+                />
+                <p className="mt-2 text-xs font-body text-ink-faint">
+                  Leave this blank and QUEST will use a fitting title for the setting.
+                </p>
               </div>
             </div>
             <div className="mt-6 flex gap-3">

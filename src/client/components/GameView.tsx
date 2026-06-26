@@ -510,13 +510,20 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
       : className === 'thief' ? 'Share supplies'
       : className === 'ranger' ? 'Read their intent'
       : null;
+  const signatureActions = [
+    classAction,
+    classActionTwo,
+    encounterActive ? 'Brace and hold' : 'Read the battlefield',
+    leadCompanion && !leadCompanion.personalQuestResolved
+      ? leadCompanion.personalQuestNeed
+      : null,
+  ].filter(Boolean) as string[];
 
-  const quickActions = [
+  const quickActions = dedupeActions([
     'Look around',
     'Listen carefully',
     'Read the battlefield',
-    classAction,
-    classActionTwo,
+    ...signatureActions,
     leadCompanion && !leadCompanion.personalQuestResolved
       ? leadCompanion.personalQuestNeed
       : (leadCompanion ? `Ask ${leadCompanion.name} to scout ahead` : (recruitableNpc ? `Ask ${recruitableNpc.name} to join us` : (encounterActive ? 'Hold the doorway' : 'Search for traps'))),
@@ -534,9 +541,18 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
     !encounterActive && carriedSupplies.rope > 0 ? 'Set rope' : null,
     !encounterActive && carriedSupplies.holySymbol > 0 ? 'Present holy symbol' : null,
     encounterActive ? 'Brace and hold' : 'Rest',
-  ].filter(Boolean) as string[];
+  ]);
+
+  const secondaryQuickActions = quickActions.filter((action) => !signatureActions.includes(action));
 
   const joinedCompanions = companions.filter(c => c.joinedParty);
+  const expeditionBadges = [
+    encounterActive ? `Combat live` : null,
+    campaignState ? `Pressure ${campaignState.encounterPressure}/10` : null,
+    campaignState?.delve ? `Light ${campaignState.delve.lightLevel}` : null,
+    joinedCompanions.length > 0 ? `Company ${joinedCompanions.length}` : null,
+    carriedSupplies.torches > 0 ? `${carriedSupplies.torches} torches` : null,
+  ].filter(Boolean) as string[];
   const mobilePanels: Array<{ key: NonNullable<MobilePanel>; label: string; icon: string; show: boolean; badge: number }> = [
     { key: 'character', label: 'Char',  icon: '⚔',  show: !!character,                                  badge: 0 },
     { key: 'spells',    label: 'Spells',icon: '✦',  show: !!character?.spellSlots || !!character?.spell_slots, badge: 0 },
@@ -670,6 +686,9 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                 <span className="font-heading text-sm font-bold text-leather-dark truncate leading-tight">
                   {character.name}
                 </span>
+                <span className="hidden min-[360px]:inline text-[10px] font-heading uppercase tracking-wide text-ink-faint">
+                  L{character.level} {character.char_class}
+                </span>
                 {encounterActive && (
                   <span className="flex-shrink-0 text-[9px] font-heading font-bold bg-blood text-parchment-light px-1.5 py-0.5 rounded uppercase tracking-wide">
                     Combat
@@ -716,8 +735,23 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
           </div>
         )}
 
+        {expeditionBadges.length > 0 && (
+          <div className="flex-shrink-0 overflow-x-auto border-b border-leather/10 bg-parchment-light/60 px-3 py-2">
+            <div className="flex gap-1.5">
+              {expeditionBadges.map((badge) => (
+                <span
+                  key={badge}
+                  className="whitespace-nowrap rounded-full border border-leather/15 bg-parchment px-2.5 py-1 text-[10px] font-heading uppercase tracking-wide text-ink-faint"
+                >
+                  {badge}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* ── Game log — dominant surface ── */}
-        <div className="flex-1 min-h-0 overflow-y-auto px-3 pt-3 pb-2 space-y-3">
+        <div className="flex-1 min-h-0 overflow-y-auto px-3 pt-3 pb-2 space-y-3 bg-[radial-gradient(circle_at_top,rgba(255,248,231,0.55),rgba(246,238,221,0)_55%)]">
           {renderLogEntries()}
         </div>
 
@@ -725,9 +759,25 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
         <div className="flex-shrink-0 border-t border-leather/15 bg-parchment-light/80 backdrop-blur-sm">
 
           {/* Quick actions — horizontal scroll, touch-friendly */}
-          <div className="overflow-x-auto py-2 px-3 border-b border-leather/8">
-            <div className="flex gap-2 flex-nowrap">
-              {quickActions.map(action => (
+          <div className="space-y-2 border-b border-leather/8 px-3 py-2">
+            {signatureActions.length > 0 && (
+              <div className="overflow-x-auto">
+                <div className="flex gap-2 flex-nowrap">
+                  {signatureActions.map(action => (
+                    <button
+                      key={action}
+                      onClick={() => quickAction(action)}
+                      className="flex-shrink-0 whitespace-nowrap rounded-full bg-leather px-3 py-2 text-xs font-heading font-semibold text-parchment-light shadow-sm active:bg-leather-dark touch-manipulation"
+                    >
+                      {action}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="overflow-x-auto">
+              <div className="flex gap-2 flex-nowrap">
+              {secondaryQuickActions.map(action => (
                 <button
                   key={action}
                   onClick={() => quickAction(action)}
@@ -736,6 +786,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                   {action}
                 </button>
               ))}
+              </div>
             </div>
           </div>
 
@@ -1577,4 +1628,13 @@ function getLogEntryClass(type: string): string {
     default:
       return '';
   }
+}
+
+function dedupeActions(actions: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  return actions.filter((action): action is string => {
+    if (!action || seen.has(action)) return false;
+    seen.add(action);
+    return true;
+  });
 }

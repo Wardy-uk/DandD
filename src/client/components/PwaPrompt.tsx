@@ -49,13 +49,13 @@ export default function PwaPrompt() {
   };
 
   return (
-    <div className="mb-4 rounded-xl border border-leather/15 bg-[linear-gradient(135deg,rgba(107,68,35,0.92),rgba(74,46,21,0.88))] px-3 py-2 text-parchment-light shadow-[0_8px_18px_rgba(74,46,21,0.12)]">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+    <div className="mb-3 rounded-lg border border-leather/10 bg-[linear-gradient(135deg,rgba(107,68,35,0.9),rgba(74,46,21,0.84))] px-3 py-2 text-parchment-light shadow-[0_6px_14px_rgba(74,46,21,0.1)]">
+      <div className="flex flex-wrap items-center gap-2 sm:justify-between">
         <div className="min-w-0">
-          <p className="font-heading text-xs font-bold tracking-wide">
+          <p className="font-heading text-[11px] font-bold tracking-wide">
             {isOffline ? 'Offline Mode Active' : isInstalled ? 'QUEST App Installed' : 'Install QUEST'}
           </p>
-          <p className="font-body text-xs text-parchment-light/80">
+          <p className="font-body text-[11px] text-parchment-light/75">
             {isOffline
               ? 'Cached screens remain available, but live campaign actions need a connection.'
               : isInstalled
@@ -63,9 +63,9 @@ export default function PwaPrompt() {
                 : 'Add QUEST to your home screen for a full-screen tavern-table experience.'}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
+        <div className="ml-auto flex flex-wrap items-center gap-2 sm:flex-nowrap">
           {isOffline && (
-            <span className="rounded-full border border-parchment-light/20 px-2.5 py-1 text-[10px] font-heading tracking-wide text-parchment-light/90">
+            <span className="rounded-full border border-parchment-light/20 px-2 py-1 text-[9px] font-heading tracking-wide text-parchment-light/90">
               Reconnect to play
             </span>
           )}
@@ -76,14 +76,14 @@ export default function PwaPrompt() {
               setRefreshing(false);
             }}
             disabled={refreshing}
-            className="rounded-full border border-parchment-light/20 px-3 py-1.5 text-[10px] font-heading font-bold tracking-wide text-parchment-light transition-colors hover:bg-parchment-light/10 disabled:cursor-wait disabled:opacity-60"
+            className="rounded-full border border-parchment-light/20 px-2.5 py-1 text-[9px] font-heading font-bold tracking-wide text-parchment-light transition-colors hover:bg-parchment-light/10 disabled:cursor-wait disabled:opacity-60"
           >
             {refreshing ? 'Refreshing...' : 'Full Refresh'}
           </button>
           {!isOffline && installEvent && (
             <button
               onClick={handleInstall}
-              className="rounded-full bg-parchment px-3 py-1.5 text-[10px] font-heading font-bold tracking-wide text-leather-dark transition-colors hover:bg-parchment-light"
+              className="rounded-full bg-parchment px-2.5 py-1 text-[9px] font-heading font-bold tracking-wide text-leather-dark transition-colors hover:bg-parchment-light"
             >
               Install App
             </button>

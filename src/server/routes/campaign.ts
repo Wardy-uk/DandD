@@ -153,16 +153,15 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
     }
 
     const { name, settingId, startMode } = req.body;
-    if (!name) {
-      res.json({ ok: false, error: 'Campaign name required' });
-      return;
-    }
     const selectedSetting = findCampaignSettingOption(settingId || DEFAULT_CAMPAIGN_SETTING_ID);
     if (!selectedSetting) {
       res.json({ ok: false, error: 'Please choose one of the available settings' });
       return;
     }
     const chosenStartMode = isCampaignStartMode(startMode) ? startMode : DEFAULT_CAMPAIGN_START_MODE;
+    const campaignName = String(name || '').trim()
+      || selectedSetting.suggestedNames[0]
+      || `${selectedSetting.name} ${chosenStartMode === 'party' ? 'Company' : 'Expedition'}`;
 
     const id = uuid();
     const startSceneId = uuid();
@@ -174,7 +173,7 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
-        name,
+        campaignName,
         selectedSetting.name,
         startSceneId,
         req.player.id,
@@ -194,7 +193,7 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
       'INSERT INTO scenes (id, campaign_id, name, brief) VALUES (?, ?, ?, ?)',
       [startSceneId, id, 'Starting Location', '']);
 
-    res.json({ ok: true, data: { id, name, setting: selectedSetting.name, settingId: selectedSetting.id, startMode: chosenStartMode } });
+    res.json({ ok: true, data: { id, name: campaignName, setting: selectedSetting.name, settingId: selectedSetting.id, startMode: chosenStartMode } });
   });
 
   // Join campaign (by invite code / ID)
