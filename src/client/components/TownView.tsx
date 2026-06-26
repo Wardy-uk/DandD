@@ -108,6 +108,20 @@ interface TownData {
     recentEvents: string[];
   };
   factions: Array<{ key: string; name: string; reputation: number; heat: number; contractCooldownUntilSession?: number | null }>;
+  heatConsequences?: {
+    marketSurcharge: number;
+    healSurcharge: number;
+    garrisonLocked: boolean;
+    beingWatched: boolean;
+    shadowsUnreliable: boolean;
+  };
+  companionEvents?: Array<{
+    type: string;
+    companionId: string;
+    companionName: string;
+    text: string;
+    choices: Array<{ key: string; label: string }>;
+  }>;
 }
 
 type Tab = 'taproom' | 'market' | 'healer' | 'garrison';
@@ -228,6 +242,7 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
   const [buyCart, setBuyCart] = useState<Record<string, number>>({});
   const [leaving, setLeaving] = useState(false);
   const [newContractId, setNewContractId] = useState<string | null>(null);
+  const [dismissedEvents, setDismissedEvents] = useState<Set<string>>(new Set());
 
   const headers = { Authorization: `Bearer ${player.token}`, 'Content-Type': 'application/json' };
 
@@ -390,6 +405,22 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
     } else {
       showMsg(data.error || 'Could not settle contract');
     }
+  };
+
+  // ── Companion events ────────────────────────────────────────────
+
+  const handleCompanionEvent = async (companionId: string, eventType: string, choice: string) => {
+    const data = await apiPost('companion/event', { companionId, eventType, choice });
+    if (data.ok) {
+      fetchTownData();
+      setDismissedEvents(prev => new Set([...prev, `${companionId}:${eventType}`]));
+    } else {
+      showMsg(data.error || 'Could not resolve');
+    }
+  };
+
+  const dismissEvent = (companionId: string, eventType: string) => {
+    setDismissedEvents(prev => new Set([...prev, `${companionId}:${eventType}`]));
   };
 
   // ── Hire prospect ───────────────────────────────────────────────
@@ -564,6 +595,42 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
               )}
             </div>
 
+            {/* Companion relationship moments */}
+            {(townData.companionEvents ?? [])
+              .filter(ev => !dismissedEvents.has(`${ev.companionId}:${ev.type}`))
+              .map(ev => (
+                <div key={`${ev.companionId}:${ev.type}`} className={`rounded-lg border p-4 ${
+                  ev.type === 'morale_crisis' ? 'border-amber-600/30 bg-amber-50/30'
+                  : ev.type === 'tension'      ? 'border-blood/20 bg-blood/5'
+                  : 'border-leather/20 bg-parchment/60'
+                }`}>
+                  <div className="flex items-start gap-2 mb-2">
+                    <span className="text-sm font-heading font-bold text-leather-dark">{ev.companionName}</span>
+                    <span className="text-[10px] font-body text-ink-faint capitalize bg-parchment px-1.5 py-0.5 rounded">
+                      {ev.type.replace('_', ' ')}
+                    </span>
+                  </div>
+                  <p className="text-xs font-body text-ink mb-3">{ev.text}</p>
+                  <div className="flex flex-wrap gap-2">
+                    {ev.choices.map(ch => (
+                      <button
+                        key={ch.key}
+                        onClick={() => handleCompanionEvent(ev.companionId, ev.type, ch.key)}
+                        className="px-3 py-1.5 rounded border border-leather/30 text-xs font-heading text-leather hover:bg-leather/10 transition-colors"
+                      >
+                        {ch.label}
+                      </button>
+                    ))}
+                    <button
+                      onClick={() => dismissEvent(ev.companionId, ev.type)}
+                      className="px-3 py-1.5 rounded border border-leather/15 text-xs font-heading text-ink-faint hover:bg-parchment-dark/20 transition-colors"
+                    >
+                      Later
+                    </button>
+                  </div>
+                </div>
+              ))}
+
             {/* Prospects for hire */}
             {prospects.length > 0 && (
               <div className="rounded-lg border border-leather/15 bg-parchment-light/50 p-4">
@@ -617,6 +684,18 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
         {/* ═══ MARKET ═══ */}
         {tab === 'market' && (
           <div className="space-y-4">
+
+            {/* Heat surcharge warning */}
+            {(townData.heatConsequences?.marketSurcharge ?? 0) > 0 && (
+              <div className="rounded-lg border border-amber-600/30 bg-amber-50/40 px-4 py-3 flex items-start gap-2">
+                <span className="text-amber-700 text-sm shrink-0">⚠</span>
+                <p className="text-xs font-body text-amber-800">
+                  {townData.heatConsequences!.marketSurcharge >= 0.5
+                    ? 'The locals want nothing to do with you. Prices are up 50% — if they\'ll sell to you at all.'
+                    : 'Word has got around. The market is charging you 25% above the usual rate.'}
+                </p>
+              </div>
+            )}
 
             {/* Sell loot */}
             {lootAppraisal.items.length > 0 && (
@@ -718,6 +797,18 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
                 Matter-of-fact, competent, and not interested in your story. They fix what they can fix.
               </p>
 
+              {/* Heat surcharge warning */}
+              {(townData.heatConsequences?.healSurcharge ?? 0) > 0 && (
+                <div className="rounded-lg border border-amber-600/30 bg-amber-50/40 px-4 py-3 flex items-start gap-2 mb-3">
+                  <span className="text-amber-700 text-sm shrink-0">⚠</span>
+                  <p className="text-xs font-body text-amber-800">
+                    {townData.heatConsequences!.healSurcharge >= 0.5
+                      ? 'The healer is charging you double. Your reputation precedes you.'
+                      : 'The healer knows who you are. Treatment costs 25% more than usual.'}
+                  </p>
+                </div>
+              )}
+
               {character && healQuote.injuries.length > 0 && (
                 <div className="mb-4">
                   <h3 className="font-heading text-sm text-leather-dark mb-2">Injuries</h3>
@@ -780,6 +871,17 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
         {/* ═══ GARRISON ═══ */}
         {tab === 'garrison' && (
           <div className="space-y-4">
+
+            {/* Garrison locked warning */}
+            {townData.heatConsequences?.garrisonLocked && (
+              <div className="rounded-lg border border-red-600/30 bg-red-50/40 px-4 py-3 flex items-start gap-2">
+                <span className="text-red-700 text-sm shrink-0">⛔</span>
+                <p className="text-xs font-body text-red-800">
+                  The Watch has you flagged. The garrison doors are closed to your party until your heat with them drops.
+                </p>
+              </div>
+            )}
+
             <div className="rounded-lg border border-leather/15 bg-parchment-light/50 p-4">
               <h2 className="font-heading font-bold text-leather-dark mb-1">Noticeboard</h2>
               <p className="text-xs font-body text-ink-faint mb-4">

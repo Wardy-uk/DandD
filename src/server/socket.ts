@@ -597,6 +597,19 @@ export function setupSocketHandlers(
             [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', note]);
           io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: note });
         }
+        // Surface rival encounters as interactive events
+        if (rivalPresence.rivals.length > 0) {
+          for (const rival of rivalPresence.rivals) {
+            io.to(`campaign:${campaignId}`).emit('game:rival_encounter', {
+              rivalId: rival.id,
+              rivalName: rival.name,
+              rivalSize: rival.size,
+              rivalRelation: rival.relation,
+              rivalStrength: rival.strength,
+              leaderName: character.name,
+            });
+          }
+        }
 
         // ── Faction patrol check on scene entry ─────────────────────────
         const campaignRowFaction = get(db, 'SELECT dominant_faction, exploration_turn FROM campaigns WHERE id = ?', [campaignId]) as any;
@@ -1150,6 +1163,42 @@ Rules:
         type: 'combat_action_pending',
         payload: { playerId: player.playerId, action, targetId },
       });
+    });
+
+    // ─── Rival encounter resolution ───────────────────────────────────
+
+    socket.on('game:rival_resolve', (data: { campaignId: string; rivalId: string; choice: string }) => {
+      try {
+        const { campaignId, rivalId, choice } = data;
+        const leaderChar = get(db,
+          'SELECT name FROM characters WHERE campaign_id = ? AND status = "active" LIMIT 1',
+          [campaignId]) as any;
+        const companions = getPartyCompanions(db, campaignId).filter((c: any) => c.joinedParty);
+        const partyStrength = companions.length + 2; // PC + party size
+        const validChoice = ['fight', 'parley', 'intimidate', 'ignore'].includes(choice)
+          ? choice as 'fight' | 'parley' | 'intimidate' | 'ignore'
+          : 'ignore';
+
+        const result = resolveRivalClash({
+          db, campaignId, rivalId,
+          partyStrength,
+          leaderName: leaderChar?.name || 'the party',
+          clashType: validChoice,
+        });
+
+        for (const note of result.notes) {
+          run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+            [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', note]);
+          io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: note });
+        }
+        io.to(`campaign:${campaignId}`).emit('game:rival_resolved', {
+          rivalId,
+          rivalName: result.rival?.name,
+        });
+        emitCampaignState(io, db, campaignId);
+      } catch (e) {
+        console.error('[game:rival_resolve error]', e);
+      }
     });
 
     // ─── Chat (out-of-character) ──────────────────────────────────────

@@ -292,6 +292,10 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
   const [townName, setTownName] = useState<string>('');
   const [activeContracts, setActiveContracts] = useState<ActiveContract[]>([]);
   const [contractsOpen, setContractsOpen] = useState(false);
+  const [rivalEncounter, setRivalEncounter] = useState<{
+    rivalId: string; rivalName: string; rivalSize: number;
+    rivalRelation: string; rivalStrength: number; leaderName: string;
+  } | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const headers = { Authorization: `Bearer ${player.token}`, 'Content-Type': 'application/json' };
@@ -435,6 +439,9 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
       }
     };
 
+    const onRivalEncounter = (data: typeof rivalEncounter) => setRivalEncounter(data);
+    const onRivalResolved  = () => setRivalEncounter(null);
+
     socket.on('game:narration', onNarration);
     socket.on('game:scene_enter', onSceneEnter);
     socket.on('game:player_action', onPlayerAction);
@@ -447,6 +454,8 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
     socket.on('game:encounter_start', onEncounterStart);
     socket.on('game:encounter_update', onEncounterUpdate);
     socket.on('game:turn_prompt', onTurnPrompt);
+    socket.on('game:rival_encounter', onRivalEncounter);
+    socket.on('game:rival_resolved', onRivalResolved);
 
     return () => {
       socket.off('game:narration', onNarration);
@@ -461,6 +470,8 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
       socket.off('game:encounter_start', onEncounterStart);
       socket.off('game:encounter_update', onEncounterUpdate);
       socket.off('game:turn_prompt', onTurnPrompt);
+      socket.off('game:rival_encounter', onRivalEncounter);
+      socket.off('game:rival_resolved', onRivalResolved);
     };
   }, [socket, fetchContracts]);
 
@@ -479,6 +490,16 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
       id: crypto.randomUUID(), type, actor, content,
       timestamp: new Date().toISOString(),
     }]);
+  };
+
+  const handleRivalChoice = (choice: string) => {
+    if (!rivalEncounter) return;
+    socket.emit('game:rival_resolve', {
+      campaignId,
+      rivalId: rivalEncounter.rivalId,
+      choice,
+    });
+    setRivalEncounter(null);
   };
 
   const sendAction = () => {
@@ -837,6 +858,40 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
         <div className="flex-1 min-h-0 overflow-y-auto px-3 pt-3 pb-2 space-y-3 bg-[radial-gradient(circle_at_top,rgba(255,248,231,0.55),rgba(246,238,221,0)_55%)]">
           {renderLogEntries()}
         </div>
+
+        {/* ── Rival encounter panel ── */}
+        {rivalEncounter && (
+          <div className="flex-shrink-0 border-t-2 border-blood/30 bg-blood/5 px-3 py-3 animate-fade-in">
+            <div className="flex items-start gap-2 mb-2">
+              <span className="text-blood text-sm font-heading font-bold shrink-0">⚔</span>
+              <div>
+                <p className="text-sm font-heading font-bold text-blood leading-tight">
+                  {rivalEncounter.rivalName} — {rivalEncounter.rivalSize} strong
+                </p>
+                <p className="text-[11px] font-body text-ink-faint capitalize">
+                  Relation: {rivalEncounter.rivalRelation.replace('_', ' ')} · Strength {rivalEncounter.rivalStrength}
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              {[
+                { key: 'fight',      label: 'Fight them', hint: 'Risk damage; win ground and loot' },
+                { key: 'parley',     label: 'Parley',     hint: 'Talk terms; may improve relation' },
+                { key: 'intimidate', label: 'Intimidate', hint: 'Drive them off without a fight' },
+                { key: 'ignore',     label: 'Ignore',     hint: 'Neither side engages' },
+              ].map(opt => (
+                <button
+                  key={opt.key}
+                  onClick={() => handleRivalChoice(opt.key)}
+                  className="rounded-lg border border-blood/20 bg-parchment/80 px-2 py-2 text-left text-xs font-body touch-manipulation hover:bg-blood/8 transition-colors"
+                >
+                  <span className="font-heading font-bold text-blood">{opt.label}</span>
+                  <span className="block text-[10px] text-ink-faint mt-0.5">{opt.hint}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* ── Sticky bottom action area ── */}
         <div className="flex-shrink-0 border-t border-leather/15 bg-parchment-light/80 backdrop-blur-sm">

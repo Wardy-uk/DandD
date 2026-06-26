@@ -56,6 +56,20 @@ export function createTownRoutes(db: Database, io: SocketServer): Router {
       [campaignId]) as any[];
 
     const state = getCampaignState(db, campaignId);
+
+    // Heat consequences — per-faction modifiers that affect services
+    const localsHeat = state.factions['locals']?.heat || 0;
+    const watchHeat  = state.factions['watch']?.heat  || 0;
+    const shadowsHeat = state.factions['shadows']?.heat || 0;
+    const heatMultiplier = localsHeat >= 5 ? 1.5 : localsHeat >= 3 ? 1.25 : 1.0;
+    const heatConsequences = {
+      marketSurcharge: localsHeat >= 5 ? 0.5 : localsHeat >= 3 ? 0.25 : 0,
+      healSurcharge:   localsHeat >= 5 ? 0.5 : localsHeat >= 3 ? 0.25 : 0,
+      garrisonLocked:  watchHeat >= 4,
+      beingWatched:    watchHeat >= 3,
+      shadowsUnreliable: shadowsHeat >= 3,
+    };
+
     const mapIntel = buildCampaignMapIntel(db, campaignId);
     const catalogue = getCatalogue(db, campaignId);
 
@@ -94,7 +108,43 @@ export function createTownRoutes(db: Database, io: SocketServer): Router {
     contracts = evaluateContracts(db, campaignId, contracts);
     run(db, 'UPDATE campaigns SET town_contracts = ? WHERE id = ?', [JSON.stringify(contracts), campaignId]);
 
-    const healQuote = char ? getHealingQuote(db, char.id) : { injuries: [], totalCost: 0 };
+    const healQuote = char ? getHealingQuote(db, char.id, heatMultiplier) : { injuries: [], totalCost: 0 };
+
+    // Companion relationship events
+    const companionEvents = (companions as any[])
+      .filter((c: any) => c.joinedParty)
+      .flatMap((c: any) => {
+        const r = c.relationship || {};
+        const events: any[] = [];
+        if ((r.tension || 0) >= 4) {
+          events.push({
+            type: 'tension',
+            companionId: c.id,
+            companionName: c.name,
+            text: `${c.name} waits until you are alone before speaking. Something has been sitting wrong with them for a while now.`,
+            choices: [{ key: 'listen', label: 'Listen and acknowledge' }, { key: 'dismiss', label: 'Deflect it' }],
+          });
+        }
+        if ((r.morale || 0) <= -1) {
+          events.push({
+            type: 'morale_crisis',
+            companionId: c.id,
+            companionName: c.name,
+            text: `${c.name} is struggling. Not with wounds or fatigue, but with something harder to name. They need more than rest.`,
+            choices: [{ key: 'rally', label: 'Rally them (5 GP)' }, { key: 'wait', label: 'Give them time' }],
+          });
+        }
+        if ((r.bond || 0) >= 3 && !r.bondEventSeen) {
+          events.push({
+            type: 'bond_milestone',
+            companionId: c.id,
+            companionName: c.name,
+            text: `${c.name} catches you alone for a moment. \"I just wanted to say —\" They don't finish. But the meaning comes through.`,
+            choices: [{ key: 'acknowledge', label: 'Acknowledge it' }],
+          });
+        }
+        return events;
+      });
     const lootAppraisal = char ? appraiseLoot(db, campaignId, char.id) : { items: [], totalGp: 0 };
 
     res.json({
@@ -135,6 +185,8 @@ export function createTownRoutes(db: Database, io: SocketServer): Router {
           heat: f.heat,
           contractCooldownUntilSession: f.contractCooldownUntilSession ?? null,
         })),
+        heatConsequences,
+        companionEvents,
       },
     });
   });
@@ -250,7 +302,10 @@ export function createTownRoutes(db: Database, io: SocketServer): Router {
     if (!char) { res.json({ ok: false, error: 'No active character' }); return; }
 
     const isPaladin = String(char.char_class || '').toLowerCase() === 'paladin';
-    const result = healInjuries(db, char.id, isPaladin);
+    const healState = getCampaignState(db, campaignId);
+    const healLocalsHeat = healState.factions['locals']?.heat || 0;
+    const healMult = healLocalsHeat >= 5 ? 1.5 : healLocalsHeat >= 3 ? 1.25 : 1.0;
+    const result = healInjuries(db, char.id, isPaladin, healMult);
     if (!result.ok && result.error) {
       res.json({ ok: false, error: result.error });
       return;
@@ -482,6 +537,66 @@ export function createTownRoutes(db: Database, io: SocketServer): Router {
     }
 
     res.json({ ok: true, data: { ...result, followUp } });
+  });
+
+  // ─── POST /town/:campaignId/companion/event ──────────────────────
+
+  router.post('/:campaignId/companion/event', requireAuth, (req: any, res) => {
+    const { campaignId } = req.params;
+    const { companionId, eventType, choice } = req.body;
+    if (!companionId || !eventType || !choice) {
+      res.json({ ok: false, error: 'companionId, eventType and choice required' }); return;
+    }
+
+    const npc = get(db, 'SELECT * FROM npcs WHERE id = ? AND campaign_id = ?', [companionId, campaignId]) as any;
+    if (!npc) { res.json({ ok: false, error: 'Companion not found' }); return; }
+
+    const rel = JSON.parse(npc.relationship_state || '{}');
+    let narration = '';
+
+    if (eventType === 'tension') {
+      if (choice === 'listen') {
+        rel.tension = Math.max(-5, (rel.tension || 0) - 2);
+        rel.bond    = Math.min(5, (rel.bond || 0) + 1);
+        narration = `${npc.name} nods. "Thank you for hearing me." Something between you eases — not gone, but lighter.`;
+      } else {
+        rel.tension = Math.max(-5, (rel.tension || 0) - 1);
+        rel.loyalty = Math.max(-5, (rel.loyalty || 0) - 1);
+        narration = `${npc.name} doesn't push it. But they remember.`;
+      }
+    } else if (eventType === 'morale_crisis') {
+      if (choice === 'rally') {
+        const char = get(db, 'SELECT * FROM characters WHERE campaign_id = ? AND player_id = ? AND status != "dead"',
+          [campaignId, req.player.id]) as any;
+        if (!char || Number(char.gold || 0) < 5) {
+          res.json({ ok: false, error: 'Not enough gold (need 5 GP)' }); return;
+        }
+        run(db, 'UPDATE characters SET gold = gold - 5 WHERE id = ?', [char.id]);
+        rel.morale = Math.min(5, (rel.morale || 0) + 2);
+        narration = `You make the time, spend the coin. ${npc.name} comes back to themselves. They'll be all right for a while.`;
+      } else {
+        narration = `${npc.name} takes a long breath. "Right," they say. "Give me a bit." They'll get there.`;
+      }
+    } else if (eventType === 'bond_milestone') {
+      rel.bond = Math.min(5, (rel.bond || 0) + 1);
+      rel.bondEventSeen = true;
+      narration = `${npc.name} doesn't need to say anything more. Neither do you. Something settled between you just then.`;
+    }
+
+    run(db, 'UPDATE npcs SET relationship_state = ? WHERE id = ?', [JSON.stringify(rel), companionId]);
+
+    if (narration) {
+      run(db, 'INSERT INTO game_log (id, campaign_id, type, actor, content) VALUES (?, ?, ?, ?, ?)',
+        [uuid(), campaignId, 'narration', npc.name, narration]);
+      io.to(`campaign:${campaignId}`).emit('game:narration', { actor: npc.name, content: narration });
+    }
+
+    io.to(`campaign:${campaignId}`).emit('game:state_update', {
+      type: 'companions_update',
+      payload: getPartyCompanions(db, campaignId),
+    });
+
+    res.json({ ok: true, data: { narration } });
   });
 
   // ─── POST /town/:campaignId/downtime ─────────────────────────────

@@ -297,6 +297,8 @@ export interface ServerToClientEvents {
   'game:encounter_start': (data: Encounter) => void;
   'game:encounter_update': (data: Encounter) => void;
   'game:turn_prompt': (data: { combatantId: string; name: string; round: number }) => void;
+  'game:rival_encounter': (data: { rivalId: string; rivalName: string; rivalSize: number; rivalRelation: string; rivalStrength: number; leaderName: string }) => void;
+  'game:rival_resolved': (data: { rivalId: string; rivalName: string }) => void;
 }
 
 export interface ClientToServerEvents {
@@ -305,4 +307,5 @@ export interface ClientToServerEvents {
   'game:action': (data: { campaignId: string; action: string; details?: unknown }) => void;
   'game:combat_action': (data: { campaignId: string; encounterId: string; action: string; targetId?: string }) => void;
   'game:chat': (data: { campaignId: string; message: string }) => void;
+  'game:rival_resolve': (data: { campaignId: string; rivalId: string; choice: string }) => void;
 }

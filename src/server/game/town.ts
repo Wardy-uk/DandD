@@ -191,7 +191,7 @@ function healingCost(condition: string): number {
   return 0;
 }
 
-export function getHealingQuote(db: Database, characterId: string): {
+export function getHealingQuote(db: Database, characterId: string, heatMultiplier = 1): {
   injuries: Array<{ condition: string; cost: number }>;
   totalCost: number;
 } {
@@ -203,7 +203,7 @@ export function getHealingQuote(db: Database, characterId: string): {
     .filter(c => healingCost(c) > 0)
     .map(c => ({ condition: c, cost: healingCost(c) }));
 
-  return { injuries, totalCost: injuries.reduce((n, i) => n + i.cost, 0) };
+  return { injuries, totalCost: Math.ceil(injuries.reduce((n, i) => n + i.cost, 0) * heatMultiplier) };
 }
 
 // ─── Garrison contracts ──────────────────────────────────────────────────────
@@ -935,6 +935,8 @@ export function buySupplies(
 
   const state = getCampaignState(db, campaignId);
   const localsRep = state.factions['locals']?.reputation || 0;
+  const localsHeat = state.factions['locals']?.heat || 0;
+  const heatSurcharge = localsHeat >= 5 ? 1.5 : localsHeat >= 3 ? 1.25 : 1.0;
   const catalogue = getCatalogue(db, campaignId);
 
   let gpSpent = 0;
@@ -944,7 +946,7 @@ export function buySupplies(
   for (const req of order) {
     const entry = catalogue.find(c => c.item.toLowerCase() === req.item.toLowerCase());
     if (!entry) continue;
-    const cost = entry.gp * req.quantity;
+    const cost = Math.ceil(entry.gp * req.quantity * heatSurcharge * 100) / 100;
     gpSpent += cost;
 
     // Merge into inventory
@@ -987,7 +989,7 @@ export interface HealResult {
   error?: string;
 }
 
-export function healInjuries(db: Database, characterId: string, isPaladin: boolean): HealResult {
+export function healInjuries(db: Database, characterId: string, isPaladin: boolean, heatMultiplier = 1): HealResult {
   const char = get(db, 'SELECT * FROM characters WHERE id = ?', [characterId]) as any;
   if (!char) return { ok: false, gpSpent: 0, healed: [], narration: '', error: 'Character not found' };
 
@@ -1010,6 +1012,9 @@ export function healInjuries(db: Database, characterId: string, isPaladin: boole
     totalCost = rest.reduce((n, c) => n + healingCost(c), 0);
     void freeOne;
   }
+
+  // Apply heat surcharge if locals are hostile
+  if (heatMultiplier > 1) totalCost = Math.ceil(totalCost * heatMultiplier);
 
   if (totalCost > Number(char.gold || 0)) {
     return { ok: false, gpSpent: 0, healed: [], narration: '', error: `Treatment costs ${totalCost} GP. You have ${Number(char.gold || 0).toFixed(1)} GP.` };
