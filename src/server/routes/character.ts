@@ -20,6 +20,35 @@ export function createCharacterRoutes(db: Database): Router {
   const router = Router();
   router.use(authMiddleware(db));
 
+  router.get('/roster', requireAuth, (req: any, res) => {
+    const rows = all(db, `
+      SELECT ch.*, c.name AS campaign_name
+      FROM characters ch
+      LEFT JOIN campaigns c ON c.id = ch.campaign_id
+      WHERE ch.player_id = ?
+      ORDER BY ch.created_at DESC
+    `, [req.player.id]) as any[];
+
+    res.json({
+      ok: true,
+      data: rows.map((char) => ({
+        id: char.id,
+        name: char.name,
+        race: char.race,
+        charClass: char.char_class,
+        alignment: char.alignment,
+        level: Number(char.level || 1),
+        xp: Number(char.xp || 0),
+        hp: Number(char.hp || 0),
+        maxHp: Number(char.max_hp || 0),
+        status: char.status,
+        campaignId: char.campaign_id,
+        campaignName: char.campaign_name || 'Unknown campaign',
+        createdAt: char.created_at,
+      })),
+    });
+  });
+
   // Roll ability scores
   router.post('/roll-abilities', requireAuth, (req: any, res) => {
     const method = req.body.method === '3d6' ? '3d6' : '4d6kh3';
@@ -172,6 +201,113 @@ export function createCharacterRoutes(db: Database): Router {
     seedStarterCompanions(db, campaignId);
 
     res.json({ ok: true, data: character });
+  });
+
+  router.post('/import', requireAuth, (req: any, res) => {
+    const { campaignId, sourceCharacterId } = req.body;
+
+    if (!campaignId || !sourceCharacterId) {
+      res.json({ ok: false, error: 'campaignId and sourceCharacterId are required' });
+      return;
+    }
+
+    const membership = get(db,
+      'SELECT * FROM campaign_players WHERE campaign_id = ? AND player_id = ?',
+      [campaignId, req.player.id]);
+    if (!membership) {
+      res.json({ ok: false, error: 'Not a member of this campaign' });
+      return;
+    }
+
+    const existing = get(db,
+      'SELECT id FROM characters WHERE campaign_id = ? AND player_id = ? AND status != "dead"',
+      [campaignId, req.player.id]) as any;
+    if (existing) {
+      res.json({ ok: false, error: 'You already have an active character in this campaign' });
+      return;
+    }
+
+    const source = get(db,
+      'SELECT * FROM characters WHERE id = ? AND player_id = ?',
+      [sourceCharacterId, req.player.id]) as any;
+    if (!source) {
+      res.json({ ok: false, error: 'Character not found or not yours' });
+      return;
+    }
+    if (source.status === 'dead') {
+      res.json({ ok: false, error: 'Dead characters cannot be imported into a new campaign' });
+      return;
+    }
+
+    const player = get(db, 'SELECT * FROM players WHERE id = ?', [req.player.id]) as any;
+    const clonedId = uuid();
+    const sourceConditions = JSON.parse(source.conditions || '[]');
+    const sourceInventory = JSON.parse(source.inventory || '[]');
+    const sourceWeaponProfs = JSON.parse(source.weapon_profs || '[]');
+    const sourceNonweaponProfs = JSON.parse(source.nonweapon_profs || '[]');
+    const sourceSpellSlots = source.spell_slots ? JSON.parse(source.spell_slots) : null;
+    const sourceMemorisedSpells = source.memorised_spells ? JSON.parse(source.memorised_spells) : null;
+    const sourceSpellbook = source.spellbook ? JSON.parse(source.spellbook) : null;
+    const sourcePriestSpheres = source.priest_spheres ? JSON.parse(source.priest_spheres) : null;
+    const sourceThiefSkills = source.thief_skills ? JSON.parse(source.thief_skills) : null;
+    const sourceInjuries = source.injuries ? JSON.parse(source.injuries) : [];
+
+    run(db, `
+      INSERT INTO characters (
+        id, campaign_id, player_id, player_name, name, race, char_class, multi_class, alignment,
+        level, xp, xp_next, str, str_percentile, dex, con, int, wis, cha,
+        thac0, ac, hp, max_hp, base_movement,
+        save_paralysis, save_rod, save_petrify, save_breath, save_spell,
+        weapon_prof_slots, nonweapon_prof_slots, weapon_profs, nonweapon_profs,
+        spell_slots, memorised_spells, spellbook, priest_spheres, thief_skills,
+        inventory, gold, silver, copper, electrum, platinum,
+        conditions, notes, status, injuries
+      ) VALUES (
+        ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?
+      )
+    `, [
+      clonedId, campaignId, req.player.id, player.display_name || player.username,
+      source.name, source.race, source.char_class, source.multi_class, source.alignment,
+      source.level, source.xp, source.xp_next, source.str, source.str_percentile,
+      source.dex, source.con, source.int, source.wis, source.cha,
+      source.thac0, source.ac, source.hp, source.max_hp, source.base_movement,
+      source.save_paralysis, source.save_rod, source.save_petrify, source.save_breath, source.save_spell,
+      source.weapon_prof_slots, source.nonweapon_prof_slots, JSON.stringify(sourceWeaponProfs), JSON.stringify(sourceNonweaponProfs),
+      sourceSpellSlots ? JSON.stringify(sourceSpellSlots) : null,
+      sourceMemorisedSpells ? JSON.stringify(sourceMemorisedSpells) : null,
+      sourceSpellbook ? JSON.stringify(sourceSpellbook) : null,
+      sourcePriestSpheres ? JSON.stringify(sourcePriestSpheres) : null,
+      sourceThiefSkills ? JSON.stringify(sourceThiefSkills) : null,
+      JSON.stringify(sourceInventory), source.gold, source.silver, source.copper, source.electrum, source.platinum,
+      JSON.stringify(sourceConditions), source.notes, 'active', JSON.stringify(sourceInjuries),
+    ]);
+
+    seedStarterCompanions(db, campaignId);
+
+    const cloned = get(db, 'SELECT * FROM characters WHERE id = ?', [clonedId]) as any;
+    res.json({
+      ok: true,
+      data: {
+        ...cloned,
+        inventory: sourceInventory,
+        conditions: sourceConditions,
+        weaponProfs: sourceWeaponProfs,
+        nonweaponProfs: sourceNonweaponProfs,
+        spellSlots: sourceSpellSlots,
+        memorisedSpells: sourceMemorisedSpells,
+        spellbook: sourceSpellbook,
+        priestSpheres: sourcePriestSpheres,
+        thiefSkills: sourceThiefSkills,
+        importedFromCharacterId: source.id,
+      },
+    });
   });
 
   // Get character

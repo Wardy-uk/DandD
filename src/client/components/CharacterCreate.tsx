@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 const RACES = ['human', 'elf', 'half-elf', 'dwarf', 'gnome', 'halfling'] as const;
 const RACE_LABELS: Record<string, string> = {
@@ -113,6 +113,22 @@ interface AvailableClassOption {
   missingRequirements: string[];
 }
 
+interface RosterCharacter {
+  id: string;
+  name: string;
+  race: string;
+  charClass: string;
+  alignment: string;
+  level: number;
+  xp: number;
+  hp: number;
+  maxHp: number;
+  status: string;
+  campaignId: string;
+  campaignName: string;
+  createdAt: string;
+}
+
 const CASTER_SLOT_NOTE: Record<string, string> = {
   mage:   '1 level-1 spell slot',
   cleric: '1 level-1 spell slot (+ WIS bonus)',
@@ -153,8 +169,19 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
   const [charName, setCharName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [roster, setRoster] = useState<RosterCharacter[]>([]);
+  const [importingId, setImportingId] = useState('');
 
   const headers = { Authorization: `Bearer ${player.token}`, 'Content-Type': 'application/json' };
+
+  useEffect(() => {
+    fetch(`${apiUrl}/api/characters/roster`, { headers })
+      .then(r => r.json())
+      .then(data => {
+        if (data.ok) setRoster(data.data || []);
+      })
+      .catch(() => {});
+  }, [apiUrl, player.token]);
 
   const rollAbilities = async (method: '3d6' | '4d6kh3') => {
     setLoading(true);
@@ -240,6 +267,28 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
     }
   };
 
+  const importCharacter = async (sourceCharacterId: string) => {
+    setImportingId(sourceCharacterId);
+    setError('');
+    try {
+      const res = await fetch(`${apiUrl}/api/characters/import`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ campaignId, sourceCharacterId }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        onCreated(data.data.id);
+      } else {
+        setError(data.error || 'Failed to import character');
+      }
+    } catch {
+      setError('Failed to import character');
+    } finally {
+      setImportingId('');
+    }
+  };
+
   const abilityNames = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'];
   const abilityKeys = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
 
@@ -257,6 +306,51 @@ export default function CharacterCreate({ apiUrl, player, campaignId, onCreated,
       </p>
 
       {error && <p className="text-blood text-sm font-body mb-4">{error}</p>}
+
+      {roster.some((character) => character.status !== 'dead') && step === 1 && (
+        <div className="mb-6 rounded-lg border border-leather/15 bg-parchment-light/40 p-4 sm:p-6">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <h3 className="font-heading font-bold text-leather text-sm uppercase tracking-wider">
+                Use An Existing Adventurer
+              </h3>
+              <p className="mt-1 text-sm text-ink-light font-body leading-relaxed">
+                Any character on your roster can be brought into this campaign as a fresh campaign copy.
+              </p>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {roster
+              .filter((character) => character.status !== 'dead')
+              .map((character) => (
+                <div key={character.id} className="rounded-lg border border-leather/10 bg-parchment/60 p-3">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="font-heading font-bold text-leather-dark">{character.name}</div>
+                      <div className="text-xs font-body italic text-ink-faint">
+                        Level {character.level} {RACE_LABELS[character.race] || character.race} {CLASS_LABELS[character.charClass] || character.charClass} · {character.alignment}
+                      </div>
+                      <div className="mt-1 text-xs font-body text-ink-faint">
+                        Source: {character.campaignName} · HP {character.hp}/{character.maxHp} · XP {character.xp}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => importCharacter(character.id)}
+                      disabled={importingId === character.id}
+                      className="rounded-lg bg-leather px-4 py-2 text-xs font-heading font-semibold text-parchment-light hover:bg-leather-dark disabled:opacity-50"
+                    >
+                      {importingId === character.id ? 'Bringing Across...' : 'Use This Character'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+          </div>
+          <p className="mt-3 text-xs font-body italic text-ink-faint">
+            Want someone new instead? Build a fresh adventurer below.
+          </p>
+        </div>
+      )}
 
       {/* Step 1: Choose Calling + Roll Abilities */}
       {step === 1 && (
