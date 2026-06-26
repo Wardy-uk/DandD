@@ -4,7 +4,7 @@
  */
 
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
-const DEFAULT_MODEL = process.env.OLLAMA_MODEL || 'qwen2.5:7b';
+const DEFAULT_MODEL = process.env.OLLAMA_MODEL || 'llama3.1:8b';
 const FAST_MODEL = process.env.OLLAMA_FAST_MODEL || 'qwen2.5:3b';
 
 export interface OllamaRequest {
@@ -14,10 +14,14 @@ export interface OllamaRequest {
   messages?: { role: string; content: string }[];
   stream?: boolean;
   format?: 'json';
+  keep_alive?: string;
   options?: {
     temperature?: number;
     top_p?: number;
+    top_k?: number;
     num_predict?: number;
+    num_ctx?: number;
+    repeat_penalty?: number;
     stop?: string[];
   };
 }
@@ -48,9 +52,14 @@ export async function generate(params: {
     system,
     stream: false,
     format,
+    keep_alive: '10m',
     options: {
       temperature: temperature ?? 0.8,
       num_predict: maxTokens ?? 256,
+      num_ctx: 4096,
+      repeat_penalty: 1.12,
+      top_k: 40,
+      top_p: 0.92,
     },
   };
 
@@ -91,9 +100,14 @@ export async function chat(params: {
     messages,
     stream: false,
     format,
+    keep_alive: '10m',
     options: {
       temperature: temperature ?? 0.8,
       num_predict: maxTokens ?? 256,
+      num_ctx: 4096,
+      repeat_penalty: 1.12,
+      top_k: 40,
+      top_p: 0.92,
     },
   };
 
