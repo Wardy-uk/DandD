@@ -166,7 +166,7 @@ function FactionPip({ rep }: { rep: number }) {
 
 // ─── Companion Card ──────────────────────────────────────────────────────────
 
-function TownCompanionCard({ companion }: { companion: Companion }) {
+function TownCompanionCard({ companion, onResolveQuest }: { companion: Companion; onResolveQuest?: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const r = companion.relationship;
   const hasTension = r.tension >= 3;
@@ -220,7 +220,20 @@ function TownCompanionCard({ companion }: { companion: Companion }) {
             <p className="text-[11px] font-body text-ink-faint italic">"{companion.aspiration}"</p>
           )}
           {companion.personalQuestTitle && !companion.personalQuestResolved && (
-            <p className="text-[11px] font-body text-leather italic">Quest: {companion.personalQuestTitle}</p>
+            <div className="space-y-1">
+              <p className="text-[11px] font-body text-leather italic">Quest: {companion.personalQuestTitle}</p>
+              {onResolveQuest && (
+                <button
+                  onClick={e => { e.stopPropagation(); onResolveQuest(); }}
+                  className="px-2 py-1 rounded border border-leather/30 text-[10px] font-heading text-leather hover:bg-leather/10 transition-colors"
+                >
+                  Mark quest resolved
+                </button>
+              )}
+            </div>
+          )}
+          {companion.personalQuestTitle && companion.personalQuestResolved && (
+            <p className="text-[11px] font-body text-green-700 italic">Quest resolved: {companion.personalQuestTitle}</p>
           )}
           {companion.grievance && r.tension >= 2 && (
             <p className="text-[11px] font-body text-amber-700 italic">Grievance: {companion.grievance}</p>
@@ -421,6 +434,30 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
 
   const dismissEvent = (companionId: string, eventType: string) => {
     setDismissedEvents(prev => new Set([...prev, `${companionId}:${eventType}`]));
+  };
+
+  // ── Heat cooling ────────────────────────────────────────────────
+
+  const handleHeatCool = async (method: 'shadows_contact' | 'lay_low') => {
+    const data = await apiPost('heat/cool', { method });
+    if (data.ok) {
+      fetchTownData();
+      showMsg(method === 'lay_low' ? 'You lie low. Heat drops across the board.' : `Paid shadow contact — ${data.data.gpSpent} GP. Heat reduced.`);
+    } else {
+      showMsg(data.error || 'Could not cool heat');
+    }
+  };
+
+  // ── Resolve companion quest ─────────────────────────────────────
+
+  const handleResolveQuest = async (companionId: string) => {
+    const data = await apiPost('companion/resolve-quest', { companionId });
+    if (data.ok) {
+      fetchTownData();
+      showMsg('Quest resolved. Bond and loyalty increased.');
+    } else {
+      showMsg(data.error || 'Could not resolve quest');
+    }
   };
 
   // ── Hire prospect ───────────────────────────────────────────────
@@ -674,7 +711,13 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
               <div>
                 <h3 className="font-heading font-bold text-leather-dark mb-2 text-sm">With you</h3>
                 <div className="space-y-2">
-                  {joinedCompanions.map(c => <TownCompanionCard key={c.id} companion={c} />)}
+                  {joinedCompanions.map(c => (
+                    <TownCompanionCard
+                      key={c.id}
+                      companion={c}
+                      onResolveQuest={c.personalQuestTitle && !c.personalQuestResolved ? () => handleResolveQuest(c.id) : undefined}
+                    />
+                  ))}
                 </div>
               </div>
             )}
@@ -985,6 +1028,20 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
                   ))}
                 </div>
                 <p className="text-[11px] text-amber-700/70 font-body mt-2 italic">Heat means someone is watching. Don't linger too long.</p>
+                <div className="mt-3 pt-3 border-t border-amber-700/15 flex flex-wrap gap-2">
+                  <button
+                    onClick={() => handleHeatCool('shadows_contact')}
+                    className="px-3 py-1.5 rounded border border-amber-700/30 text-xs font-heading text-amber-700 hover:bg-amber-100/60 transition-colors"
+                  >
+                    Pay shadow contact (20 GP)
+                  </button>
+                  <button
+                    onClick={() => handleHeatCool('lay_low')}
+                    className="px-3 py-1.5 rounded border border-amber-700/30 text-xs font-heading text-amber-700 hover:bg-amber-100/60 transition-colors"
+                  >
+                    Lay low this visit
+                  </button>
+                </div>
               </div>
             )}
 

@@ -9,6 +9,7 @@ import { get, all, run } from '../db/helpers.js';
 import { authMiddleware, requireAuth } from './auth.js';
 import {
   appraiseLoot,
+  applyHeatCool,
   buySupplies,
   claimContractReward,
   evaluateContracts,
@@ -500,6 +501,18 @@ export function createTownRoutes(db: Database, io: SocketServer): Router {
       io.to(`campaign:${campaignId}`).emit('game:state_update', { type: 'character_update', payload: updatedChar });
     }
 
+    // Watch contracts reduce watch heat by 1 on claim
+    try {
+      const successResult = result as { ok: true; contract: any };
+      if (successResult.contract?.factionKey === 'watch') {
+        const claimState = getCampaignState(db, campaignId);
+        if (claimState.factions['watch']) {
+          claimState.factions['watch'].heat = Math.max(0, (claimState.factions['watch'].heat || 0) - 1);
+          saveCampaignState(db, campaignId, claimState);
+        }
+      }
+    } catch {}
+
     // Generate faction follow-up contract
     let followUp: any = null;
     try {
@@ -591,6 +604,63 @@ export function createTownRoutes(db: Database, io: SocketServer): Router {
       io.to(`campaign:${campaignId}`).emit('game:narration', { actor: npc.name, content: narration });
     }
 
+    io.to(`campaign:${campaignId}`).emit('game:state_update', {
+      type: 'companions_update',
+      payload: getPartyCompanions(db, campaignId),
+    });
+
+    res.json({ ok: true, data: { narration } });
+  });
+
+  // ─── POST /town/:campaignId/heat/cool ────────────────────────────
+
+  router.post('/:campaignId/heat/cool', requireAuth, (req: any, res) => {
+    const { campaignId } = req.params;
+    const { method } = req.body;
+    if (!method) { res.json({ ok: false, error: 'method required' }); return; }
+
+    const char = get(db,
+      'SELECT id FROM characters WHERE campaign_id = ? AND player_id = ? AND status != "dead"',
+      [campaignId, req.player.id]) as any;
+    if (!char) { res.json({ ok: false, error: 'No active character' }); return; }
+
+    const result = applyHeatCool(db, campaignId, method, char.id);
+    if (!result.ok) { res.json({ ok: false, error: result.error }); return; }
+
+    run(db, 'INSERT INTO game_log (id, campaign_id, type, actor, content) VALUES (?, ?, ?, ?, ?)',
+      [uuid(), campaignId, 'narration', 'DM', result.narration!]);
+    io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: result.narration });
+
+    res.json({ ok: true, data: { gpSpent: result.gpSpent, narration: result.narration } });
+  });
+
+  // ─── POST /town/:campaignId/companion/resolve-quest ───────────────
+
+  router.post('/:campaignId/companion/resolve-quest', requireAuth, (req: any, res) => {
+    const { campaignId } = req.params;
+    const { companionId } = req.body;
+    if (!companionId) { res.json({ ok: false, error: 'companionId required' }); return; }
+
+    const npc = get(db,
+      'SELECT id, name, relationship_state FROM npcs WHERE id = ? AND campaign_id = ? AND alive = 1',
+      [companionId, campaignId]) as any;
+    if (!npc) { res.json({ ok: false, error: 'Companion not found' }); return; }
+
+    const rel = JSON.parse(npc.relationship_state || '{}');
+    if (rel.personalQuestResolved) { res.json({ ok: false, error: 'Quest already resolved' }); return; }
+    if (!rel.personalQuestTitle) { res.json({ ok: false, error: 'No personal quest' }); return; }
+
+    rel.personalQuestResolved = true;
+    rel.loyalty = Math.min(5, (rel.loyalty || 0) + 1);
+    rel.bond = Math.min(5, (rel.bond || 0) + 1);
+    rel.lastBeat = `${npc.name}'s personal quest resolved: ${rel.personalQuestTitle}`;
+
+    run(db, 'UPDATE npcs SET relationship_state = ? WHERE id = ?', [JSON.stringify(rel), companionId]);
+
+    const narration = `${npc.name}'s personal quest — "${rel.personalQuestTitle}" — is resolved. The weight of it lifts from them. They will not forget that you saw it through.`;
+    run(db, 'INSERT INTO game_log (id, campaign_id, type, actor, content) VALUES (?, ?, ?, ?, ?)',
+      [uuid(), campaignId, 'narration', 'DM', narration]);
+    io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: narration });
     io.to(`campaign:${campaignId}`).emit('game:state_update', {
       type: 'companions_update',
       payload: getPartyCompanions(db, campaignId),

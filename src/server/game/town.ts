@@ -1183,3 +1183,47 @@ export function leaveForDungeon(db: Database, campaignId: string, characterId: s
 
   return { summary, finalRumour };
 }
+
+// ─── Heat cooling ─────────────────────────────────────────────────────────────
+
+export function applyHeatCool(
+  db: Database,
+  campaignId: string,
+  method: 'shadows_contact' | 'lay_low',
+  characterId: string,
+): { ok: boolean; error?: string; narration?: string; gpSpent?: number } {
+  const state = getCampaignState(db, campaignId);
+
+  if (method === 'shadows_contact') {
+    const shadowsRep = state.factions['shadows']?.reputation || 0;
+    if (shadowsRep < 0) {
+      return { ok: false, error: 'The shadows want nothing to do with you right now.' };
+    }
+    const char = get(db, 'SELECT gold FROM characters WHERE id = ?', [characterId]) as any;
+    const COST = 20;
+    if (!char || Number(char.gold || 0) < COST) {
+      return { ok: false, error: `You need ${COST} GP to pay a shadow contact.` };
+    }
+    run(db, 'UPDATE characters SET gold = gold - ? WHERE id = ?', [COST, characterId]);
+    if (state.factions['locals']) state.factions['locals'].heat = Math.max(0, (state.factions['locals'].heat || 0) - 1);
+    if (state.factions['watch']) state.factions['watch'].heat = Math.max(0, (state.factions['watch'].heat || 0) - 1);
+    saveCampaignState(db, campaignId, state);
+    return {
+      ok: true, gpSpent: COST,
+      narration: 'A coin changes hands in a dark corner. Word gets out that the stories about your company were exaggerated. Heat with the market and the Watch drops slightly.',
+    };
+  }
+
+  if (method === 'lay_low') {
+    for (const key of Object.keys(state.factions)) {
+      state.factions[key].heat = Math.max(0, (state.factions[key].heat || 0) - 1);
+    }
+    saveCampaignState(db, campaignId, state);
+    return {
+      ok: true, gpSpent: 0,
+      narration: 'Your company keeps its head down for the rest of the visit. No contracts, no confrontations. Heat drops across the board — but so does your opportunity.',
+    };
+  }
+
+  return { ok: false, error: 'Unknown method.' };
+}

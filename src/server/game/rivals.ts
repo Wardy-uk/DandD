@@ -172,6 +172,18 @@ export function tickRivals(params: {
 
     if (rival.status !== 'active') continue;
 
+    // Pursuit mode: hated rivals track the player directly
+    if (rival.relation === 'hated' && rival.clashCount >= 3) {
+      const wasHere = rival.currentSceneId === currentSceneId;
+      rival.currentSceneId = currentSceneId;
+      rival.lastSeenTurn = explorationTurn;
+      if (!wasHere) {
+        notes.push(`${rival.name} has not forgotten what happened between you. They are in the same dungeon — and this time they came looking.`);
+      }
+      saveRival(db, rival);
+      continue;
+    }
+
     // Move rival to an adjacent unvisited scene if possible
     const candidateScenes = findUnvisitedAdjacentScenes(db, campaignId, rival.currentSceneId, currentSceneId);
 
@@ -323,7 +335,9 @@ export function checkRivalPresence(params: {
 
   for (const rival of rivals) {
     const relationDesc = describeRelation(rival.relation);
-    if (rival.relation === 'unknown') {
+    if (rival.relation === 'hated') {
+      notes.push(`${rival.name} is here. They are not in a talking mood. After everything between you, this was always going to end badly.`);
+    } else if (rival.relation === 'unknown') {
       notes.push(`Another delver company is here — ${rival.name}, ${rival.size} strong. ${rival.size >= 4 ? 'They look capable.' : 'They look stretched.'} You have not crossed paths before.`);
     } else {
       notes.push(`${rival.name} is here. ${relationDesc} The air between the two companies shifts the moment eyes meet.`);
