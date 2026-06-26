@@ -195,13 +195,20 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
       'INSERT INTO scenes (id, campaign_id, name, brief) VALUES (?, ?, ?, ?)',
       [startSceneId, id, 'Starting Location', '']);
 
-    seedCampaignStarterPack({
-      db,
-      campaignId: id,
-      startSceneId,
-      settingId: selectedSetting.id,
-      campaignName,
-    });
+    try {
+      seedCampaignStarterPack({
+        db,
+        campaignId: id,
+        startSceneId,
+        settingId: selectedSetting.id,
+        campaignName,
+      });
+    } catch (err) {
+      console.error('[Campaign] seedCampaignStarterPack failed:', err);
+      // Campaign row exists but starter pack failed — still return ok so the
+      // player can enter and play; the opening scenes/contracts will be absent
+      // but the campaign is not broken.
+    }
 
     res.json({ ok: true, data: { id, name: campaignName, setting: selectedSetting.name, settingId: selectedSetting.id, startMode: chosenStartMode } });
   });
@@ -255,8 +262,8 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
 
   // Get game log
   router.get('/:id/log', requireAuth, (req: any, res) => {
-    const limit = parseInt(req.query.limit as string) || 100;
-    const offset = parseInt(req.query.offset as string) || 0;
+    const limit = Number(req.query.limit) || 100;
+    const offset = Number(req.query.offset) || 0;
 
     const logs = all(db,
       'SELECT * FROM game_log WHERE campaign_id = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?',

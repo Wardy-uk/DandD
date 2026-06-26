@@ -333,6 +333,24 @@ export function createTownRoutes(db: Database, io: SocketServer): Router {
     res.json({ ok: true, data: { npcId, name: prospect.name, weeklyAsk, hireNarration } });
   });
 
+  // ─── GET /town/:campaignId/contracts — lightweight contract poll ─────────
+
+  router.get('/:campaignId/contracts', requireAuth, (req: any, res) => {
+    const { campaignId } = req.params;
+    const campaign = get(db, 'SELECT town_contracts, setting_id FROM campaigns WHERE id = ?', [campaignId]) as any;
+    if (!campaign) { res.json({ ok: false, error: 'Campaign not found' }); return; }
+    const membership = get(db, 'SELECT 1 FROM campaign_players WHERE campaign_id = ? AND player_id = ?',
+      [campaignId, req.player.id]) as any;
+    if (!membership) { res.json({ ok: false, error: 'Not a member' }); return; }
+
+    let contracts: any[] = [];
+    try { contracts = JSON.parse(campaign.town_contracts || '[]'); } catch {}
+    const evaluated = evaluateContracts(db, campaignId, contracts);
+    // Only surface taken, unclaimed contracts — the active "jobs in progress"
+    const active = evaluated.filter((c: any) => c.taken && !c.claimedAt);
+    res.json({ ok: true, data: active });
+  });
+
   // ─── POST /town/:campaignId/contract/take ────────────────────────
 
   router.post('/:campaignId/contract/take', requireAuth, (req: any, res) => {

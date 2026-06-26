@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Socket } from 'socket.io-client';
 import CharacterSheet from './CharacterSheet.js';
 import CampaignMap from './CampaignMap.js';
@@ -157,6 +157,18 @@ const COMPANION_DUTIES = [
 
 type MobilePanel = null | 'character' | 'spells' | 'company' | 'scene' | 'expedition' | 'map';
 
+interface ActiveContract {
+  id: string;
+  title: string;
+  reward: number;
+  objectiveTarget: number;
+  objectiveLabel: string;
+  progress: number;
+  progressText: string;
+  readyToClaim: boolean;
+  completedAt: string | null;
+}
+
 // ─── Spell catalog (client-side lookup for display) ───────────────────────────
 
 const SPELL_CATALOG: Record<string, { level: number; school: string; desc: string }> = {
@@ -278,9 +290,27 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
   const [showDeathModal, setShowDeathModal] = useState(false);
   const [campaignPhase, setCampaignPhase] = useState<'dungeon' | 'town'>('dungeon');
   const [townName, setTownName] = useState<string>('');
+  const [activeContracts, setActiveContracts] = useState<ActiveContract[]>([]);
+  const [contractsOpen, setContractsOpen] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const headers = { Authorization: `Bearer ${player.token}`, 'Content-Type': 'application/json' };
+
+  const fetchContracts = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiUrl}/api/town/${campaignId}/contracts`, { headers });
+      const data = await res.json();
+      if (data.ok) setActiveContracts(data.data || []);
+    } catch {}
+  }, [campaignId, apiUrl]);
+
+  // Initial fetch + refresh on scene changes (which update discovered/cleared counts)
+  useEffect(() => {
+    fetchContracts();
+    const onSceneChange = () => fetchContracts();
+    socket.on('game:scene_enter', onSceneChange);
+    return () => { socket.off('game:scene_enter', onSceneChange); };
+  }, [fetchContracts, socket]);
 
   useEffect(() => {
     socket.emit('game:join', { campaignId, playerId: player.id });
@@ -756,6 +786,52 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
           </div>
         )}
 
+        {/* ── Active contracts strip ── */}
+        {activeContracts.length > 0 && (
+          <div className="flex-shrink-0 border-b border-leather/10 bg-parchment/60">
+            <button
+              className="w-full flex items-center justify-between px-3 py-1.5 text-left"
+              onClick={() => setContractsOpen(o => !o)}
+            >
+              <span className="text-[10px] font-heading uppercase tracking-wider text-leather">
+                📋 Jobs ({activeContracts.length})
+              </span>
+              <span className="text-[10px] font-heading text-ink-faint">
+                {contractsOpen ? '▲' : '▼'}
+              </span>
+            </button>
+            {contractsOpen && (
+              <div className="px-3 pb-2 space-y-1.5">
+                {activeContracts.map((c) => (
+                  <div key={c.id} className="rounded-lg border border-leather/15 bg-parchment-light/60 px-2.5 py-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-heading font-semibold text-leather-dark truncate min-w-0">{c.title}</span>
+                      {c.readyToClaim && (
+                        <span className="flex-shrink-0 text-[9px] font-heading font-bold bg-forest/20 text-forest px-1.5 py-0.5 rounded uppercase">Done</span>
+                      )}
+                    </div>
+                    <div className="mt-1">
+                      <div className="flex justify-between text-[10px] font-body text-ink-faint mb-0.5">
+                        <span>{c.progressText}</span>
+                        <span>{c.reward} GP</span>
+                      </div>
+                      <div className="h-1 rounded-full bg-parchment-dark/30 overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all"
+                          style={{
+                            width: `${Math.min(100, (c.progress / c.objectiveTarget) * 100)}%`,
+                            backgroundColor: c.readyToClaim ? '#2d5a1e' : '#8b5e2a',
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ── Game log — dominant surface ── */}
         <div className="flex-1 min-h-0 overflow-y-auto px-3 pt-3 pb-2 space-y-3 bg-[radial-gradient(circle_at_top,rgba(255,248,231,0.55),rgba(246,238,221,0)_55%)]">
           {renderLogEntries()}
@@ -1039,6 +1115,39 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {activeContracts.length > 0 && (
+            <div className="border border-leather/15 rounded-lg p-3 bg-parchment-light/40">
+              <div className="text-[10px] font-heading font-bold text-ink-faint uppercase tracking-wider mb-2">Active Contracts</div>
+              <div className="space-y-2">
+                {activeContracts.map((c) => (
+                  <div key={c.id} className="rounded-lg border border-leather/10 bg-parchment/60 p-2">
+                    <div className="flex items-start justify-between gap-1">
+                      <span className="text-[11px] font-heading font-semibold text-leather-dark leading-tight">{c.title}</span>
+                      {c.readyToClaim && (
+                        <span className="flex-shrink-0 text-[8px] font-heading font-bold bg-forest/20 text-forest px-1 py-0.5 rounded uppercase">Ready</span>
+                      )}
+                    </div>
+                    <div className="mt-1.5">
+                      <div className="flex justify-between text-[10px] font-body text-ink-faint mb-1">
+                        <span>{c.progressText}</span>
+                        <span className="text-amber-700 font-semibold">{c.reward} GP</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-parchment-dark/30 overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all"
+                          style={{
+                            width: `${Math.min(100, (c.progress / c.objectiveTarget) * 100)}%`,
+                            backgroundColor: c.readyToClaim ? '#2d5a1e' : '#8b5e2a',
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -1719,71 +1828,4 @@ function buildClassActionRail({
         title: 'Cleric Command',
         summary: encounterActive ? 'Control fear, preserve the wounded, and dictate the spiritual terms.' : 'Bless, interpret, and keep the group under divine order.',
         actions: [
-          { action: encounterActive ? 'Turn undead' : 'Bless the company', label: encounterActive ? 'Turn Undead' : 'Bless Company', icon: '☼', hint: encounterActive ? 'Break the nerve of unclean things.' : 'Put holy structure around the delve.' },
-          { action: encounterActive ? 'Call for quarter' : 'Lead a prayer', label: encounterActive ? 'Call for Quarter' : 'Lead a Prayer', icon: '✟', hint: encounterActive ? 'Force a decision before the fight goes feral.' : 'Invite guidance before the next risk.' },
-        ],
-      };
-    case 'druid':
-      return {
-        icon: '☘',
-        title: 'Druid Command',
-        summary: encounterActive ? 'Use calm authority and natural sense to keep chaos from spreading.' : 'Treat the expedition as a living system with omens and balance.',
-        actions: [
-          { action: encounterActive ? 'Lead a prayer' : 'Bless the company', label: encounterActive ? 'Wild Prayer' : 'Bless Company', icon: '☘', hint: encounterActive ? 'Steady allies through instinct and rite.' : 'Bring the party into better balance.' },
-          { action: encounterActive ? 'Read the battlefield' : 'Read their intent', label: encounterActive ? 'Read the Battlefield' : 'Read Their Intent', icon: '◌', hint: encounterActive ? 'Watch terrain, animals, and movement patterns.' : 'Look for motive in posture and place.' },
-        ],
-      };
-    case 'ranger':
-      return {
-        icon: '➶',
-        title: 'Ranger Command',
-        summary: encounterActive ? 'Exploit lanes, pressure, and clean movement.' : 'Drive the pace with trail sense, caution, and fieldcraft.',
-        actions: [
-          { action: encounterActive ? 'Rally the line' : 'Read their intent', label: encounterActive ? 'Rally the Line' : 'Read Their Intent', icon: '➶', hint: encounterActive ? 'Sharpen the company’s response under fire.' : 'Track motive, spoor, and threat direction.' },
-          { action: encounterActive ? 'Take cover and aim' : (leadCompanionName ? `Ask ${leadCompanionName} to scout ahead` : 'Set ambush'), label: encounterActive ? 'Take Cover and Aim' : (leadCompanionName ? 'Scout Ahead' : 'Set Ambush'), icon: '⌖', hint: encounterActive ? 'Use position before trading damage.' : 'Control first contact on your terms.' },
-        ],
-      };
-    case 'thief':
-      return {
-        icon: '✦',
-        title: 'Thief Command',
-        summary: encounterActive ? 'Survive by angle, timing, and nerve.' : 'Keep the dungeon from cheating the party before the blades even come out.',
-        actions: [
-          { action: encounterActive ? 'Take cover and aim' : 'Check supplies', label: encounterActive ? 'Take Cover' : 'Check Supplies', icon: '✦', hint: encounterActive ? 'Disappear from the obvious line of death.' : 'Audit the tools that stop bad endings.' },
-          { action: encounterActive ? 'Drive them into the hazard' : 'Search for traps', label: encounterActive ? 'Use the Hazard' : 'Search for Traps', icon: '⚠', hint: encounterActive ? 'Turn the room itself into an accomplice.' : 'Stay ahead of locks, darts, and floor tricks.' },
-        ],
-      };
-    case 'mage':
-      return {
-        icon: '✧',
-        title: 'Mage Command',
-        summary: encounterActive ? 'Manage tempo and avoid waste until the right spell wins the scene.' : 'Treat knowledge, slots, and preparation as your real weapons.',
-        actions: [
-          { action: encounterActive ? 'Read the battlefield' : 'Study spellbook', label: encounterActive ? 'Read the Battlefield' : 'Study Spellbook', icon: '✧', hint: encounterActive ? 'Choose the exact moment to spend power.' : 'Recover your edge through disciplined study.' },
-          { action: encounterActive ? 'Take cover and aim' : 'Listen carefully', label: encounterActive ? 'Stay Clear' : 'Listen Carefully', icon: '☿', hint: encounterActive ? 'Live long enough to cast the right answer.' : 'Let information save spell slots.' },
-        ],
-      };
-    case 'bard':
-      return {
-        icon: '♫',
-        title: 'Bard Command',
-        summary: encounterActive ? 'Shape morale, create hesitation, and turn talk into position.' : 'Probe for secrets, ego, and leverage before the room realises it is being played.',
-        actions: [
-          { action: encounterActive ? 'Rally the line' : 'Read their intent', label: encounterActive ? 'Rally the Line' : 'Read Their Intent', icon: '♫', hint: encounterActive ? 'Keep allies loud, moving, and dangerous.' : 'Find the emotional seam to pull.' },
-          { action: recruitableNpcName ? `Talk to ${recruitableNpcName}` : 'Listen carefully', label: recruitableNpcName ? 'Open the Mark' : 'Listen Carefully', icon: '◈', hint: recruitableNpcName ? 'Work the scene before anyone else claims the conversation.' : 'Hear what the room gives away for free.' },
-        ],
-      };
-    case 'fighter':
-      return {
-        icon: '⚔',
-        title: 'Fighter Command',
-        summary: encounterActive ? 'Decide where the line stands and who gets broken on it.' : 'Keep the party honest with practical, forceful choices.',
-        actions: [
-          { action: encounterActive ? 'Hold the doorway' : 'Secure this room', label: encounterActive ? 'Hold the Doorway' : 'Secure the Room', icon: '⚔', hint: encounterActive ? 'Win the ground first, then win the fight.' : 'Make the next move from a position of strength.' },
-          { action: encounterActive ? 'Brace and hold' : 'Mark fallback point', label: encounterActive ? 'Brace and Hold' : 'Mark Fallback', icon: '⛨', hint: encounterActive ? 'Stop panic from outrunning the steel.' : 'Make retreat part of the plan, not the failure.' },
-        ],
-      };
-    default:
-      return defaults;
-  }
-}
+          { action: encounterActive ? 'Turn undead' : 'Bless the company', label: encounterActive ? 'Turn Undead' : 'Bless Company', icon: '☼', hint: encounterActive ? 'Break the nerve of unclean things.' : 'Put holy stru

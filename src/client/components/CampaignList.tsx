@@ -30,6 +30,8 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [showJoin, setShowJoin] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState('');
   const [browseCampaigns, setBrowseCampaigns] = useState<Campaign[]>([]);
   const [browseLoading, setBrowseLoading] = useState(false);
   const [newName, setNewName] = useState('');
@@ -75,8 +77,10 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
   };
 
   const createCampaign = async () => {
-    if (!newSettingId.trim()) return;
+    if (!newSettingId.trim() || creating) return;
     const suggestedName = selectedSetting?.suggestedNames?.[0] || '';
+    setCreating(true);
+    setCreateError('');
     try {
       const res = await fetch(`${apiUrl}/api/campaigns`, {
         method: 'POST',
@@ -89,10 +93,16 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
         setNewName('');
         setNewSettingId(defaultSettingId || settingOptions[0]?.id || '');
         setNewStartMode(defaultStartMode || 'solo');
+        setCreateError('');
         fetchCampaigns();
+      } else {
+        setCreateError(data.error || 'Failed to create campaign. Try again.');
       }
     } catch (err) {
       console.error('Failed to create campaign', err);
+      setCreateError('Could not reach the server. Check your connection and try again.');
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -165,7 +175,7 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
             Join Campaign
           </button>
           <button
-            onClick={() => setShowCreate(true)}
+            onClick={() => { setShowCreate(true); setCreateError(''); }}
             className="px-4 py-2 rounded-lg bg-leather text-parchment-light text-sm font-heading font-semibold hover:bg-leather-dark transition-colors"
           >
             New Campaign
@@ -374,12 +384,25 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
                 </div>
               )}
             </div>
-            <div className="mt-6 flex gap-3">
-              <button onClick={() => setShowCreate(false)} className="flex-1 py-2.5 rounded-lg border border-leather/20 text-sm font-heading text-ink-faint hover:bg-parchment-dark/30">
+            {createError && (
+              <p className="mt-4 rounded-lg border border-blood/20 bg-blood/5 px-3 py-2 text-sm font-body text-blood">
+                {createError}
+              </p>
+            )}
+            <div className="mt-4 flex gap-3">
+              <button
+                onClick={() => { setShowCreate(false); setCreateError(''); }}
+                disabled={creating}
+                className="flex-1 py-2.5 rounded-lg border border-leather/20 text-sm font-heading text-ink-faint hover:bg-parchment-dark/30 disabled:opacity-50"
+              >
                 Cancel
               </button>
-              <button onClick={createCampaign} className="flex-1 py-2.5 rounded-lg bg-leather text-parchment-light text-sm font-heading font-semibold hover:bg-leather-dark">
-                Begin Adventure
+              <button
+                onClick={createCampaign}
+                disabled={creating || !newSettingId}
+                className="flex-1 py-2.5 rounded-lg bg-leather text-parchment-light text-sm font-heading font-semibold hover:bg-leather-dark disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {creating ? 'Creating...' : 'Begin Adventure'}
               </button>
             </div>
           </div>
@@ -430,29 +453,3 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
             </button>
           </div>
         </div>
-      )}
-    </div>
-  );
-}
-
-function DossierBlock({ title, items, tone }: { title: string; items: string[]; tone: 'leather' | 'blood' | 'gold' | 'forest' }) {
-  const toneClasses = {
-    leather: 'border-leather/10 bg-parchment/60 text-leather',
-    blood: 'border-blood/10 bg-blood/5 text-blood',
-    gold: 'border-gold/10 bg-gold/5 text-gold',
-    forest: 'border-forest/10 bg-forest/5 text-forest',
-  } satisfies Record<'leather' | 'blood' | 'gold' | 'forest', string>;
-
-  return (
-    <div className={`rounded-xl border p-3 ${toneClasses[tone]}`}>
-      <p className="text-[10px] font-heading font-bold uppercase tracking-[0.18em]">{title}</p>
-      <div className="mt-2 flex flex-wrap gap-1.5">
-        {items.map((item) => (
-          <span key={item} className="rounded-full border border-current/15 bg-white/35 px-2.5 py-1 text-[10px] font-heading uppercase tracking-wide">
-            {item}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
