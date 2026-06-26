@@ -98,6 +98,7 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
 
   const selectedSetting = settingOptions.find((option) => option.id === newSettingId) || null;
   const suggestedNames = selectedSetting?.suggestedNames || [];
+  const previewSetting = selectedSetting || settingOptions[0] || null;
 
   const fetchBrowseCampaigns = async () => {
     setBrowseLoading(true);
@@ -248,13 +249,13 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
       {/* Create Campaign Modal */}
       {showCreate && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-3 backdrop-blur-sm sm:items-center">
-          <div className="w-full max-w-md rounded-t-2xl sm:rounded-lg border border-leather/20 bg-parchment p-4 shadow-xl sm:p-8 max-h-[92vh] overflow-y-auto">
+          <div className="w-full max-w-3xl rounded-t-2xl sm:rounded-lg border border-leather/20 bg-parchment p-4 shadow-xl sm:p-8 max-h-[92vh] overflow-y-auto">
             <h3 className="text-xl font-heading font-bold text-leather-dark mb-1">New Campaign</h3>
             <p className="mb-4 text-sm font-body italic text-ink-faint">
               Pick a setting first. The campaign title is optional.
             </p>
-            <div className="space-y-4">
-              <div>
+            <div className="grid gap-4 lg:grid-cols-[1.05fr_0.95fr]">
+              <div className="space-y-4">
                 <label className="block text-xs font-heading font-semibold text-ink-faint uppercase tracking-wider mb-1">
                   Setting
                 </label>
@@ -277,30 +278,19 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
                     >
                       <div className="font-heading font-semibold text-sm text-leather-dark">{option.name}</div>
                       <div className="mt-1 text-xs font-body italic text-ink-faint">{option.summary}</div>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {option.gameplayFocus.slice(0, 3).map((focus) => (
+                          <span
+                            key={focus}
+                            className="rounded-full border border-leather/10 bg-parchment px-2 py-0.5 text-[10px] font-heading uppercase tracking-wide text-ink-faint"
+                          >
+                            {focus}
+                          </span>
+                        ))}
+                      </div>
                     </button>
                   ))}
                 </div>
-                {selectedSetting && (
-                  <div className="mt-2 rounded-lg border border-leather/10 bg-parchment-light/40 p-3">
-                    <p className="text-xs font-body text-ink-faint">{selectedSetting.tone}</p>
-                    {suggestedNames.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {suggestedNames.map((name) => (
-                          <button
-                            key={name}
-                            type="button"
-                            onClick={() => setNewName(name)}
-                            className="rounded-full border border-leather/20 px-3 py-1 text-[11px] font-heading text-leather hover:bg-leather/5"
-                          >
-                            {name}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-              <div>
                 <label className="block text-xs font-heading font-semibold text-ink-faint uppercase tracking-wider mb-1">
                   Starting Mode
                 </label>
@@ -321,8 +311,6 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
                     </button>
                   ))}
                 </div>
-              </div>
-              <div>
                 <label className="block text-xs font-heading font-semibold text-ink-faint uppercase tracking-wider mb-1">
                   Campaign Title
                 </label>
@@ -337,6 +325,54 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
                   Leave this blank and QUEST will use a fitting title for the setting.
                 </p>
               </div>
+              {previewSetting && (
+                <div className="rounded-2xl border border-leather/15 bg-[radial-gradient(circle_at_top,rgba(255,248,231,0.95),rgba(241,231,210,0.72))] p-4 sm:p-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-heading uppercase tracking-[0.24em] text-ink-faint">Adventure Dossier</p>
+                      <h4 className="mt-1 font-heading text-xl font-bold text-leather-dark">{previewSetting.name}</h4>
+                      <p className="mt-1 text-sm font-body italic text-ink-faint">{previewSetting.tone}</p>
+                    </div>
+                    <span className="rounded-full border border-leather/15 bg-parchment px-3 py-1 text-[10px] font-heading uppercase tracking-wide text-leather">
+                      {newStartMode === 'party' ? 'Party Start' : 'Solo Start'}
+                    </span>
+                  </div>
+
+                  <div className="mt-4 rounded-xl border border-leather/10 bg-parchment/60 p-3">
+                    <p className="text-[10px] font-heading font-bold uppercase tracking-[0.18em] text-ink-faint">Opening Situation</p>
+                    <p className="mt-2 text-sm font-body leading-relaxed text-ink">{previewSetting.openingSituation}</p>
+                  </div>
+
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <DossierBlock title="Play Focus" items={previewSetting.gameplayFocus} tone="leather" />
+                    <DossierBlock title="Signature Threats" items={previewSetting.signatureThreats} tone="blood" />
+                    <DossierBlock title="Treasure Style" items={previewSetting.treasureStyle} tone="gold" />
+                    <DossierBlock title="Best Party Fit" items={previewSetting.partyFit} tone="forest" />
+                  </div>
+
+                  {suggestedNames.length > 0 && (
+                    <div className="mt-4">
+                      <p className="text-[10px] font-heading font-bold uppercase tracking-[0.18em] text-ink-faint">Suggested Titles</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {suggestedNames.map((name) => (
+                          <button
+                            key={name}
+                            type="button"
+                            onClick={() => setNewName(name)}
+                            className={`rounded-full border px-3 py-1 text-[11px] font-heading transition-colors ${
+                              newName === name
+                                ? 'border-leather bg-leather text-parchment-light'
+                                : 'border-leather/20 text-leather hover:bg-leather/5'
+                            }`}
+                          >
+                            {name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <div className="mt-6 flex gap-3">
               <button onClick={() => setShowCreate(false)} className="flex-1 py-2.5 rounded-lg border border-leather/20 text-sm font-heading text-ink-faint hover:bg-parchment-dark/30">
@@ -395,6 +431,28 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function DossierBlock({ title, items, tone }: { title: string; items: string[]; tone: 'leather' | 'blood' | 'gold' | 'forest' }) {
+  const toneClasses = {
+    leather: 'border-leather/10 bg-parchment/60 text-leather',
+    blood: 'border-blood/10 bg-blood/5 text-blood',
+    gold: 'border-gold/10 bg-gold/5 text-gold',
+    forest: 'border-forest/10 bg-forest/5 text-forest',
+  } satisfies Record<'leather' | 'blood' | 'gold' | 'forest', string>;
+
+  return (
+    <div className={`rounded-xl border p-3 ${toneClasses[tone]}`}>
+      <p className="text-[10px] font-heading font-bold uppercase tracking-[0.18em]">{title}</p>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {items.map((item) => (
+          <span key={item} className="rounded-full border border-current/15 bg-white/35 px-2.5 py-1 text-[10px] font-heading uppercase tracking-wide">
+            {item}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }

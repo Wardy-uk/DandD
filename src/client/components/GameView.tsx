@@ -510,6 +510,12 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
       : className === 'thief' ? 'Share supplies'
       : className === 'ranger' ? 'Read their intent'
       : null;
+  const classRail = buildClassActionRail({
+    className,
+    encounterActive,
+    leadCompanionName: leadCompanion?.name || null,
+    recruitableNpcName: recruitableNpc?.name || null,
+  });
   const signatureActions = [
     classAction,
     classActionTwo,
@@ -757,6 +763,42 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
 
         {/* ── Sticky bottom action area ── */}
         <div className="flex-shrink-0 border-t border-leather/15 bg-parchment-light/80 backdrop-blur-sm">
+
+          {classRail.actions.length > 0 && (
+            <div className="border-b border-leather/8 bg-[linear-gradient(180deg,rgba(107,68,35,0.08),rgba(107,68,35,0))] px-3 py-2.5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base leading-none">{classRail.icon}</span>
+                    <p className="truncate text-[11px] font-heading font-bold uppercase tracking-[0.18em] text-leather-dark">
+                      {classRail.title}
+                    </p>
+                  </div>
+                  <p className="mt-0.5 text-[11px] font-body italic text-ink-faint">{classRail.summary}</p>
+                </div>
+                <span className="shrink-0 rounded-full border border-leather/15 bg-parchment px-2 py-1 text-[9px] font-heading uppercase tracking-wide text-ink-faint">
+                  {encounterActive ? 'battle rhythm' : 'delve rhythm'}
+                </span>
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                {classRail.actions.map((entry) => (
+                  <button
+                    key={entry.action}
+                    onClick={() => quickAction(entry.action)}
+                    className="rounded-xl border border-leather/15 bg-parchment/85 px-3 py-2.5 text-left shadow-sm transition-colors active:bg-leather/10 touch-manipulation"
+                  >
+                    <div className="flex items-start gap-2">
+                      <span className="mt-0.5 text-sm leading-none">{entry.icon}</span>
+                      <div className="min-w-0">
+                        <div className="truncate text-xs font-heading font-semibold text-leather-dark">{entry.label}</div>
+                        <div className="mt-0.5 text-[10px] font-body leading-relaxed text-ink-faint">{entry.hint}</div>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Quick actions — horizontal scroll, touch-friendly */}
           <div className="space-y-2 border-b border-leather/8 px-3 py-2">
@@ -1637,4 +1679,111 @@ function dedupeActions(actions: Array<string | null | undefined>) {
     seen.add(action);
     return true;
   });
+}
+
+function buildClassActionRail({
+  className,
+  encounterActive,
+  leadCompanionName,
+  recruitableNpcName,
+}: {
+  className: string;
+  encounterActive: boolean;
+  leadCompanionName: string | null;
+  recruitableNpcName: string | null;
+}) {
+  const defaults = {
+    icon: '⚔',
+    title: 'Adventurer Tempo',
+    summary: encounterActive ? 'Stay alive, read the room, and push your edge.' : 'Drive the expedition with caution and initiative.',
+    actions: [
+      { action: encounterActive ? 'Brace and hold' : 'Read the battlefield', label: encounterActive ? 'Brace and Hold' : 'Read the Battlefield', icon: '⚔', hint: encounterActive ? 'Stabilise the line before things go wrong.' : 'Take a tactical read before you commit.' },
+      { action: encounterActive ? 'Hold the doorway' : 'Search for traps', label: encounterActive ? 'Hold the Doorway' : 'Search for Traps', icon: '◎', hint: encounterActive ? 'Control space and buy everyone time.' : 'Keep the company from blundering into pain.' },
+    ],
+  };
+
+  switch (className) {
+    case 'paladin':
+      return {
+        icon: '✠',
+        title: 'Paladin Command',
+        summary: encounterActive ? 'Anchor the line with courage, mercy, and righteous pressure.' : 'Read the moral weather before steel leaves the scabbard.',
+        actions: [
+          { action: encounterActive ? 'Lay on hands' : 'Sense evil', label: encounterActive ? 'Lay on Hands' : 'Sense Evil', icon: '✠', hint: encounterActive ? 'Stabilise an ally and keep the vow alive.' : 'Test the scene for hidden corruption.' },
+          { action: encounterActive ? 'Smite evil' : 'Lead a prayer', label: encounterActive ? 'Smite Evil' : 'Lead a Prayer', icon: '☼', hint: encounterActive ? 'Turn conviction into pressure on the wicked.' : 'Set the company’s spirit before danger.' },
+        ],
+      };
+    case 'cleric':
+      return {
+        icon: '☼',
+        title: 'Cleric Command',
+        summary: encounterActive ? 'Control fear, preserve the wounded, and dictate the spiritual terms.' : 'Bless, interpret, and keep the group under divine order.',
+        actions: [
+          { action: encounterActive ? 'Turn undead' : 'Bless the company', label: encounterActive ? 'Turn Undead' : 'Bless Company', icon: '☼', hint: encounterActive ? 'Break the nerve of unclean things.' : 'Put holy structure around the delve.' },
+          { action: encounterActive ? 'Call for quarter' : 'Lead a prayer', label: encounterActive ? 'Call for Quarter' : 'Lead a Prayer', icon: '✟', hint: encounterActive ? 'Force a decision before the fight goes feral.' : 'Invite guidance before the next risk.' },
+        ],
+      };
+    case 'druid':
+      return {
+        icon: '☘',
+        title: 'Druid Command',
+        summary: encounterActive ? 'Use calm authority and natural sense to keep chaos from spreading.' : 'Treat the expedition as a living system with omens and balance.',
+        actions: [
+          { action: encounterActive ? 'Lead a prayer' : 'Bless the company', label: encounterActive ? 'Wild Prayer' : 'Bless Company', icon: '☘', hint: encounterActive ? 'Steady allies through instinct and rite.' : 'Bring the party into better balance.' },
+          { action: encounterActive ? 'Read the battlefield' : 'Read their intent', label: encounterActive ? 'Read the Battlefield' : 'Read Their Intent', icon: '◌', hint: encounterActive ? 'Watch terrain, animals, and movement patterns.' : 'Look for motive in posture and place.' },
+        ],
+      };
+    case 'ranger':
+      return {
+        icon: '➶',
+        title: 'Ranger Command',
+        summary: encounterActive ? 'Exploit lanes, pressure, and clean movement.' : 'Drive the pace with trail sense, caution, and fieldcraft.',
+        actions: [
+          { action: encounterActive ? 'Rally the line' : 'Read their intent', label: encounterActive ? 'Rally the Line' : 'Read Their Intent', icon: '➶', hint: encounterActive ? 'Sharpen the company’s response under fire.' : 'Track motive, spoor, and threat direction.' },
+          { action: encounterActive ? 'Take cover and aim' : (leadCompanionName ? `Ask ${leadCompanionName} to scout ahead` : 'Set ambush'), label: encounterActive ? 'Take Cover and Aim' : (leadCompanionName ? 'Scout Ahead' : 'Set Ambush'), icon: '⌖', hint: encounterActive ? 'Use position before trading damage.' : 'Control first contact on your terms.' },
+        ],
+      };
+    case 'thief':
+      return {
+        icon: '✦',
+        title: 'Thief Command',
+        summary: encounterActive ? 'Survive by angle, timing, and nerve.' : 'Keep the dungeon from cheating the party before the blades even come out.',
+        actions: [
+          { action: encounterActive ? 'Take cover and aim' : 'Check supplies', label: encounterActive ? 'Take Cover' : 'Check Supplies', icon: '✦', hint: encounterActive ? 'Disappear from the obvious line of death.' : 'Audit the tools that stop bad endings.' },
+          { action: encounterActive ? 'Drive them into the hazard' : 'Search for traps', label: encounterActive ? 'Use the Hazard' : 'Search for Traps', icon: '⚠', hint: encounterActive ? 'Turn the room itself into an accomplice.' : 'Stay ahead of locks, darts, and floor tricks.' },
+        ],
+      };
+    case 'mage':
+      return {
+        icon: '✧',
+        title: 'Mage Command',
+        summary: encounterActive ? 'Manage tempo and avoid waste until the right spell wins the scene.' : 'Treat knowledge, slots, and preparation as your real weapons.',
+        actions: [
+          { action: encounterActive ? 'Read the battlefield' : 'Study spellbook', label: encounterActive ? 'Read the Battlefield' : 'Study Spellbook', icon: '✧', hint: encounterActive ? 'Choose the exact moment to spend power.' : 'Recover your edge through disciplined study.' },
+          { action: encounterActive ? 'Take cover and aim' : 'Listen carefully', label: encounterActive ? 'Stay Clear' : 'Listen Carefully', icon: '☿', hint: encounterActive ? 'Live long enough to cast the right answer.' : 'Let information save spell slots.' },
+        ],
+      };
+    case 'bard':
+      return {
+        icon: '♫',
+        title: 'Bard Command',
+        summary: encounterActive ? 'Shape morale, create hesitation, and turn talk into position.' : 'Probe for secrets, ego, and leverage before the room realises it is being played.',
+        actions: [
+          { action: encounterActive ? 'Rally the line' : 'Read their intent', label: encounterActive ? 'Rally the Line' : 'Read Their Intent', icon: '♫', hint: encounterActive ? 'Keep allies loud, moving, and dangerous.' : 'Find the emotional seam to pull.' },
+          { action: recruitableNpcName ? `Talk to ${recruitableNpcName}` : 'Listen carefully', label: recruitableNpcName ? 'Open the Mark' : 'Listen Carefully', icon: '◈', hint: recruitableNpcName ? 'Work the scene before anyone else claims the conversation.' : 'Hear what the room gives away for free.' },
+        ],
+      };
+    case 'fighter':
+      return {
+        icon: '⚔',
+        title: 'Fighter Command',
+        summary: encounterActive ? 'Decide where the line stands and who gets broken on it.' : 'Keep the party honest with practical, forceful choices.',
+        actions: [
+          { action: encounterActive ? 'Hold the doorway' : 'Secure this room', label: encounterActive ? 'Hold the Doorway' : 'Secure the Room', icon: '⚔', hint: encounterActive ? 'Win the ground first, then win the fight.' : 'Make the next move from a position of strength.' },
+          { action: encounterActive ? 'Brace and hold' : 'Mark fallback point', label: encounterActive ? 'Brace and Hold' : 'Mark Fallback', icon: '⛨', hint: encounterActive ? 'Stop panic from outrunning the steel.' : 'Make retreat part of the plan, not the failure.' },
+        ],
+      };
+    default:
+      return defaults;
+  }
 }
