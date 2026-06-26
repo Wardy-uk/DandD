@@ -1128,7 +1128,7 @@ Rules:
 - NPCs react with genuine personality, not script; they have their own read on what just happened
 - End on tension or forward pull — there is always more lurking, always a reason to push deeper
 - Voice: atmospheric and specific, like a DM who finds this world genuinely strange and still surprising`,
-            prompt: `${contextParts.join('. ')}.\nPlayer action: "${action}". Narrate the outcome with full sensory immersion.`,
+            prompt: `${contextParts.join('. ')}.\n${(getCampaignState(db, campaignId)?.recentEvents || []).slice(-3).filter(Boolean).length > 0 ? `Recent events: ${(getCampaignState(db, campaignId)?.recentEvents || []).slice(-3).filter(Boolean).join('; ')}.` : ''}\nPlayer action: "${action}". Narrate the outcome with full sensory immersion.`,
             maxTokens: 420,
             temperature: 0.82,
           });
@@ -1413,6 +1413,41 @@ Rules:
         content: outcome.content,
         actor: outcome.actor || 'DM',
       });
+      // ── Async atmospheric expansion — adds sensory depth to short outcomes ──
+      if (outcome.content.length < 200) {
+        (async () => {
+          try {
+            const expBlueprint = buildSceneBlueprint(scene);
+            const recentCtx = (getCampaignState(db, campaignId).recentEvents || []).slice(-3).filter(Boolean).join('; ');
+            const expansionNarration = await Promise.race([
+              generate({
+                system: `You are a masterful AD&D Dungeon Master adding atmospheric depth to a moment. Write exactly 2-3 sentences.
+Rules:
+- Do NOT repeat what was just narrated — add what follows in the senses
+- Specific: a texture, a smell, a sound, a temperature shift, a weight in the gut
+- Show consequence: what shifted in the world, what the character notices in their body
+- End on forward pull — a detail that hangs in the air, unexplained
+- Voice: Witcher 3 — strange, weighted, specific
+- No cheerful language. This dungeon is indifferent at best`,
+                prompt: `Scene: ${scene.name}. ${expBlueprint.roomAmbience}
+Character: ${character.name} (${character.char_class}, ${character.hp}/${character.max_hp} HP)
+${recentCtx ? `Recent events: ${recentCtx}` : ''}
+Action: "${action}"
+What just happened: "${outcome.content}"
+Add 2-3 sentences of sensory depth and consequence. Do not repeat the above — extend it.`,
+                maxTokens: 140,
+                temperature: 0.88,
+              }),
+              new Promise<string>((_, reject) => setTimeout(() => reject(new Error('expansion timeout')), 10_000)),
+            ]) as string;
+            if (expansionNarration?.trim()) {
+              run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', expansionNarration.trim()]);
+              io.to(`campaign:${campaignId}`).emit('game:narration', { content: expansionNarration.trim(), actor: 'DM' });
+            }
+          } catch {}
+        })();
+      }
       // ── Companion reaction: exploration outcome ───────────────────────────
       try {
         const explCompanions = getPartyCompanions(db, campaignId).filter((c) => c.joinedParty);
@@ -1461,6 +1496,36 @@ Rules:
           content: note,
           actor: 'DM',
         });
+      }
+
+      // ── World pulse — ambient dungeon observation, 1-in-8 chance ─────────
+      if (Math.floor(Math.random() * 8) === 0 && !outcome.encounter) {
+        (async () => {
+          try {
+            await new Promise((r) => setTimeout(r, 16_000));
+            const pulseBlueprint = buildSceneBlueprint(scene);
+            const pulseNarration = await Promise.race([
+              generate({
+                system: `You are a masterful AD&D DM adding an unprompted ambient observation. Write exactly 2 sentences.
+Rules:
+- Something in the environment shifts — a sound, a smell, a light change, movement in shadow
+- The party didn't cause it. The dungeon just... does something
+- Do NOT say what it means or suggest what to do
+- Voice: quiet, ominous, specific — like the dungeon breathing`,
+                prompt: `Scene: ${scene.name}. ${pulseBlueprint.roomAmbience}. ${pulseBlueprint.themePressure || ''}
+Describe one unprompted environmental detail or ambient change the party notices.`,
+                maxTokens: 90,
+                temperature: 0.92,
+              }),
+              new Promise<string>((_, reject) => setTimeout(() => reject(new Error('pulse timeout')), 12_000)),
+            ]) as string;
+            if (pulseNarration?.trim()) {
+              run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', pulseNarration.trim()]);
+              io.to(`campaign:${campaignId}`).emit('game:narration', { content: pulseNarration.trim(), actor: 'DM' });
+            }
+          } catch {}
+        })();
       }
 
       if (outcome.encounter) {
