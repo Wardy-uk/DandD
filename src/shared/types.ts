@@ -286,6 +286,7 @@ export interface ApiResponse<T = unknown> {
 
 export interface ServerToClientEvents {
   'game:narration': (data: { content: string; actor: string; thinking?: boolean }) => void;
+  'game:narration_stream': (data: { id: string; chunk: string; actor: string; done?: boolean }) => void;
   'game:combat_result': (data: { result: unknown }) => void;
   'game:scene_enter': (data: { scene: Scene; description: string }) => void;
   'game:player_action': (data: { playerId: string; playerName: string; action: string }) => void;

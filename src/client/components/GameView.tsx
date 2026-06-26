@@ -299,6 +299,8 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
   const [sceneContextActions, setSceneContextActions] = useState<Array<{ label: string; action: string; hint: string }>>([]);
   const [journalText, setJournalText] = useState<string | null>(null);
   const [journalLoading, setJournalLoading] = useState(false);
+  const [streamingMsg, setStreamingMsg] = useState<{ id: string; actor: string; text: string } | null>(null);
+  const streamingMsgRef = useRef<{ id: string; actor: string; text: string } | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const headers = { Authorization: `Bearer ${player.token}`, 'Content-Type': 'application/json' };
@@ -445,6 +447,23 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
     const onRivalEncounter = (data: typeof rivalEncounter) => setRivalEncounter(data);
     const onRivalResolved  = () => setRivalEncounter(null);
     const onSceneActions   = (data: { actions: Array<{ label: string; action: string; hint: string }> }) => setSceneContextActions(data.actions);
+    const onNarrationStream = (data: { id: string; chunk: string; actor: string; done?: boolean }) => {
+      if (data.done) {
+        streamingMsgRef.current = null;
+        setStreamingMsg(null);
+      } else if (data.chunk === '' && !streamingMsgRef.current) {
+        const msg = { id: data.id, actor: data.actor, text: '' };
+        streamingMsgRef.current = msg;
+        setStreamingMsg(msg);
+      } else if (data.chunk) {
+        setStreamingMsg(prev => {
+          if (!prev || prev.id !== data.id) return prev;
+          const updated = { ...prev, text: prev.text + data.chunk };
+          streamingMsgRef.current = updated;
+          return updated;
+        });
+      }
+    };
 
     socket.on('game:narration', onNarration);
     socket.on('game:scene_enter', onSceneEnter);
@@ -461,6 +480,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
     socket.on('game:rival_encounter', onRivalEncounter);
     socket.on('game:rival_resolved', onRivalResolved);
     socket.on('game:scene_actions', onSceneActions);
+    socket.on('game:narration_stream', onNarrationStream);
 
     return () => {
       socket.off('game:narration', onNarration);
@@ -478,12 +498,13 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
       socket.off('game:rival_encounter', onRivalEncounter);
       socket.off('game:rival_resolved', onRivalResolved);
       socket.off('game:scene_actions', onSceneActions);
+      socket.off('game:narration_stream', onNarrationStream);
     };
   }, [socket, fetchContracts]);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [gameLog, dmThinking]);
+  }, [gameLog, dmThinking, streamingMsg]);
 
   // Set dungeon ambience when game view mounts (deferred until first user interaction)
   useEffect(() => {
@@ -709,7 +730,17 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
         </div>
         );
       })}
-      {dmThinking && (
+      {streamingMsg && (
+        <div className="animate-fade-in pl-3 border-l-2 border-leather/20">
+          <span className="font-heading font-bold text-xs uppercase tracking-wide text-leather">
+            {streamingMsg.actor}
+          </span>
+          <p className="font-body text-sm leading-relaxed text-ink-light italic">
+            {streamingMsg.text}<span className="animate-pulse">▌</span>
+          </p>
+        </div>
+      )}
+      {dmThinking && !streamingMsg && (
         <div className="animate-fade-in">
           <p className="text-sm text-leather/60 font-body italic flex items-center gap-2">
             <span className="inline-block w-1.5 h-1.5 rounded-full bg-leather/40 animate-pulse" />

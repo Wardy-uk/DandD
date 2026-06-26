@@ -64,7 +64,7 @@ export async function generate(params: {
   };
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20_000);
+  const timeout = setTimeout(() => controller.abort(), 90_000);
   let res: Response;
   try {
     res = await fetch(`${OLLAMA_URL}/api/generate`, {
@@ -83,6 +83,77 @@ export async function generate(params: {
 
   const data = await res.json() as OllamaResponse;
   return data.response || '';
+}
+
+/** Streaming generation — calls onChunk for each token as it arrives, returns full text */
+export async function generateStream(params: {
+  prompt: string;
+  system?: string;
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+  onChunk: (chunk: string) => void;
+  timeoutMs?: number;
+}): Promise<string> {
+  const { prompt, system, model, temperature, maxTokens, onChunk, timeoutMs = 60_000 } = params;
+
+  const body = {
+    model: model || DEFAULT_MODEL,
+    prompt,
+    system,
+    stream: true,
+    keep_alive: '10m',
+    options: {
+      temperature: temperature ?? 0.8,
+      num_predict: maxTokens ?? 200,
+      num_ctx: 4096,
+      repeat_penalty: 1.12,
+      top_k: 40,
+      top_p: 0.92,
+    },
+  };
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  let full = '';
+  try {
+    const res = await fetch(`${OLLAMA_URL}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    if (!res.ok || !res.body) throw new Error(`Ollama stream error: ${res.status}`);
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line) as { response?: string; done?: boolean };
+          if (parsed.response) {
+            full += parsed.response;
+            onChunk(parsed.response);
+          }
+          if (parsed.done) break;
+        } catch (_) { /* skip malformed lines */ }
+      }
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+
+  return full;
 }
 
 /** Chat completion (multi-turn) */

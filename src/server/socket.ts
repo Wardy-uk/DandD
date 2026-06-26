@@ -41,7 +41,7 @@ import {
   updateCompanionRelationships,
 } from './game/companions.js';
 import { returnToTown } from './game/town.js';
-import { generate } from './ai/ollama.js';
+import { generate, generateStream } from './ai/ollama.js';
 import { getCompanionReaction, inferReactionTrigger } from './game/companionReactions.js';
 import { resolveStarterSetPiece } from './game/starterPacks.js';
 
@@ -325,10 +325,10 @@ Rules:
                     prompt: `Scene: ${combatScene?.name ?? 'Unknown'}. ${combatBlueprint?.roomAmbience ?? ''}
 Combat: "${note.content}"
 Add 1-2 sentences of physical combat description.`,
-                    maxTokens: 90,
+                    maxTokens: 55,
                     temperature: 0.85,
                   }),
-                  new Promise<string>((_, reject) => setTimeout(() => reject(new Error('combat narration timeout')), 8_000)),
+                  new Promise<string>((_, reject) => setTimeout(() => reject(new Error('combat narration timeout')), 18_000)),
                 ]) as string;
                 if (combatExpansion?.trim()) {
                   run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
@@ -427,21 +427,23 @@ Add 1-2 sentences of physical combat description.`,
                 killedEnemies ? `Defeated: ${killedEnemies}` : 'The enemy is defeated',
                 `Survivor: ${character.name} (${character.char_class}), condition: ${cost} (${character.hp}/${character.max_hp} HP)`,
               ].filter(Boolean).join('. ');
-              const afterNarration = await Promise.race([
-                generate({
-                  system: `You are a masterful AD&D Dungeon Master narrating the immediate aftermath of a fight. 3-4 sentences, vivid present tense. Think Witcher 3 — specific, atmospheric, the silence after violence.
+              const afterStreamId = crypto.randomUUID();
+              io.to(`campaign:${campaignId}`).emit('game:narration_stream', { id: afterStreamId, chunk: '', actor: 'DM' });
+              const afterNarration = await generateStream({
+                system: `You are a masterful AD&D Dungeon Master narrating the immediate aftermath of a fight. 3-4 sentences, vivid present tense. Think Witcher 3 — specific, atmospheric, the silence after violence.
 Rules:
 - Begin with the sudden quiet after the last enemy falls, or the last blow landing
 - Describe something concrete: what the body looks like, what the room smells like now, what the light reveals
 - Note the physical cost — what the survivor carries out of this moment
 - End on something that pulls forward: a sound, a shape, a reason to keep moving or to be afraid
 - Voice: unflinching and specific, no sentiment`,
-                  prompt: `${afterContext}.\nDescribe the immediate aftermath of this fight.`,
-                  maxTokens: 280,
-                  temperature: 0.85,
-                }),
-                new Promise<string>((_, reject) => setTimeout(() => reject(new Error('aftermath timeout')), 12_000)),
-              ]) as string;
+                prompt: `${afterContext}.\nDescribe the immediate aftermath of this fight.`,
+                maxTokens: 130,
+                temperature: 0.85,
+                timeoutMs: 40_000,
+                onChunk: (c) => io.to(`campaign:${campaignId}`).emit('game:narration_stream', { id: afterStreamId, chunk: c, actor: 'DM' }),
+              });
+              io.to(`campaign:${campaignId}`).emit('game:narration_stream', { id: afterStreamId, chunk: '', actor: 'DM', done: true });
               if (afterNarration?.trim()) {
                 run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
                   [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', afterNarration.trim()]);
@@ -820,7 +822,7 @@ Rules:
         if (wasUnvisited) {
           (async () => {
             try {
-              io.to(`campaign:${campaignId}`).emit('game:narration', { content: '…', actor: 'DM', thinking: true });
+              const entryStreamId = crypto.randomUUID();
               const entryBlueprint = buildSceneBlueprint(nextScene);
               const entryContext = [
                 `Room: ${nextScene.name}${nextScene.brief ? ` — ${nextScene.brief}` : ''}`,
@@ -833,9 +835,9 @@ Rules:
                 npcsInScene.length > 0 ? `Occupants: ${npcsInScene.map((n: any) => n.name).join(', ')}` : '',
                 `Party: ${character.name} (${character.char_class} level ${character.level})`,
               ].filter(Boolean);
-              const entryNarration = await Promise.race([
-                generate({
-                  system: `You are a masterful AD&D Dungeon Master describing a room the party has never entered before. Write 4-6 immersive sentences. Think Witcher 3 — specific, atmospheric, alive with texture and unease.
+              io.to(`campaign:${campaignId}`).emit('game:narration_stream', { id: entryStreamId, chunk: '', actor: 'DM' });
+              const entryNarration = await generateStream({
+                system: `You are a masterful AD&D Dungeon Master describing a room the party has never entered before. Write 4-6 immersive sentences. Think Witcher 3 — specific, atmospheric, alive with texture and unease.
 Rules:
 - Begin mid-sensation or with a concrete sensory detail — NOT "you enter" or "you step into"
 - Flood the senses: the cold, the smell of rot or stone, how sound moves in this space, what the light picks out
@@ -844,12 +846,13 @@ Rules:
 - Plant one anomaly or detail that begs investigation: a shape in shadow, a sound that should not be, a surface worn wrong
 - Never open with "The chamber opens up" or "You find yourself"
 - Voice: baroque and strange, as if the dungeon itself has opinions`,
-                  prompt: `${entryContext.join('. ')}.\nDescribe the party entering this room for the first time.`,
-                  maxTokens: 380,
-                  temperature: 0.88,
-                }),
-                new Promise<string>((_, reject) => setTimeout(() => reject(new Error('entry AI timeout')), 14_000)),
-              ]) as string;
+                prompt: `${entryContext.join('. ')}.\nDescribe the party entering this room for the first time.`,
+                maxTokens: 160,
+                temperature: 0.88,
+                timeoutMs: 45_000,
+                onChunk: (c) => io.to(`campaign:${campaignId}`).emit('game:narration_stream', { id: entryStreamId, chunk: c, actor: 'DM' }),
+              });
+              io.to(`campaign:${campaignId}`).emit('game:narration_stream', { id: entryStreamId, chunk: '', actor: 'DM', done: true });
               if (entryNarration?.trim()) {
                 run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
                   [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', entryNarration.trim()]);
@@ -1031,10 +1034,10 @@ Rules:
 - Do not list game statistics; the effect should be felt, not stated
 - Voice: specific, atmospheric, the magic feels real and earned`,
                   prompt: `${spellContext}.\nPlayer action: "${action}". Narrate the spell and its effect.`,
-                  maxTokens: 260,
+                  maxTokens: 90,
                   temperature: 0.85,
                 }),
-                new Promise<string>((_, reject) => setTimeout(() => reject(new Error('spell timeout')), 12_000)),
+                new Promise<string>((_, reject) => setTimeout(() => reject(new Error('spell timeout')), 30_000)),
               ]) as string;
 
               if (spellNarration?.trim()) {
@@ -1062,7 +1065,8 @@ Rules:
         });
         if (npcVoiceTarget) {
           actionLocks.add(campaignId);
-          io.to(`campaign:${campaignId}`).emit('game:narration', { content: '…', actor: 'DM', thinking: true });
+          const npcStreamId = crypto.randomUUID();
+          io.to(`campaign:${campaignId}`).emit('game:narration_stream', { id: npcStreamId, chunk: '', actor: npcVoiceTarget.name });
           try {
             const npcRelation = (() => {
               try { return JSON.parse(npcVoiceTarget.relationship_state || '{}'); } catch { return {}; }
@@ -1086,7 +1090,7 @@ Rules:
             const priorContext = priorExchanges.length > 0
               ? `Prior exchanges with this character:\n${priorExchanges.join('\n')}`
               : '';
-            const npcNarrationPromise = generate({
+            const npcResponse = (await generateStream({
               system: `You are roleplaying as a specific NPC in an AD&D dungeon. Respond in their voice — direct speech plus brief action beats. 2-4 sentences total.
 Rules:
 - Stay completely in character; speak AS the NPC, first person
@@ -1096,12 +1100,12 @@ Rules:
 - Do not summarise or narrate in third person
 - Keep it tight — NPCs speak, they don't monologue`,
               prompt: `${npcContext}.\n${priorContext ? priorContext + '\n' : ''}Player says to ${npcVoiceTarget.name}: "${action}"\nRespond as ${npcVoiceTarget.name}.`,
-              maxTokens: 200,
+              maxTokens: 120,
               temperature: 0.88,
-            });
-            const npcTimeoutPromise = new Promise<string>((_, reject) =>
-              setTimeout(() => reject(new Error('npc voice timeout')), 12_000));
-            const npcResponse = (await Promise.race([npcNarrationPromise, npcTimeoutPromise])).trim();
+              timeoutMs: 35_000,
+              onChunk: (c) => io.to(`campaign:${campaignId}`).emit('game:narration_stream', { id: npcStreamId, chunk: c, actor: npcVoiceTarget.name }),
+            })).trim();
+            io.to(`campaign:${campaignId}`).emit('game:narration_stream', { id: npcStreamId, chunk: '', actor: npcVoiceTarget.name, done: true });
             if (npcResponse) {
               run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
                 [crypto.randomUUID(), campaignId, 1, 'narration', npcVoiceTarget.name, npcResponse]);
@@ -1167,11 +1171,11 @@ Rules:
 
         let aiMsg = 'The moment passes without clear resolution — but it was not wasted.';
 
-        // Signal to client that AI is processing
-        io.to(`campaign:${campaignId}`).emit('game:narration', { content: '…', actor: 'DM', thinking: true });
+        const mainStreamId = crypto.randomUUID();
         actionLocks.add(campaignId);
+        io.to(`campaign:${campaignId}`).emit('game:narration_stream', { id: mainStreamId, chunk: '', actor: 'DM' });
         try {
-          const aiGeneratePromise = generate({
+          aiMsg = (await generateStream({
             system: `You are a masterful AD&D Dungeon Master narrating in vivid present tense. Write 4-6 rich, immersive sentences. Think Witcher 3 storytelling in D&D form — specific textures, smells, sounds, consequences that land with weight.
 Rules:
 - Address the player as "you" or by their character name (${character.name})
@@ -1184,18 +1188,17 @@ Rules:
 - End on tension or forward pull — there is always more lurking, always a reason to push deeper
 - Voice: atmospheric and specific, like a DM who finds this world genuinely strange and still surprising`,
             prompt: `${contextParts.join('. ')}.\n${(getCampaignState(db, campaignId)?.recentEvents || []).slice(-3).filter(Boolean).length > 0 ? `Recent events: ${(getCampaignState(db, campaignId)?.recentEvents || []).slice(-3).filter(Boolean).join('; ')}.` : ''}\nPlayer action: "${action}". Narrate the outcome with full sensory immersion.`,
-            maxTokens: 420,
+            maxTokens: 200,
             temperature: 0.82,
-          });
-          // Hard 12-second timeout — prevents Ollama latency from freezing the game
-          const aiTimeoutPromise = new Promise<string>((_, reject) =>
-            setTimeout(() => reject(new Error('AI timeout')), 12_000));
-          aiMsg = (await Promise.race([aiGeneratePromise, aiTimeoutPromise])).trim() || aiMsg;
+            timeoutMs: 55_000,
+            onChunk: (c) => io.to(`campaign:${campaignId}`).emit('game:narration_stream', { id: mainStreamId, chunk: c, actor: 'DM' }),
+          })).trim() || aiMsg;
         } catch (aiErr) {
           console.error('[AI fallback error]', aiErr);
           // Ollama unreachable or timed out — still give something real
           aiMsg = `${aiBlueprint.roomAmbience} The attempt registers. The room shifts, just slightly.`;
         } finally {
+          io.to(`campaign:${campaignId}`).emit('game:narration_stream', { id: mainStreamId, chunk: '', actor: 'DM', done: true });
           actionLocks.delete(campaignId);
         }
 
@@ -1264,10 +1267,10 @@ Rules:
 - No game statistics, no "you find", no mechanical language
 - Voice: specific, weighted, atmospheric`,
                   prompt: `Room: ${scene.name} — ${lootBlueprint.roomAmbience}. Found: "${foundItem}". Describe this object.`,
-                  maxTokens: 110,
+                  maxTokens: 70,
                   temperature: 0.9,
                 }),
-                new Promise<string>((_, reject) => setTimeout(() => reject(new Error('loot timeout')), 10_000)),
+                new Promise<string>((_, reject) => setTimeout(() => reject(new Error('loot timeout')), 22_000)),
               ]) as string;
               if (lootNarration?.trim()) {
                 run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
@@ -1492,10 +1495,10 @@ ${recentCtx ? `Recent events: ${recentCtx}` : ''}
 Action: "${action}"
 What just happened: "${outcome.content}"
 Add 2-3 sentences of sensory depth and consequence. Do not repeat the above — extend it.`,
-                maxTokens: 140,
+                maxTokens: 75,
                 temperature: 0.88,
               }),
-              new Promise<string>((_, reject) => setTimeout(() => reject(new Error('expansion timeout')), 10_000)),
+              new Promise<string>((_, reject) => setTimeout(() => reject(new Error('expansion timeout')), 22_000)),
             ]) as string;
             if (expansionNarration?.trim()) {
               run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
@@ -1571,10 +1574,10 @@ Rules:
 - Voice: quiet, ominous, specific — like the dungeon breathing`,
                 prompt: `Scene: ${scene.name}. ${pulseBlueprint.roomAmbience}. ${pulseBlueprint.themePressure || ''}
 Describe one unprompted environmental detail or ambient change the party notices.`,
-                maxTokens: 90,
+                maxTokens: 55,
                 temperature: 0.92,
               }),
-              new Promise<string>((_, reject) => setTimeout(() => reject(new Error('pulse timeout')), 12_000)),
+              new Promise<string>((_, reject) => setTimeout(() => reject(new Error('pulse timeout')), 18_000)),
             ]) as string;
             if (pulseNarration?.trim()) {
               run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
@@ -1708,7 +1711,7 @@ Describe one unprompted environmental detail or ambient change the party notices
       console.log(`[Socket] ${player.playerName} left campaign ${campaignId}`);
     });
 
-    // ─── Disconnect ───────────────────────────────────────────────────
+    // ─── Disconnect ──────────────────────────────────────────────────────
 
     socket.on('disconnect', () => {
       const player = connectedPlayers.get(socket.id);
