@@ -1828,4 +1828,71 @@ function buildClassActionRail({
         title: 'Cleric Command',
         summary: encounterActive ? 'Control fear, preserve the wounded, and dictate the spiritual terms.' : 'Bless, interpret, and keep the group under divine order.',
         actions: [
-          { action: encounterActive ? 'Turn undead' : 'Bless the company', label: encounterActive ? 'Turn Undead' : 'Bless Company', icon: '☼', hint: encounterActive ? 'Break the nerve of unclean things.' : 'Put holy stru
+          { action: encounterActive ? 'Turn undead' : 'Bless the company', label: encounterActive ? 'Turn Undead' : 'Bless Company', icon: '☼', hint: encounterActive ? 'Break the nerve of unclean things.' : 'Put holy structure around the delve.' },
+          { action: encounterActive ? 'Call for quarter' : 'Lead a prayer', label: encounterActive ? 'Call for Quarter' : 'Lead a Prayer', icon: '✟', hint: encounterActive ? 'Force a decision before the fight goes feral.' : 'Invite guidance before the next risk.' },
+        ],
+      };
+    case 'druid':
+      return {
+        icon: '☘',
+        title: 'Druid Command',
+        summary: encounterActive ? 'Use calm authority and natural sense to keep chaos from spreading.' : 'Treat the expedition as a living system with omens and balance.',
+        actions: [
+          { action: encounterActive ? 'Lead a prayer' : 'Bless the company', label: encounterActive ? 'Wild Prayer' : 'Bless Company', icon: '☘', hint: encounterActive ? 'Steady allies through instinct and rite.' : 'Bring the party into better balance.' },
+          { action: encounterActive ? 'Read the battlefield' : 'Read their intent', label: encounterActive ? 'Read the Battlefield' : 'Read Their Intent', icon: '◌', hint: encounterActive ? 'Watch terrain, animals, and movement patterns.' : 'Look for motive in posture and place.' },
+        ],
+      };
+    case 'ranger':
+      return {
+        icon: '➶',
+        title: 'Ranger Command',
+        summary: encounterActive ? 'Exploit lanes, pressure, and clean movement.' : 'Drive the pace with trail sense, caution, and fieldcraft.',
+        actions: [
+          { action: encounterActive ? 'Rally the line' : 'Read their intent', label: encounterActive ? 'Rally the Line' : 'Read Their Intent', icon: '➶', hint: encounterActive ? 'Sharpen the company’s response under fire.' : 'Track motive, spoor, and threat direction.' },
+          { action: encounterActive ? 'Take cover and aim' : (leadCompanionName ? `Ask ${leadCompanionName} to scout ahead` : 'Set ambush'), label: encounterActive ? 'Take Cover and Aim' : (leadCompanionName ? 'Scout Ahead' : 'Set Ambush'), icon: '⌖', hint: encounterActive ? 'Use position before trading damage.' : 'Control first contact on your terms.' },
+        ],
+      };
+    case 'thief':
+      return {
+        icon: '✦',
+        title: 'Thief Command',
+        summary: encounterActive ? 'Survive by angle, timing, and nerve.' : 'Keep the dungeon from cheating the party before the blades even come out.',
+        actions: [
+          { action: encounterActive ? 'Take cover and aim' : 'Check supplies', label: encounterActive ? 'Take Cover' : 'Check Supplies', icon: '✦', hint: encounterActive ? 'Disappear from the obvious line of death.' : 'Audit the tools that stop bad endings.' },
+          { action: encounterActive ? 'Drive them into the hazard' : 'Search for traps', label: encounterActive ? 'Use the Hazard' : 'Search for Traps', icon: '⚠', hint: encounterActive ? 'Turn the room itself into an accomplice.' : 'Stay ahead of locks, darts, and floor tricks.' },
+        ],
+      };
+    case 'mage':
+      return {
+        icon: '✧',
+        title: 'Mage Command',
+        summary: encounterActive ? 'Manage tempo and avoid waste until the right spell wins the scene.' : 'Treat knowledge, slots, and preparation as your real weapons.',
+        actions: [
+          { action: encounterActive ? 'Read the battlefield' : 'Study spellbook', label: encounterActive ? 'Read the Battlefield' : 'Study Spellbook', icon: '✧', hint: encounterActive ? 'Choose the exact moment to spend power.' : 'Recover your edge through disciplined study.' },
+          { action: encounterActive ? 'Take cover and aim' : 'Listen carefully', label: encounterActive ? 'Stay Clear' : 'Listen Carefully', icon: '☿', hint: encounterActive ? 'Live long enough to cast the right answer.' : 'Let information save spell slots.' },
+        ],
+      };
+    case 'bard':
+      return {
+        icon: '♫',
+        title: 'Bard Command',
+        summary: encounterActive ? 'Shape morale, create hesitation, and turn talk into position.' : 'Probe for secrets, ego, and leverage before the room realises it is being played.',
+        actions: [
+          { action: encounterActive ? 'Rally the line' : 'Read their intent', label: encounterActive ? 'Rally the Line' : 'Read Their Intent', icon: '♫', hint: encounterActive ? 'Keep allies loud, moving, and dangerous.' : 'Find the emotional seam to pull.' },
+          { action: recruitableNpcName ? `Talk to ${recruitableNpcName}` : 'Listen carefully', label: recruitableNpcName ? 'Open the Mark' : 'Listen Carefully', icon: '◈', hint: recruitableNpcName ? 'Work the scene before anyone else claims the conversation.' : 'Hear what the room gives away for free.' },
+        ],
+      };
+    case 'fighter':
+      return {
+        icon: '⚔',
+        title: 'Fighter Command',
+        summary: encounterActive ? 'Decide where the line stands and who gets broken on it.' : 'Keep the party honest with practical, forceful choices.',
+        actions: [
+          { action: encounterActive ? 'Hold the doorway' : 'Secure this room', label: encounterActive ? 'Hold the Doorway' : 'Secure the Room', icon: '⚔', hint: encounterActive ? 'Win the ground first, then win the fight.' : 'Make the next move from a position of strength.' },
+          { action: encounterActive ? 'Brace and hold' : 'Mark fallback point', label: encounterActive ? 'Brace and Hold' : 'Mark Fallback', icon: '⛨', hint: encounterActive ? 'Stop panic from outrunning the steel.' : 'Make retreat part of the plan, not the failure.' },
+        ],
+      };
+    default:
+      return defaults;
+  }
+}

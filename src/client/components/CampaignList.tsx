@@ -453,3 +453,29 @@ export default function CampaignList({ apiUrl, player, onJoinCampaign, onOpenRos
             </button>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+function DossierBlock({ title, items, tone }: { title: string; items: string[]; tone: 'leather' | 'blood' | 'gold' | 'forest' }) {
+  const toneClasses = {
+    leather: 'border-leather/10 bg-parchment/60 text-leather',
+    blood: 'border-blood/10 bg-blood/5 text-blood',
+    gold: 'border-gold/10 bg-gold/5 text-gold',
+    forest: 'border-forest/10 bg-forest/5 text-forest',
+  } satisfies Record<'leather' | 'blood' | 'gold' | 'forest', string>;
+
+  return (
+    <div className={`rounded-xl border p-3 ${toneClasses[tone]}`}>
+      <p className="text-[10px] font-heading font-bold uppercase tracking-[0.18em]">{title}</p>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {items.map((item) => (
+          <span key={item} className="rounded-full border border-current/15 bg-white/35 px-2.5 py-1 text-[10px] font-heading uppercase tracking-wide">
+            {item}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
