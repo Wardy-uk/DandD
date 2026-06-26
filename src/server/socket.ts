@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Socket.IO handler for async multiplayer
  * Players can join/leave campaigns at any time.
  * Actions are broadcast to all connected players in the same campaign.
@@ -42,6 +42,7 @@ import {
 } from './game/companions.js';
 import { returnToTown } from './game/town.js';
 import { generate, generateStream } from './ai/ollama.js';
+import { aiDirector } from './ai/director.js';
 import { getCompanionReaction, inferReactionTrigger } from './game/companionReactions.js';
 import { resolveStarterSetPiece } from './game/starterPacks.js';
 
@@ -307,36 +308,32 @@ export function setupSocketHandlers(
           io.to(`campaign:${campaignId}`).emit('game:narration', note);
           if (note.content.length < 120 && expansionsThisRound < 2) {
             expansionsThisRound++;
-            (async () => {
-              try {
-                const combatScene = campaign.current_scene_id
-                  ? get(db, 'SELECT * FROM scenes WHERE id = ?', [campaign.current_scene_id]) as any
-                  : null;
-                const combatBlueprint = combatScene ? buildSceneBlueprint(combatScene) : null;
-                const combatExpansion = await Promise.race([
-                  generate({
-                    system: `You are a masterful AD&D DM narrating a single combat moment. Write exactly 1-2 sentences.
+            const combatScene = campaign.current_scene_id
+              ? get(db, 'SELECT * FROM scenes WHERE id = ?', [campaign.current_scene_id]) as any
+              : null;
+            const combatBlueprint = combatScene ? buildSceneBlueprint(combatScene) : null;
+            aiDirector.enqueue({
+              campaignId,
+              type: 'combat_narration',
+              priority: 4,
+              system: `You are a masterful AD&D DM narrating a single combat moment. Write exactly 1-2 sentences.
 Rules:
 - Describe the physical reality of the hit or miss — what the weapon felt like, the sound, the impact site, the attacker's expression
 - If a kill: one vivid sentence of how the creature falls
 - If a miss: what went wrong, how the attacker overcorrects, what the defender does
 - No game terms like "hit points", "damage", "roll". Pure physical description
 - Voice: brutal, specific, immediate — no dramatic flourishes`,
-                    prompt: `Scene: ${combatScene?.name ?? 'Unknown'}. ${combatBlueprint?.roomAmbience ?? ''}
+              prompt: `Scene: ${combatScene?.name ?? 'Unknown'}. ${combatBlueprint?.roomAmbience ?? ''}
 Combat: "${note.content}"
 Add 1-2 sentences of physical combat description.`,
-                    maxTokens: 55,
-                    temperature: 0.85,
-                  }),
-                  new Promise<string>((_, reject) => setTimeout(() => reject(new Error('combat narration timeout')), 18_000)),
-                ]) as string;
-                if (combatExpansion?.trim()) {
+              callback: (result) => {
+                if (result?.trim() && !result.startsWith('[The DM pauses')) {
                   run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
-                    [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', combatExpansion.trim()]);
-                  io.to(`campaign:${campaignId}`).emit('game:narration', { content: combatExpansion.trim(), actor: 'DM' });
+                    [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', result.trim()]);
+                  io.to(`campaign:${campaignId}`).emit('game:narration', { content: result.trim(), actor: 'DM' });
                 }
-              } catch {}
-            })();
+              },
+            });
           }
         }
 
@@ -886,33 +883,31 @@ Rules:
           [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', orientDesc]);
         io.to(`campaign:${campaignId}`).emit('game:narration', { content: orientDesc, actor: 'DM' });
         // Async AI expansion for scene description — fires for all orientation queries
-        (async () => {
-          try {
-            const orientBlueprint = buildSceneBlueprint(scene);
-            const orientExpansion = await Promise.race([
-              generate({
-                system: `You are a masterful AD&D DM adding one final atmospheric observation. Write exactly 2 sentences.
+        {
+          const orientBlueprint = buildSceneBlueprint(scene);
+          aiDirector.enqueue({
+            campaignId,
+            type: 'scene',
+            priority: 4,
+            system: `You are a masterful AD&D DM adding one final atmospheric observation. Write exactly 2 sentences.
 Rules:
 - The party is pausing to take stock — describe one specific detail they notice on closer inspection
 - Something that wasn't obvious at first glance: a smell, a marking, a sound from inside the walls
 - Implies history or threat without naming either
 - Voice: specific, weighted, like the room is keeping a secret`,
-                prompt: `Room: ${scene.name}. ${orientBlueprint.roomAmbience}
+            prompt: `Room: ${scene.name}. ${orientBlueprint.roomAmbience}
 ${orientBlueprint.clue ? `Detail: ${orientBlueprint.clue}` : ''}
 ${orientBlueprint.tracks ? `Signs: ${orientBlueprint.tracks}` : ''}
 Add one final close-inspection detail the party notices.`,
-                maxTokens: 80,
-                temperature: 0.88,
-              }),
-              new Promise<string>((_, reject) => setTimeout(() => reject(new Error('orient expand timeout')), 25_000)),
-            ]) as string;
-            if (orientExpansion?.trim()) {
-              run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
-                [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', orientExpansion.trim()]);
-              io.to(`campaign:${campaignId}`).emit('game:narration', { content: orientExpansion.trim(), actor: 'DM' });
-            }
-          } catch {}
-        })();
+            callback: (result) => {
+              if (result?.trim() && !result.startsWith('[The DM pauses')) {
+                run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                  [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', result.trim()]);
+                io.to(`campaign:${campaignId}`).emit('game:narration', { content: result.trim(), actor: 'DM' });
+              }
+            },
+          });
+        }
         // ── Companion reaction: darkness ──────────────────────────────────
         if ((scene.light_level || 'normal') === 'dark') {
           try {
@@ -1199,6 +1194,10 @@ Rules:
 
         let aiMsg = 'The moment passes without clear resolution — but it was not wasted.';
 
+        // Pull last 5 narrations for narrative continuity
+        const recentLog = all(db, "SELECT actor, content FROM game_log WHERE campaign_id = ? AND type IN ('narration','dm_response') ORDER BY created_at DESC LIMIT 5", [campaignId]) as Array<{actor: string; content: string}>;
+        const recentHistory = recentLog.reverse().map(r => `${r.actor}: ${r.content.slice(0, 150)}`).join('\n');
+
         const mainStreamId = crypto.randomUUID();
         actionLocks.add(campaignId);
         io.to(`campaign:${campaignId}`).emit('game:narration_stream', { id: mainStreamId, chunk: '', actor: 'DM' });
@@ -1215,7 +1214,7 @@ Rules:
 - NPCs react with genuine personality, not script; they have their own read on what just happened
 - End on tension or forward pull — there is always more lurking, always a reason to push deeper
 - Voice: atmospheric and specific, like a DM who finds this world genuinely strange and still surprising`,
-            prompt: `${contextParts.join('. ')}.\n${(getCampaignState(db, campaignId)?.recentEvents || []).slice(-3).filter(Boolean).length > 0 ? `Recent events: ${(getCampaignState(db, campaignId)?.recentEvents || []).slice(-3).filter(Boolean).join('; ')}.` : ''}\nPlayer action: "${action}". Narrate the outcome with full sensory immersion.`,
+            prompt: `${contextParts.join('. ')}.\n${(getCampaignState(db, campaignId)?.recentEvents || []).slice(-3).filter(Boolean).length > 0 ? `Recent events: ${(getCampaignState(db, campaignId)?.recentEvents || []).slice(-3).filter(Boolean).join('; ')}.` : ''}${recentHistory ? `\nRecent session history:\n${recentHistory}` : ''}\nPlayer action: "${action}". Narrate the outcome with full sensory immersion.`,
             maxTokens: 200,
             temperature: 0.82,
             timeoutMs: 55_000,
@@ -1283,30 +1282,26 @@ Rules:
       if (lootFindMatch) {
         const foundItem = (lootFindMatch[1] || lootFindMatch[2] || '').trim();
         if (foundItem) {
-          (async () => {
-            try {
-              const lootBlueprint = buildSceneBlueprint(scene);
-              const lootNarration = await Promise.race([
-                generate({
-                  system: `You are a masterful AD&D Dungeon Master giving a found object its moment. Exactly 2 sentences.
+          const lootBlueprint = buildSceneBlueprint(scene);
+          aiDirector.enqueue({
+            campaignId,
+            type: 'scene',
+            priority: 4,
+            system: `You are a masterful AD&D Dungeon Master giving a found object its moment. Exactly 2 sentences.
 Rules:
 - Describe physical details: material, weight, condition, marks, smell, temperature
 - Imply history — who owned it, how long it has been here, what it witnessed
 - No game statistics, no "you find", no mechanical language
 - Voice: specific, weighted, atmospheric`,
-                  prompt: `Room: ${scene.name} — ${lootBlueprint.roomAmbience}. Found: "${foundItem}". Describe this object.`,
-                  maxTokens: 70,
-                  temperature: 0.9,
-                }),
-                new Promise<string>((_, reject) => setTimeout(() => reject(new Error('loot timeout')), 22_000)),
-              ]) as string;
-              if (lootNarration?.trim()) {
+            prompt: `Room: ${scene.name} — ${lootBlueprint.roomAmbience}. Found: "${foundItem}". Describe this object.`,
+            callback: (result) => {
+              if (result?.trim() && !result.startsWith('[The DM pauses')) {
                 run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
-                  [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', lootNarration.trim()]);
-                io.to(`campaign:${campaignId}`).emit('game:narration', { content: lootNarration.trim(), actor: 'DM' });
+                  [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', result.trim()]);
+                io.to(`campaign:${campaignId}`).emit('game:narration', { content: result.trim(), actor: 'DM' });
               }
-            } catch {}
-          })();
+            },
+          });
         }
         // ── D: Refresh action chips after loot found ─────────────────────
         emitSceneActions(scene, npcsInScene, JSON.parse(scene.connections || '[]').filter((c: any) => !c.hidden));
@@ -1503,13 +1498,13 @@ Rules:
       });
       // ── Async atmospheric expansion — adds sensory depth to short outcomes ──
       if (outcome.content.length < 200) {
-        (async () => {
-          try {
-            const expBlueprint = buildSceneBlueprint(scene);
-            const recentCtx = (getCampaignState(db, campaignId).recentEvents || []).slice(-3).filter(Boolean).join('; ');
-            const expansionNarration = await Promise.race([
-              generate({
-                system: `You are a masterful AD&D Dungeon Master adding atmospheric depth to a moment. Write exactly 2-3 sentences.
+        const expBlueprint = buildSceneBlueprint(scene);
+        const recentCtx = (getCampaignState(db, campaignId).recentEvents || []).slice(-3).filter(Boolean).join('; ');
+        aiDirector.enqueue({
+          campaignId,
+          type: 'scene',
+          priority: 4,
+          system: `You are a masterful AD&D Dungeon Master adding atmospheric depth to a moment. Write exactly 2-3 sentences.
 Rules:
 - Do NOT repeat what was just narrated — add what follows in the senses
 - Specific: a texture, a smell, a sound, a temperature shift, a weight in the gut
@@ -1517,24 +1512,20 @@ Rules:
 - End on forward pull — a detail that hangs in the air, unexplained
 - Voice: Witcher 3 — strange, weighted, specific
 - No cheerful language. This dungeon is indifferent at best`,
-                prompt: `Scene: ${scene.name}. ${expBlueprint.roomAmbience}
+          prompt: `Scene: ${scene.name}. ${expBlueprint.roomAmbience}
 Character: ${character.name} (${character.char_class}, ${character.hp}/${character.max_hp} HP)
 ${recentCtx ? `Recent events: ${recentCtx}` : ''}
 Action: "${action}"
 What just happened: "${outcome.content}"
 Add 2-3 sentences of sensory depth and consequence. Do not repeat the above — extend it.`,
-                maxTokens: 75,
-                temperature: 0.88,
-              }),
-              new Promise<string>((_, reject) => setTimeout(() => reject(new Error('expansion timeout')), 22_000)),
-            ]) as string;
-            if (expansionNarration?.trim()) {
+          callback: (result) => {
+            if (result?.trim() && !result.startsWith('[The DM pauses')) {
               run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
-                [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', expansionNarration.trim()]);
-              io.to(`campaign:${campaignId}`).emit('game:narration', { content: expansionNarration.trim(), actor: 'DM' });
+                [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', result.trim()]);
+              io.to(`campaign:${campaignId}`).emit('game:narration', { content: result.trim(), actor: 'DM' });
             }
-          } catch {}
-        })();
+          },
+        });
       }
       // ── Companion reaction: exploration outcome ───────────────────────────
       try {
@@ -1588,32 +1579,27 @@ Add 2-3 sentences of sensory depth and consequence. Do not repeat the above — 
 
       // ── World pulse — ambient dungeon observation, 1-in-8 chance ─────────
       if (Math.floor(Math.random() * 8) === 0 && !outcome.encounter) {
-        (async () => {
-          try {
-            await new Promise((r) => setTimeout(r, 16_000));
-            const pulseBlueprint = buildSceneBlueprint(scene);
-            const pulseNarration = await Promise.race([
-              generate({
-                system: `You are a masterful AD&D DM adding an unprompted ambient observation. Write exactly 2 sentences.
+        const pulseBlueprint = buildSceneBlueprint(scene);
+        aiDirector.enqueue({
+          campaignId,
+          type: 'world_gen',
+          priority: 5,
+          system: `You are a masterful AD&D DM adding an unprompted ambient observation. Write exactly 2 sentences.
 Rules:
 - Something in the environment shifts — a sound, a smell, a light change, movement in shadow
 - The party didn't cause it. The dungeon just... does something
 - Do NOT say what it means or suggest what to do
 - Voice: quiet, ominous, specific — like the dungeon breathing`,
-                prompt: `Scene: ${scene.name}. ${pulseBlueprint.roomAmbience}. ${pulseBlueprint.themePressure || ''}
+          prompt: `Scene: ${scene.name}. ${pulseBlueprint.roomAmbience}. ${(pulseBlueprint as any).themePressure || ''}
 Describe one unprompted environmental detail or ambient change the party notices.`,
-                maxTokens: 55,
-                temperature: 0.92,
-              }),
-              new Promise<string>((_, reject) => setTimeout(() => reject(new Error('pulse timeout')), 18_000)),
-            ]) as string;
-            if (pulseNarration?.trim()) {
+          callback: (result) => {
+            if (result?.trim() && !result.startsWith('[The DM pauses')) {
               run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
-                [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', pulseNarration.trim()]);
-              io.to(`campaign:${campaignId}`).emit('game:narration', { content: pulseNarration.trim(), actor: 'DM' });
+                [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', result.trim()]);
+              io.to(`campaign:${campaignId}`).emit('game:narration', { content: result.trim(), actor: 'DM' });
             }
-          } catch {}
-        })();
+          },
+        });
       }
 
       if (outcome.encounter) {
