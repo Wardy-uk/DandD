@@ -6,6 +6,7 @@ export interface FactionStanding {
   reputation: number;
   heat: number;
   notes: string;
+  contractCooldownUntilSession?: number; // faction won't post new work until this session
 }
 
 export interface DelveConditions {

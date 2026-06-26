@@ -14,6 +14,7 @@ import {
   evaluateContracts,
   expireStaleContracts,
   generateFollowUpContract,
+  sniperRivalContracts,
   getCatalogue,
   getHealingQuote,
   generateContracts,
@@ -71,14 +72,22 @@ export function createTownRoutes(db: Database, io: SocketServer): Router {
       io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: expNarration });
     }
 
+    // Rivals may have claimed untaken contracts while the party was away
+    const snipes = sniperRivalContracts(db, campaignId);
+    for (const { narration: snipeNarration } of snipes) {
+      run(db, 'INSERT INTO game_log (id, campaign_id, type, actor, content) VALUES (?, ?, ?, ?, ?)',
+        [uuid(), campaignId, 'narration', 'DM', snipeNarration]);
+      io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: snipeNarration });
+    }
+
     let contracts: any[] = [];
     try {
-      // Re-read after possible expiry mutations
+      // Re-read after possible expiry / snipe mutations
       const freshRow = get(db, 'SELECT town_contracts FROM campaigns WHERE id = ?', [campaignId]) as any;
       contracts = JSON.parse(freshRow?.town_contracts || '[]');
     } catch {}
     if (contracts.length === 0) {
-      contracts = generateContracts(state, String(campaign.name || ''), settingId);
+      contracts = generateContracts(state, String(campaign.name || ''), settingId, sessionNumber);
       run(db, 'UPDATE campaigns SET town_contracts = ? WHERE id = ?', [JSON.stringify(contracts), campaignId]);
     }
 
@@ -120,7 +129,11 @@ export function createTownRoutes(db: Database, io: SocketServer): Router {
           recentEvents: [...state.recentEvents].slice(-4).reverse(),
         },
         factions: Object.entries(state.factions).map(([key, f]) => ({
-          key, name: f.name, reputation: f.reputation, heat: f.heat,
+          key,
+          name: f.name,
+          reputation: f.reputation,
+          heat: f.heat,
+          contractCooldownUntilSession: f.contractCooldownUntilSession ?? null,
         })),
       },
     });

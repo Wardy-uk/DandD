@@ -275,6 +275,7 @@ export interface TownContract {
   claimedAt?: string | null;
   expiredAt?: string | null;
   takenAtTurn?: number;
+  postedAtSession?: number;  // session_number when this contract was first posted
   openingContract?: boolean;
   objectiveType?: 'discovered_sites' | 'cleared_scenes' | 'fallback_points' | 'treasure_marks' | 'lore_entries' | 'revelations' | 'named_scene_visited' | 'npc_recruited' | 'faction_standing';
   objectiveDetail?: string;
@@ -286,7 +287,7 @@ export interface TownContract {
   followUpOf?: string; // id of contract this follows up on
 }
 
-export function generateContracts(state: CampaignSimulationState, campaignName: string, settingId = ''): TownContract[] {
+export function generateContracts(state: CampaignSimulationState, campaignName: string, settingId = '', currentSession = 1): TownContract[] {
   let h = 0;
   const seedText = `${campaignName}:${settingId}`;
   for (let i = 0; i < seedText.length; i++) h = (Math.imul(37, h) + seedText.charCodeAt(i)) | 0;
@@ -309,6 +310,7 @@ export function generateContracts(state: CampaignSimulationState, campaignName: 
       taken: false,
       completedAt: null,
       claimedAt: null,
+      postedAtSession: currentSession,
       objectiveType: tmpl.objectiveType,
       objectiveTarget: tmpl.objectiveTarget,
       objectiveLabel: tmpl.objectiveLabel,
@@ -360,10 +362,11 @@ export function expireStaleContracts(
   db: Database,
   campaignId: string,
 ): Array<{ narration: string; contract: TownContract }> {
-  const campRow = get(db, 'SELECT town_contracts, exploration_turn FROM campaigns WHERE id = ?', [campaignId]) as any;
+  const campRow = get(db, 'SELECT town_contracts, exploration_turn, session_number FROM campaigns WHERE id = ?', [campaignId]) as any;
   if (!campRow) return [];
 
   const currentTurn = Number(campRow.exploration_turn || 0);
+  const currentSession = Number(campRow.session_number || 1);
   let contracts: TownContract[] = [];
   try { contracts = JSON.parse(campRow.town_contracts || '[]'); } catch {}
 
@@ -378,6 +381,11 @@ export function expireStaleContracts(
 
     c.expiredAt = new Date().toISOString();
     shiftFactionStanding(state, c.factionKey, { reputation: -1 });
+    // Faction goes quiet for 3 sessions after a failure
+    const factionState = state.factions[c.factionKey];
+    if (factionState) {
+      factionState.contractCooldownUntilSession = currentSession + 3;
+    }
     changed = true;
 
     const EXPIRY_LINES: Record<string, string> = {
@@ -398,6 +406,60 @@ export function expireStaleContracts(
   }
 
   return expired;
+}
+
+// ─── Rival contract sniping ──────────────────────────────────────────────────
+
+const RIVAL_SNIPE_CHANCE = 0.35; // 35% per qualifying (stale) contract per town visit
+const RIVAL_SNIPE_MIN_SESSIONS_OLD = 2; // contract must have survived at least this many sessions untaken
+
+export function sniperRivalContracts(
+  db: Database,
+  campaignId: string,
+): Array<{ narration: string }> {
+  const campRow = get(db, 'SELECT town_contracts, session_number FROM campaigns WHERE id = ?', [campaignId]) as any;
+  if (!campRow) return [];
+
+  const currentSession = Number(campRow.session_number || 1);
+  if (currentSession < 2) return []; // nothing to snipe on a first visit
+
+  let contracts: TownContract[] = [];
+  try { contracts = JSON.parse(campRow.town_contracts || '[]'); } catch {}
+
+  // Find an active rival for narration
+  const rivalRows = all(db, 'SELECT state_json FROM rival_parties WHERE campaign_id = ?', [campaignId]) as any[];
+  const activeRival = rivalRows
+    .map((r: any) => { try { return JSON.parse(r.state_json); } catch { return null; } })
+    .filter(Boolean)
+    .find((r: any) => r.status === 'active' || r.status === 'retreated');
+  const rivalName = (activeRival?.name as string | undefined) || null;
+
+  const sniped: Array<{ narration: string }> = [];
+  const toRemove = new Set<string>();
+
+  for (const c of contracts) {
+    if (c.taken || c.claimedAt || c.expiredAt) continue;
+    if (c.postedAtSession == null) continue; // legacy contract — skip
+    if (currentSession - c.postedAtSession < RIVAL_SNIPE_MIN_SESSIONS_OLD) continue;
+    if (Math.random() > RIVAL_SNIPE_CHANCE) continue;
+
+    toRemove.add(c.id);
+
+    const name = rivalName || 'another company';
+    const SNIPE_LINES = [
+      `The board clerk crosses out the posting for "${c.title}". "${name} took it this morning," he says without looking up.`,
+      `"Someone beat you to it." The space where "${c.title}" was pinned is empty. Word is ${name} collected it on their way through.`,
+      `${name} has the mark on the posting for "${c.title}". The clerk doesn't seem sorry about it.`,
+    ];
+    sniped.push({ narration: SNIPE_LINES[c.title.length % SNIPE_LINES.length] });
+  }
+
+  if (toRemove.size > 0) {
+    const remaining = contracts.filter(c => !toRemove.has(c.id));
+    run(db, 'UPDATE campaigns SET town_contracts = ? WHERE id = ?', [JSON.stringify(remaining), campaignId]);
+  }
+
+  return sniped;
 }
 
 function factionRepNote(factionKey: string, newRep: number): string {
@@ -671,10 +733,16 @@ export function generateFollowUpContract(
 
   // Read current contracts (claimContractReward has already persisted the claimedAt)
   const campRow = get(db,
-    'SELECT town_contracts, name, town_name FROM campaigns WHERE id = ?',
+    'SELECT town_contracts, name, town_name, session_number FROM campaigns WHERE id = ?',
     [campaignId],
   ) as any;
   if (!campRow) return null;
+
+  const currentSession = Number(campRow.session_number || 1);
+
+  // Check if faction is on post-expiry cooldown
+  const factionCooldown = state.factions[factionKey]?.contractCooldownUntilSession;
+  if (factionCooldown && currentSession < factionCooldown) return null;
 
   let contracts: TownContract[] = [];
   try { contracts = JSON.parse(campRow.town_contracts || '[]'); } catch {}
@@ -739,6 +807,7 @@ export function generateFollowUpContract(
     taken: false,
     completedAt: null,
     claimedAt: null,
+    postedAtSession: currentSession,
     objectiveType: template.objectiveType,
     objectiveTarget: template.objectiveTarget,
     objectiveLabel: template.objectiveLabel,

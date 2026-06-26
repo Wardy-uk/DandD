@@ -72,6 +72,7 @@ interface Contract {
   completedAt?: string | null;
   claimedAt?: string | null;
   expiredAt?: string | null;
+  postedAtSession?: number;
   readyToClaim?: boolean;
 }
 
@@ -106,7 +107,7 @@ interface TownData {
     encounterPressure: number;
     recentEvents: string[];
   };
-  factions: Array<{ key: string; name: string; reputation: number; heat: number }>;
+  factions: Array<{ key: string; name: string; reputation: number; heat: number; contractCooldownUntilSession?: number | null }>;
 }
 
 type Tab = 'taproom' | 'market' | 'healer' | 'garrison';
@@ -882,6 +883,48 @@ export default function TownView({ apiUrl, player, campaignId, socket, onBack, o
                   ))}
                 </div>
                 <p className="text-[11px] text-amber-700/70 font-body mt-2 italic">Heat means someone is watching. Don't linger too long.</p>
+              </div>
+            )}
+
+            {/* Faction standing & unlocked benefits */}
+            {townData.factions.some(f => f.reputation > 0 || (f.contractCooldownUntilSession && f.contractCooldownUntilSession > townData.sessionNumber)) && (
+              <div className="rounded-lg border border-leather/10 bg-parchment-light/40 p-4">
+                <h3 className="font-heading font-bold text-leather-dark text-sm mb-3">Faction standing</h3>
+                <div className="space-y-3">
+                  {townData.factions
+                    .filter(f => f.reputation > 0 || (f.contractCooldownUntilSession && f.contractCooldownUntilSession > townData.sessionNumber))
+                    .map(f => {
+                      const benefits: string[] = [];
+                      if (f.reputation >= 2) benefits.push('Rumour contacts');
+                      if (f.reputation >= 3) benefits.push('Scout intel', 'Supply discount');
+                      if (f.reputation >= 4) benefits.push('Safe house rest');
+                      if (f.reputation >= 5) benefits.push('Safe route');
+                      const nextAt = f.reputation < 2 ? 2 : f.reputation < 3 ? 3 : f.reputation < 4 ? 4 : f.reputation < 5 ? 5 : null;
+                      const nextLabel = nextAt === 2 ? 'rumour contacts' : nextAt === 3 ? 'scout intel & discounts' : nextAt === 4 ? 'safe house' : nextAt === 5 ? 'safe routes' : null;
+                      const onCooldown = f.contractCooldownUntilSession && f.contractCooldownUntilSession > townData.sessionNumber;
+                      return (
+                        <div key={f.key}>
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xs font-heading font-bold text-leather-dark capitalize">{f.name}</span>
+                            <FactionPip rep={f.reputation} />
+                            {onCooldown && (
+                              <span className="text-[10px] font-body text-red-600 italic">not posting work</span>
+                            )}
+                          </div>
+                          {benefits.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mb-1">
+                              {benefits.map(b => (
+                                <span key={b} className="text-[10px] font-body bg-green-100/60 text-green-800 px-1.5 py-0.5 rounded">{b}</span>
+                              ))}
+                            </div>
+                          )}
+                          {nextLabel && (
+                            <p className="text-[10px] text-ink-faint font-body">Rep {nextAt} unlocks {nextLabel}</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
               </div>
             )}
 
