@@ -703,7 +703,8 @@ export function setupSocketHandlers(
       // Party/companion query — answer deterministically, never hit Ollama for this
       const partyQueryRx = /who('?s| is) with (me|us)|who are my (companions|party|allies)|who do i have|tell me (about my|who('?s in|are in)) (my )?(party|group|companions)|list (my |the )?(party|companions)/i;
       if (!outcome && partyQueryRx.test(action)) {
-        const companions = campaignState.companions || [];
+        const cs = getCampaignState(db, campaignId);
+        const companions = (cs.companions || []) as any[];
         let partyMsg: string;
         if (companions.length === 0) {
           partyMsg = 'You are travelling alone.';
