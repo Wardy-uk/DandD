@@ -660,7 +660,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
           {entry.actor && entry.type !== 'system' && (
             <span className={`font-heading font-bold text-xs uppercase tracking-wide ${
               isCompanionSpeech
-                ? 'text-amber-400'
+                ? 'text-leather-dark'
                 : entry.type === 'narration' || entry.type === 'dm_response' || entry.type === 'scene_enter'
                   ? 'text-leather'
                   : entry.type === 'combat'
@@ -672,13 +672,13 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
           )}
           <p className={`font-body text-sm leading-relaxed ${
             isCompanionSpeech
-              ? 'text-amber-200 italic'
+              ? 'text-leather italic'
               : entry.type === 'narration' || entry.type === 'dm_response' || entry.type === 'scene_enter'
                 ? 'text-ink-light italic'
                 : entry.type === 'combat'
                   ? 'text-ink font-mono text-xs'
                   : entry.type === 'roll'
-                    ? 'text-silver font-mono text-xs'
+                    ? 'text-ink-faint font-mono text-xs'
                     : entry.type === 'system'
                       ? 'text-ink-faint italic text-xs'
                       : 'text-ink'
