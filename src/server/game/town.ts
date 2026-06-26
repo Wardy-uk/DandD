@@ -350,6 +350,35 @@ export function evaluateContracts(db: Database, campaignId: string, contracts: T
   });
 }
 
+function factionRepNote(factionKey: string, newRep: number): string {
+  const NOTES: Record<string, string[]> = {
+    watch: [
+      'The garrison notes your name.',
+      'Word reaches the duty officer. Your reliability is on record now.',
+      'The captain herself mentions you at briefing. That counts for something here.',
+    ],
+    locals: [
+      'The locals are starting to know who you are.',
+      'Word gets around. Your name is mentioned in the right company.',
+      'People in this town are paying attention to what you do.',
+    ],
+    shadows: [
+      'The right people take note.',
+      'Your arrangement deepens. Word passes through channels you\'ll never see.',
+      'Certain conversations are happening about you. They are cautiously favourable.',
+    ],
+    delvers: [
+      'Your name goes up on the cartographers\' board.',
+      'The guild acknowledges the quality of your work.',
+      'Senior cartographers start asking about your methods. A notable distinction.',
+    ],
+  };
+  const notes = NOTES[factionKey];
+  if (!notes) return '';
+  const idx = Math.max(0, Math.min(newRep - 1, notes.length - 1));
+  return notes[idx];
+}
+
 export function claimContractReward(params: {
   db: Database;
   campaignId: string;
@@ -384,12 +413,15 @@ export function claimContractReward(params: {
   shiftFactionStanding(state, contract.factionKey, { reputation: 1 });
   saveCampaignState(db, campaignId, state);
 
+  const newRep = state.factions[contract.factionKey]?.reputation || 0;
+  const repNote = factionRepNote(contract.factionKey, newRep);
+
   return {
     ok: true,
     contract: { ...contract, claimedAt, readyToClaim: false },
     reward: contract.reward,
     xpAward,
-    narration: `The board clerk checks your proof, scratches out the posting, and pays ${contract.reward} GP. Word spreads quickly enough to count for another ${xpAward} XP.`,
+    narration: `The board clerk checks your proof, scratches out the posting, and pays ${contract.reward} GP. Word spreads quickly enough to count for another ${xpAward} XP.${repNote ? ` ${repNote}` : ''}`,
   };
 }
 

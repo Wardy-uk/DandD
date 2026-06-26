@@ -431,6 +431,20 @@ export function createTownRoutes(db: Database, io: SocketServer): Router {
         let currentContracts: any[] = [];
         try { currentContracts = JSON.parse(campRow?.town_contracts || '[]'); } catch {}
         currentContracts.push(followUp);
+
+        // Board cap — drop oldest non-taken contract when board exceeds 8
+        const MAX_BOARD = 8;
+        if (currentContracts.filter((c: any) => !c.claimedAt).length > MAX_BOARD) {
+          const toDrop = currentContracts.find((c: any) => !c.claimedAt && !c.taken && c.id !== followUp.id);
+          if (toDrop) {
+            currentContracts = currentContracts.filter((c: any) => c.id !== toDrop.id);
+            const dropNote = `The garrison board is full. The posting for "${toDrop.title}" has been scratched out — too many contracts, not enough hands.`;
+            run(db, 'INSERT INTO game_log (id, campaign_id, type, actor, content) VALUES (?, ?, ?, ?, ?)',
+              [uuid(), campaignId, 'narration', 'DM', dropNote]);
+            io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: dropNote });
+          }
+        }
+
         run(db, 'UPDATE campaigns SET town_contracts = ? WHERE id = ?', [JSON.stringify(currentContracts), campaignId]);
         run(db, 'INSERT INTO game_log (id, campaign_id, type, actor, content) VALUES (?, ?, ?, ?, ?)',
           [uuid(), campaignId, 'narration', 'DM', followUpResult.narration]);
