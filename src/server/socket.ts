@@ -54,6 +54,8 @@ interface ConnectedPlayer {
 
 const connectedPlayers = new Map<string, ConnectedPlayer>();
 const actionLocks = new Set<string>(); // prevent concurrent action processing per campaign
+// NPC conversation memory: campaignId → npcName → last 3 exchanges
+const npcConversationMemory = new Map<string, Map<string, string[]>>();
 
 function emitCampaignState(io: SocketServer<ClientToServerEvents, ServerToClientEvents>, db: Database, campaignId: string) {
   io.to(`campaign:${campaignId}`).emit('game:state_update', {
@@ -236,6 +238,42 @@ export function setupSocketHandlers(
         [logId, campaignId, 1, 'player_action', character.name, action]);
 
       const campaign = get(db, 'SELECT * FROM campaigns WHERE id = ?', [campaignId]) as any;
+
+      // ── D: emitSceneActions — regenerate contextual action chips ─────────
+      function emitSceneActions(targetScene: any, targetNpcs: any[], targetConnections: any[]) {
+        try {
+          const sceneActBlueprint = buildSceneBlueprint(targetScene);
+          const ctxActions: Array<{ label: string; action: string; hint: string }> = [];
+          targetConnections.forEach((c: any) => {
+            ctxActions.push({ label: `Go ${c.direction}`, action: `I go ${c.direction}`, hint: c.description || `Head ${c.direction}` });
+          });
+          targetNpcs.slice(0, 2).forEach((npc: any) => {
+            ctxActions.push({ label: `Speak to ${npc.name}`, action: `I speak to ${npc.name}`, hint: String(npc.personality || 'Approach and talk').slice(0, 60) });
+          });
+          if (sceneActBlueprint.roomSpecificFind) {
+            ctxActions.push({ label: 'Examine the find', action: `I examine it: ${sceneActBlueprint.roomSpecificFind}`, hint: sceneActBlueprint.roomSpecificFind.slice(0, 60) });
+          }
+          if (sceneActBlueprint.tracks) {
+            ctxActions.push({ label: 'Read the signs', action: 'I read the signs and tracks carefully', hint: sceneActBlueprint.tracks.slice(0, 60) });
+          }
+          if (sceneActBlueprint.clue) {
+            ctxActions.push({ label: 'Investigate', action: `I investigate what I can see`, hint: sceneActBlueprint.clue.slice(0, 60) });
+          }
+          if (sceneActBlueprint.trap.kind && sceneActBlueprint.trap.kind !== 'none' && sceneActBlueprint.trap.kind !== 'None') {
+            ctxActions.push({ label: 'Check for traps', action: 'I probe ahead carefully for traps', hint: `Something feels wrong here` });
+          }
+          if (sceneActBlueprint.obstacle && sceneActBlueprint.obstacle !== 'none' && sceneActBlueprint.obstacle !== 'None') {
+            ctxActions.push({ label: 'Study the obstacle', action: `I study ${sceneActBlueprint.obstacle} carefully`, hint: 'Look for weaknesses or a way through' });
+          }
+          if (sceneActBlueprint.lock.kind && sceneActBlueprint.lock.kind !== 'none' && sceneActBlueprint.lock.kind !== 'None') {
+            ctxActions.push({ label: 'Pick the lock', action: `I attempt to pick ${sceneActBlueprint.lock.kind}`, hint: 'Delicate work' });
+          }
+          ctxActions.push({ label: 'Look around', action: 'Look around', hint: 'Survey your surroundings' });
+          ctxActions.push({ label: 'Listen carefully', action: 'Listen carefully', hint: 'What moves in the dark?' });
+          io.to(`campaign:${campaignId}`).emit('game:scene_actions', { actions: ctxActions.slice(0, 9) });
+        } catch {}
+      }
+
       const activeEncounter = getActiveEncounter(db, campaignId);
       if (activeEncounter) {
         const resolution = resolveEncounterAction({
@@ -411,6 +449,14 @@ Rules:
               }
             } catch {}
           })();
+          // ── D: Refresh action chips post-combat ──────────────────────────
+          const postCombatScene = get(db, 'SELECT * FROM scenes WHERE id = ?', [campaign.current_scene_id]) as any;
+          if (postCombatScene) {
+            const postCombatNpcs = all(db,
+              'SELECT name, personality FROM npcs WHERE campaign_id = ? AND location_scene_id = ? AND alive = 1',
+              [campaignId, postCombatScene.id]) as any[];
+            emitSceneActions(postCombatScene, postCombatNpcs, JSON.parse(postCombatScene.connections || '[]').filter((c: any) => !c.hidden));
+          }
         }
         if (resolution.turnPrompt) {
           io.to(`campaign:${campaignId}`).emit('game:turn_prompt', resolution.turnPrompt);
@@ -737,41 +783,7 @@ Rules:
         });
 
         // ── B: Scene-specific contextual action chips ────────────────────────
-        try {
-          const sceneActBlueprint = buildSceneBlueprint(nextScene);
-          const ctxActions: Array<{ label: string; action: string; hint: string }> = [];
-          // Exits first — most likely immediate action
-          connections.forEach((c: any) => {
-            ctxActions.push({ label: `Go ${c.direction}`, action: `I go ${c.direction}`, hint: c.description || `Head ${c.direction}` });
-          });
-          // NPCs present
-          npcsInScene.slice(0, 2).forEach((npc: any) => {
-            ctxActions.push({ label: `Speak to ${npc.name}`, action: `I speak to ${npc.name}`, hint: String(npc.personality || 'Approach and talk').slice(0, 60) });
-          });
-          // Room-specific affordances from blueprint
-          if (sceneActBlueprint.roomSpecificFind) {
-            ctxActions.push({ label: 'Examine the find', action: `I examine it: ${sceneActBlueprint.roomSpecificFind}`, hint: sceneActBlueprint.roomSpecificFind.slice(0, 60) });
-          }
-          if (sceneActBlueprint.tracks) {
-            ctxActions.push({ label: 'Read the signs', action: 'I read the signs and tracks carefully', hint: sceneActBlueprint.tracks.slice(0, 60) });
-          }
-          if (sceneActBlueprint.clue) {
-            ctxActions.push({ label: 'Investigate', action: `I investigate what I can see`, hint: sceneActBlueprint.clue.slice(0, 60) });
-          }
-          if (sceneActBlueprint.trap.kind && sceneActBlueprint.trap.kind !== 'none' && sceneActBlueprint.trap.kind !== 'None') {
-            ctxActions.push({ label: 'Check for traps', action: 'I probe ahead carefully for traps', hint: `Something feels wrong here` });
-          }
-          if (sceneActBlueprint.obstacle && sceneActBlueprint.obstacle !== 'none' && sceneActBlueprint.obstacle !== 'None') {
-            ctxActions.push({ label: 'Study the obstacle', action: `I study ${sceneActBlueprint.obstacle} carefully`, hint: 'Look for weaknesses or a way through' });
-          }
-          if (sceneActBlueprint.lock.kind && sceneActBlueprint.lock.kind !== 'none' && sceneActBlueprint.lock.kind !== 'None') {
-            ctxActions.push({ label: 'Pick the lock', action: `I attempt to pick ${sceneActBlueprint.lock.kind}`, hint: 'Delicate work' });
-          }
-          // Always available
-          ctxActions.push({ label: 'Look around', action: 'Look around', hint: 'Survey your surroundings' });
-          ctxActions.push({ label: 'Listen carefully', action: 'Listen carefully', hint: 'What moves in the dark?' });
-          io.to(`campaign:${campaignId}`).emit('game:scene_actions', { actions: ctxActions.slice(0, 9) });
-        } catch {}
+        emitSceneActions(nextScene, npcsInScene, connections);
 
         io.to(`campaign:${campaignId}`).emit('game:state_update', {
           type: 'battlefield_update',
@@ -1068,6 +1080,12 @@ Rules:
               `Scene: ${scene.name}${scene.brief ? ` — ${scene.brief}` : ''}`,
               `Situation: exploration phase, no active encounter`,
             ].filter(Boolean).join('. ');
+            if (!npcConversationMemory.has(campaignId)) npcConversationMemory.set(campaignId, new Map());
+            const npcMem = npcConversationMemory.get(campaignId)!;
+            const priorExchanges = npcMem.get(npcVoiceTarget.name) || [];
+            const priorContext = priorExchanges.length > 0
+              ? `Prior exchanges with this character:\n${priorExchanges.join('\n')}`
+              : '';
             const npcNarrationPromise = generate({
               system: `You are roleplaying as a specific NPC in an AD&D dungeon. Respond in their voice — direct speech plus brief action beats. 2-4 sentences total.
 Rules:
@@ -1077,7 +1095,7 @@ Rules:
 - Include one small physical action or tell (a look, a gesture, a pause) to make them feel present
 - Do not summarise or narrate in third person
 - Keep it tight — NPCs speak, they don't monologue`,
-              prompt: `${npcContext}.\nPlayer says to ${npcVoiceTarget.name}: "${action}"\nRespond as ${npcVoiceTarget.name}.`,
+              prompt: `${npcContext}.\n${priorContext ? priorContext + '\n' : ''}Player says to ${npcVoiceTarget.name}: "${action}"\nRespond as ${npcVoiceTarget.name}.`,
               maxTokens: 200,
               temperature: 0.88,
             });
@@ -1088,6 +1106,9 @@ Rules:
               run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
                 [crypto.randomUUID(), campaignId, 1, 'narration', npcVoiceTarget.name, npcResponse]);
               io.to(`campaign:${campaignId}`).emit('game:narration', { content: npcResponse, actor: npcVoiceTarget.name });
+              priorExchanges.push(`Player: "${action}" → ${npcVoiceTarget.name}: "${npcResponse.slice(0, 100)}"`);
+              if (priorExchanges.length > 3) priorExchanges.shift();
+              npcMem.set(npcVoiceTarget.name, priorExchanges);
             }
           } catch {
             io.to(`campaign:${campaignId}`).emit('game:narration', {
@@ -1256,6 +1277,8 @@ Rules:
             } catch {}
           })();
         }
+        // ── D: Refresh action chips after loot found ─────────────────────
+        emitSceneActions(scene, npcsInScene, JSON.parse(scene.connections || '[]').filter((c: any) => !c.hidden));
       }
 
       const companionIds = getJoinedCompanionIdsInScene(db, campaignId, scene.id);
