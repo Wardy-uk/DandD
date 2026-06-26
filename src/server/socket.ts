@@ -885,6 +885,34 @@ Rules:
           'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
           [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', orientDesc]);
         io.to(`campaign:${campaignId}`).emit('game:narration', { content: orientDesc, actor: 'DM' });
+        // Async AI expansion for scene description — fires for all orientation queries
+        (async () => {
+          try {
+            const orientBlueprint = buildSceneBlueprint(scene);
+            const orientExpansion = await Promise.race([
+              generate({
+                system: `You are a masterful AD&D DM adding one final atmospheric observation. Write exactly 2 sentences.
+Rules:
+- The party is pausing to take stock — describe one specific detail they notice on closer inspection
+- Something that wasn't obvious at first glance: a smell, a marking, a sound from inside the walls
+- Implies history or threat without naming either
+- Voice: specific, weighted, like the room is keeping a secret`,
+                prompt: `Room: ${scene.name}. ${orientBlueprint.roomAmbience}
+${orientBlueprint.clue ? `Detail: ${orientBlueprint.clue}` : ''}
+${orientBlueprint.tracks ? `Signs: ${orientBlueprint.tracks}` : ''}
+Add one final close-inspection detail the party notices.`,
+                maxTokens: 80,
+                temperature: 0.88,
+              }),
+              new Promise<string>((_, reject) => setTimeout(() => reject(new Error('orient expand timeout')), 25_000)),
+            ]) as string;
+            if (orientExpansion?.trim()) {
+              run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', orientExpansion.trim()]);
+              io.to(`campaign:${campaignId}`).emit('game:narration', { content: orientExpansion.trim(), actor: 'DM' });
+            }
+          } catch {}
+        })();
         // ── Companion reaction: darkness ──────────────────────────────────
         if ((scene.light_level || 'normal') === 'dark') {
           try {
@@ -1686,8 +1714,7 @@ Describe one unprompted environmental detail or ambient change the party notices
       io.to(`campaign:${campaignId}`).emit('game:log_entry', {
         id: crypto.randomUUID(),
         campaignId,
-        sessionNumber: 0,
-        timestamp: new Date().toISOString(),
+        sessionNumber: 0,        timestamp: new Date().toISOString(),
         type: 'system',
         actor: player.playerName,
         content: `[OOC] ${message}`,
@@ -1730,4 +1757,6 @@ Describe one unprompted environmental detail or ambient change the party notices
 /** Get list of players currently in a campaign */
 export function getOnlinePlayers(campaignId: string): ConnectedPlayer[] {
   return Array.from(connectedPlayers.values()).filter(p => p.campaignId === campaignId);
+}
+ilter(p => p.campaignId === campaignId);
 }

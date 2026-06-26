@@ -102,6 +102,23 @@ async function start() {
     console.log(`[QUEST] Server running on port ${PORT}`);
     console.log(`[QUEST] Frontend: ${process.env.FRONTEND_URL || 'http://localhost:5174'}`);
   });
+
+  // Pre-warm Ollama so first player request hits a loaded model
+  (async () => {
+    try {
+      await new Promise(r => setTimeout(r, 3000)); // wait for server to fully start
+      const { generate } = await import('./ai/ollama.js');
+      await generate({
+        prompt: 'Ready.',
+        system: 'You are a DM. Say "ready" and nothing else.',
+        maxTokens: 5,
+        temperature: 0.1,
+      });
+      console.log('[Warmup] llama3.1:8b loaded and ready');
+    } catch (err) {
+      console.warn('[Warmup] Model pre-load failed (non-critical):', err);
+    }
+  })();
 }
 
 start().catch((err) => {
