@@ -686,6 +686,50 @@ export function setupSocketHandlers(
           payload: getSceneNpcRoster(db, campaignId, nextScene.id),
         });
         emitCampaignState(io, db, campaignId);
+
+        // ── Cinematic entry narration for first-time rooms (async, fire-and-forget) ──
+        if (wasUnvisited) {
+          (async () => {
+            try {
+              io.to(`campaign:${campaignId}`).emit('game:narration', { content: '…', actor: 'DM', thinking: true });
+              const entryBlueprint = buildSceneBlueprint(nextScene);
+              const entryContext = [
+                `Room: ${nextScene.name}${nextScene.brief ? ` — ${nextScene.brief}` : ''}`,
+                `Atmosphere: ${entryBlueprint.roomAmbience}`,
+                entryBlueprint.clue ? `Detail visible: ${entryBlueprint.clue}` : '',
+                entryBlueprint.tracks ? `Signs of activity: ${entryBlueprint.tracks}` : '',
+                `Hazard type: ${entryBlueprint.trap.kind}`,
+                `Light: ${nextScene.light_level || 'normal'}`,
+                `Exits: ${JSON.parse(nextScene.connections || '[]').filter((c: any) => !c.hidden).map((c: any) => c.direction).join(', ') || 'none'}`,
+                npcsInScene.length > 0 ? `Occupants: ${npcsInScene.map((n: any) => n.name).join(', ')}` : '',
+                `Party: ${character.name} (${character.char_class} level ${character.level})`,
+              ].filter(Boolean);
+              const entryNarration = await Promise.race([
+                generate({
+                  system: `You are a masterful AD&D Dungeon Master describing a room the party has never entered before. Write 4-6 immersive sentences. Think Witcher 3 — specific, atmospheric, alive with texture and unease.
+Rules:
+- Begin mid-sensation or with a concrete sensory detail — NOT "you enter" or "you step into"
+- Flood the senses: the cold, the smell of rot or stone, how sound moves in this space, what the light picks out
+- Name specific architectural features, stains, damage, objects, marks left by previous occupants
+- Hint at history — what happened here, what lived here, how long ago
+- Plant one anomaly or detail that begs investigation: a shape in shadow, a sound that should not be, a surface worn wrong
+- Never open with "The chamber opens up" or "You find yourself"
+- Voice: baroque and strange, as if the dungeon itself has opinions`,
+                  prompt: `${entryContext.join('. ')}.\nDescribe the party entering this room for the first time.`,
+                  maxTokens: 380,
+                  temperature: 0.88,
+                }),
+                new Promise<string>((_, reject) => setTimeout(() => reject(new Error('entry AI timeout')), 14_000)),
+              ]) as string;
+              if (entryNarration?.trim()) {
+                run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                  [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', entryNarration.trim()]);
+                io.to(`campaign:${campaignId}`).emit('game:narration', { content: entryNarration.trim(), actor: 'DM' });
+              }
+            } catch { io.to(`campaign:${campaignId}`).emit('game:narration', { content: '', actor: 'DM' }); }
+          })();
+        }
+
         return;
         } catch (moveErr) {
           console.error('[movement handler error]', moveErr);
@@ -833,17 +877,20 @@ export function setupSocketHandlers(
         actionLocks.add(campaignId);
         try {
           const aiGeneratePromise = generate({
-            system: `You are a terse AD&D Dungeon Master narrating in present tense. One short paragraph, 2-3 sentences.
+            system: `You are a masterful AD&D Dungeon Master narrating in vivid present tense. Write 4-6 rich, immersive sentences. Think Witcher 3 storytelling in D&D form — specific textures, smells, sounds, consequences that land with weight.
 Rules:
 - Address the player as "you" or by their character name (${character.name})
-- Be specific — name objects, textures, sounds, smells drawn from the scene details provided
+- Flood the senses: name specific objects, materials, sounds, smells, temperature. Never be vague
+- Show consequence and stakes — what shifted, what was risked, what the world did in response
 - Never say "nothing happens" or "the moment passes"
 - Never open with "The party" or "You find yourself"
-- If the action is impossible, describe why vividly rather than refusing
-- Voice: dry, wry, like a DM who has seen it all but still enjoys the theatre`,
-            prompt: `${contextParts.join('. ')}.\nPlayer action: "${action}". Narrate the outcome.`,
-            maxTokens: 180,
-            temperature: 0.75,
+- If the action fails, describe the cost vividly — pain, noise, wasted time, something stirred in the dark
+- NPCs react with genuine personality, not script; they have their own read on what just happened
+- End on tension or forward pull — there is always more lurking, always a reason to push deeper
+- Voice: atmospheric and specific, like a DM who finds this world genuinely strange and still surprising`,
+            prompt: `${contextParts.join('. ')}.\nPlayer action: "${action}". Narrate the outcome with full sensory immersion.`,
+            maxTokens: 420,
+            temperature: 0.82,
           });
           // Hard 12-second timeout — prevents Ollama latency from freezing the game
           const aiTimeoutPromise = new Promise<string>((_, reject) =>
