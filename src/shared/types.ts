@@ -299,6 +299,7 @@ export interface ServerToClientEvents {
   'game:turn_prompt': (data: { combatantId: string; name: string; round: number }) => void;
   'game:rival_encounter': (data: { rivalId: string; rivalName: string; rivalSize: number; rivalRelation: string; rivalStrength: number; leaderName: string }) => void;
   'game:rival_resolved': (data: { rivalId: string; rivalName: string }) => void;
+  'game:scene_actions': (data: { actions: Array<{ label: string; action: string; hint: string }> }) => void;
 }
 
 export interface ClientToServerEvents {

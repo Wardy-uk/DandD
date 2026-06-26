@@ -296,6 +296,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
     rivalId: string; rivalName: string; rivalSize: number;
     rivalRelation: string; rivalStrength: number; leaderName: string;
   } | null>(null);
+  const [sceneContextActions, setSceneContextActions] = useState<Array<{ label: string; action: string; hint: string }>>([]);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const headers = { Authorization: `Bearer ${player.token}`, 'Content-Type': 'application/json' };
@@ -441,6 +442,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
 
     const onRivalEncounter = (data: typeof rivalEncounter) => setRivalEncounter(data);
     const onRivalResolved  = () => setRivalEncounter(null);
+    const onSceneActions   = (data: { actions: Array<{ label: string; action: string; hint: string }> }) => setSceneContextActions(data.actions);
 
     socket.on('game:narration', onNarration);
     socket.on('game:scene_enter', onSceneEnter);
@@ -456,6 +458,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
     socket.on('game:turn_prompt', onTurnPrompt);
     socket.on('game:rival_encounter', onRivalEncounter);
     socket.on('game:rival_resolved', onRivalResolved);
+    socket.on('game:scene_actions', onSceneActions);
 
     return () => {
       socket.off('game:narration', onNarration);
@@ -472,6 +475,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
       socket.off('game:turn_prompt', onTurnPrompt);
       socket.off('game:rival_encounter', onRivalEncounter);
       socket.off('game:rival_resolved', onRivalResolved);
+      socket.off('game:scene_actions', onSceneActions);
     };
   }, [socket, fetchContracts]);
 
@@ -931,6 +935,27 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
                     </div>
                   </button>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* Scene-specific contextual actions */}
+          {sceneContextActions.length > 0 && !encounterActive && (
+            <div className="border-b border-leather/8 px-3 py-2">
+              <p className="text-[9px] font-heading uppercase tracking-widest text-ink-faint mb-1.5">In this room</p>
+              <div className="overflow-x-auto">
+                <div className="flex gap-2 flex-nowrap">
+                  {sceneContextActions.map((item) => (
+                    <button
+                      key={item.action}
+                      onClick={() => quickAction(item.action)}
+                      title={item.hint}
+                      className="flex-shrink-0 whitespace-nowrap rounded-full border border-leather/30 bg-parchment-light px-3 py-1.5 text-xs font-heading text-leather-dark active:bg-leather/10 touch-manipulation"
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           )}

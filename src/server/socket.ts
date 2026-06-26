@@ -332,6 +332,51 @@ export function setupSocketHandlers(
               });
             }
           } catch {}
+
+          // ── A: Combat aftermath narration (async, fire-and-forget) ────────
+          (async () => {
+            try {
+              const afterScene = get(db, 'SELECT * FROM scenes WHERE id = ?', [campaign.current_scene_id]) as any;
+              const afterBlueprint = afterScene ? buildSceneBlueprint(afterScene) : null;
+              const hpPct = character.max_hp > 0 ? character.hp / character.max_hp : 1;
+              const cost = hpPct <= 0.25 ? 'badly wounded, barely on their feet'
+                : hpPct <= 0.5 ? 'bloodied and bruised'
+                : hpPct <= 0.75 ? 'shaken but functional'
+                : 'relatively intact';
+              const killedEnemies = resolution.combatResults
+                .filter((r: any) => r.defenderKilled)
+                .map((r: any) => r.defender)
+                .filter(Boolean)
+                .slice(0, 3)
+                .join(', ');
+              const afterContext = [
+                `Scene: ${afterScene?.name || 'the dungeon'}`,
+                afterBlueprint ? `Atmosphere: ${afterBlueprint.roomAmbience}` : '',
+                killedEnemies ? `Defeated: ${killedEnemies}` : 'The enemy is defeated',
+                `Survivor: ${character.name} (${character.char_class}), condition: ${cost} (${character.hp}/${character.max_hp} HP)`,
+              ].filter(Boolean).join('. ');
+              const afterNarration = await Promise.race([
+                generate({
+                  system: `You are a masterful AD&D Dungeon Master narrating the immediate aftermath of a fight. 3-4 sentences, vivid present tense. Think Witcher 3 — specific, atmospheric, the silence after violence.
+Rules:
+- Begin with the sudden quiet after the last enemy falls, or the last blow landing
+- Describe something concrete: what the body looks like, what the room smells like now, what the light reveals
+- Note the physical cost — what the survivor carries out of this moment
+- End on something that pulls forward: a sound, a shape, a reason to keep moving or to be afraid
+- Voice: unflinching and specific, no sentiment`,
+                  prompt: `${afterContext}.\nDescribe the immediate aftermath of this fight.`,
+                  maxTokens: 280,
+                  temperature: 0.85,
+                }),
+                new Promise<string>((_, reject) => setTimeout(() => reject(new Error('aftermath timeout')), 12_000)),
+              ]) as string;
+              if (afterNarration?.trim()) {
+                run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                  [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', afterNarration.trim()]);
+                io.to(`campaign:${campaignId}`).emit('game:narration', { content: afterNarration.trim(), actor: 'DM' });
+              }
+            } catch {}
+          })();
         }
         if (resolution.turnPrompt) {
           io.to(`campaign:${campaignId}`).emit('game:turn_prompt', resolution.turnPrompt);
@@ -656,6 +701,44 @@ export function setupSocketHandlers(
           scene: { ...nextScene, connections },
           description,
         });
+
+        // ── B: Scene-specific contextual action chips ────────────────────────
+        try {
+          const sceneActBlueprint = buildSceneBlueprint(nextScene);
+          const ctxActions: Array<{ label: string; action: string; hint: string }> = [];
+          // Exits first — most likely immediate action
+          connections.forEach((c: any) => {
+            ctxActions.push({ label: `Go ${c.direction}`, action: `I go ${c.direction}`, hint: c.description || `Head ${c.direction}` });
+          });
+          // NPCs present
+          npcsInScene.slice(0, 2).forEach((npc: any) => {
+            ctxActions.push({ label: `Speak to ${npc.name}`, action: `I speak to ${npc.name}`, hint: String(npc.personality || 'Approach and talk').slice(0, 60) });
+          });
+          // Room-specific affordances from blueprint
+          if (sceneActBlueprint.roomSpecificFind) {
+            ctxActions.push({ label: 'Examine the find', action: `I examine it: ${sceneActBlueprint.roomSpecificFind}`, hint: sceneActBlueprint.roomSpecificFind.slice(0, 60) });
+          }
+          if (sceneActBlueprint.tracks) {
+            ctxActions.push({ label: 'Read the signs', action: 'I read the signs and tracks carefully', hint: sceneActBlueprint.tracks.slice(0, 60) });
+          }
+          if (sceneActBlueprint.clue) {
+            ctxActions.push({ label: 'Investigate', action: `I investigate what I can see`, hint: sceneActBlueprint.clue.slice(0, 60) });
+          }
+          if (sceneActBlueprint.trap.kind && sceneActBlueprint.trap.kind !== 'none' && sceneActBlueprint.trap.kind !== 'None') {
+            ctxActions.push({ label: 'Check for traps', action: 'I probe ahead carefully for traps', hint: `Something feels wrong here` });
+          }
+          if (sceneActBlueprint.obstacle && sceneActBlueprint.obstacle !== 'none' && sceneActBlueprint.obstacle !== 'None') {
+            ctxActions.push({ label: 'Study the obstacle', action: `I study ${sceneActBlueprint.obstacle} carefully`, hint: 'Look for weaknesses or a way through' });
+          }
+          if (sceneActBlueprint.lock.kind && sceneActBlueprint.lock.kind !== 'none' && sceneActBlueprint.lock.kind !== 'None') {
+            ctxActions.push({ label: 'Pick the lock', action: `I attempt to pick ${sceneActBlueprint.lock.kind}`, hint: 'Delicate work' });
+          }
+          // Always available
+          ctxActions.push({ label: 'Look around', action: 'Look around', hint: 'Survey your surroundings' });
+          ctxActions.push({ label: 'Listen carefully', action: 'Listen carefully', hint: 'What moves in the dark?' });
+          io.to(`campaign:${campaignId}`).emit('game:scene_actions', { actions: ctxActions.slice(0, 9) });
+        } catch {}
+
         io.to(`campaign:${campaignId}`).emit('game:state_update', {
           type: 'battlefield_update',
           payload: {
@@ -827,6 +910,65 @@ Rules:
       }
 
       if (!outcome) {
+        // ── C: NPC voice — directed speech at a named NPC ───────────────────
+        const npcVoiceTarget = npcsInScene.find((npc: any) => {
+          const npcLower = String(npc.name || '').toLowerCase();
+          return npcLower.length > 2 && action.toLowerCase().includes(npcLower)
+            && /\b(talk|speak|ask|address|say|tell|question|greet|approach|i talk|i speak|i ask|what does|converse)\b/i.test(action);
+        });
+        if (npcVoiceTarget) {
+          actionLocks.add(campaignId);
+          io.to(`campaign:${campaignId}`).emit('game:narration', { content: '…', actor: 'DM', thinking: true });
+          try {
+            const npcRelation = (() => {
+              try { return JSON.parse(npcVoiceTarget.relationship_state || '{}'); } catch { return {}; }
+            })();
+            const trust = npcRelation.trust ?? 5;
+            const bond = npcRelation.bond ?? 0;
+            const tension = npcRelation.tension ?? 0;
+            const relDesc = bond >= 3 ? 'a trusted ally' : tension >= 3 ? 'uneasy, friction between you' : trust >= 6 ? 'cautiously open' : 'a stranger';
+            const npcContext = [
+              `NPC: ${npcVoiceTarget.name} (${npcVoiceTarget.race || ''} ${npcVoiceTarget.char_class || ''})`.trim(),
+              `Personality: ${npcVoiceTarget.personality || 'guarded and watchful'}`,
+              `Disposition: ${npcVoiceTarget.disposition || 'neutral'}`,
+              `Faction affiliation: ${npcVoiceTarget.faction || 'none declared'}`,
+              `Relationship with ${character.name}: ${relDesc}`,
+              `Scene: ${scene.name}${scene.brief ? ` — ${scene.brief}` : ''}`,
+              `Situation: exploration phase, no active encounter`,
+            ].filter(Boolean).join('. ');
+            const npcNarrationPromise = generate({
+              system: `You are roleplaying as a specific NPC in an AD&D dungeon. Respond in their voice — direct speech plus brief action beats. 2-4 sentences total.
+Rules:
+- Stay completely in character; speak AS the NPC, first person
+- Let their personality and disposition shape every word — a hostile NPC is hostile, a cagey one deflects
+- React to the specific question or statement being directed at them
+- Include one small physical action or tell (a look, a gesture, a pause) to make them feel present
+- Do not summarise or narrate in third person
+- Keep it tight — NPCs speak, they don't monologue`,
+              prompt: `${npcContext}.\nPlayer says to ${npcVoiceTarget.name}: "${action}"\nRespond as ${npcVoiceTarget.name}.`,
+              maxTokens: 200,
+              temperature: 0.88,
+            });
+            const npcTimeoutPromise = new Promise<string>((_, reject) =>
+              setTimeout(() => reject(new Error('npc voice timeout')), 12_000));
+            const npcResponse = (await Promise.race([npcNarrationPromise, npcTimeoutPromise])).trim();
+            if (npcResponse) {
+              run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                [crypto.randomUUID(), campaignId, 1, 'narration', npcVoiceTarget.name, npcResponse]);
+              io.to(`campaign:${campaignId}`).emit('game:narration', { content: npcResponse, actor: npcVoiceTarget.name });
+            }
+          } catch {
+            io.to(`campaign:${campaignId}`).emit('game:narration', {
+              content: `${npcVoiceTarget.name} regards you for a moment but says nothing.`,
+              actor: 'DM',
+            });
+          } finally {
+            actionLocks.delete(campaignId);
+          }
+          emitCampaignState(io, db, campaignId);
+          return;
+        }
+
         // Unknown action — AI resolves it. No action ever gets a dead rejection.
         const sceneExits = JSON.parse(scene.connections || '[]')
           .filter((c: any) => !c.hidden)
