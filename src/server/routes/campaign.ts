@@ -23,6 +23,7 @@ import { buildCampaignMapIntel } from '../game/mapIntel.js';
 import { getChronicle } from '../game/chronicle.js';
 import { generate } from '../ai/ollama.js';
 import { seedCampaignStarterPack } from '../game/starterPacks.js';
+import { runNightlyGrowth } from '../ai/nightlyGrowth.js';
 
 export function createCampaignRoutes(db: Database, io: SocketServer): Router {
   const router = Router();
@@ -210,6 +211,12 @@ export function createCampaignRoutes(db: Database, io: SocketServer): Router {
       // player can enter and play; the opening scenes/contracts will be absent
       // but the campaign is not broken.
     }
+
+    // Fire world-building immediately so the map is populated before first join.
+    // Runs async — campaign creation returns instantly, growth happens in background.
+    void runNightlyGrowth(db, id).catch((err) => {
+      console.error('[Campaign] Initial world growth failed:', err);
+    });
 
     res.json({ ok: true, data: { id, name: campaignName, setting: selectedSetting.name, settingId: selectedSetting.id, startMode: chosenStartMode } });
   });

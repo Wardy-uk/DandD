@@ -22,7 +22,6 @@ import {
   tickRivals,
 } from './game/rivals.js';
 import { popDawnSummary, popPendingWorldEvents, surfaceRumours } from './game/nightlyGrowth.js';
-import { runNightlyGrowth } from './ai/nightlyGrowth.js';
 import { checkFactionSceneEntry, isParleyAction, resolveParley } from './game/factions.js';
 import {
   checkCompanionRefusals,
@@ -227,28 +226,6 @@ Open the session with a brief atmospheric narration of what this new watch feels
             });
           }
         } catch {}
-
-        // ── Proactive content growth on join ─────────────────────────────
-        // Triggers immediately if the world is too small (< target scene buffer)
-        // rather than waiting until 3am. Runs at most once per day per campaign.
-        (async () => {
-          try {
-            const growthCheckRow = get(db, 'SELECT last_growth_check_at, ai_growth_enabled FROM campaigns WHERE id = ?', [campaignId]) as any;
-            if (!growthCheckRow?.ai_growth_enabled) return;
-            const today = new Date().toISOString().slice(0, 10);
-            const lastCheck = typeof growthCheckRow.last_growth_check_at === 'string'
-              ? String(growthCheckRow.last_growth_check_at).slice(0, 10)
-              : '';
-            if (lastCheck === today) return;
-            const result = await runNightlyGrowth(db, campaignId);
-            if (result.applied) {
-              console.log(`[Growth on join] ${campaignId}: ${result.summary}`);
-              io.to(`campaign:${campaignId}`).emit('game:state_update', { type: 'map_update', payload: buildCampaignMapIntel(db, campaignId) });
-            }
-          } catch (err) {
-            console.error('[Growth on join]', err);
-          }
-        })();
 
       } else {
         // Campaign not in DB — emit a visible error instead of silently doing nothing
