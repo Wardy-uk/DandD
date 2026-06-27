@@ -228,9 +228,13 @@ Keep additions grounded, gameable, and immediately useful next session.`;
 }
 
 function parseGrowthPlan(raw: string): GrowthPlan {
-  const cleaned = raw.replace(/```json|```/gi, '').trim();
-  const parsed = JSON.parse(cleaned) as GrowthPlan;
-  return parsed;
+  try {
+    const cleaned = raw.replace(/```json|```/gi, '').trim();
+    return JSON.parse(cleaned) as GrowthPlan;
+  } catch {
+    console.warn('[Growth] AI returned non-JSON response — skipping plan:', raw.slice(0, 80));
+    return {};
+  }
 }
 
 function applyGrowthPlan(db: Database, campaignId: string, existingScenes: any[], plan: GrowthPlan) {
