@@ -582,6 +582,42 @@ Rules:
             payload: { phase: 'town', townName },
           });
           emitCampaignState(io, db, campaignId);
+          // ── AI return-to-town narration (context-aware, follows deterministic line) ──
+          {
+            const rtHpPct = character.max_hp > 0 ? character.hp / character.max_hp : 1;
+            const rtCondition = rtHpPct <= 0.25 ? 'badly wounded, barely on their feet'
+              : rtHpPct <= 0.5 ? 'bloodied and bruised'
+              : rtHpPct <= 0.75 ? 'shaken but moving'
+              : 'relatively intact';
+            const rtLog = all(db,
+              "SELECT actor, content FROM game_log WHERE campaign_id = ? AND type IN ('narration','dm_response') ORDER BY created_at DESC LIMIT 5",
+              [campaignId]) as Array<{actor: string; content: string}>;
+            const rtContext = rtLog.reverse().map(r => `${r.actor}: ${r.content.slice(0, 110)}`).join('\n');
+            aiDirector.enqueue({
+              campaignId,
+              type: 'scene',
+              priority: 2,
+              temperature: 0.88,
+              system: `You are a masterful AD&D DM narrating a delver's return to town. Write exactly 3 sentences.
+Rules:
+- Describe the specific physical experience of crossing back into civilisation — what THIS person feels, not generic town atmosphere
+- Acknowledge their condition and what they carry (or don't). Be honest about the cost.
+- End on one grounded, specific sensory detail: the smell of a hearth, noise they didn't realise they'd missed, how the cobblestones feel
+- Voice: unflinching, present tense, earned. No clichés.`,
+              prompt: `Character: ${character.name} (${character.char_class} level ${character.level}), ${rtCondition} (${character.hp}/${character.max_hp} HP).
+Town: ${townName}.
+Final expedition moments:
+${rtContext}
+Narrate their return to town.`,
+              callback: (rtResult) => {
+                if (rtResult?.trim() && !rtResult.startsWith('[The DM pauses')) {
+                  run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                    [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', rtResult.trim()]);
+                  io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: rtResult.trim() });
+                }
+              },
+            });
+          }
         } catch (err) {
           console.error('[town transition error]', err);
           io.to(`campaign:${campaignId}`).emit('game:narration', {
@@ -814,6 +850,30 @@ Narrate the parley exchange.`,
               run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
                 [crypto.randomUUID(), campaignId, 1, 'level_up', 'DM', lu.narration]);
               io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: lu.narration });
+              // ── AI level-up narration ──────────────────────────────────
+              aiDirector.enqueue({
+                campaignId,
+                type: 'scene',
+                priority: 2,
+                temperature: 0.90,
+                system: `You are a masterful AD&D DM narrating the moment a character crosses a level threshold. Write exactly 3 sentences.
+Rules:
+- Describe the felt, physical reality of levelling — not glowing or abstract, but something in the body, the reflexes, the eyes
+- Name ONE concrete change: how their sword arm moves differently, what they notice in the room that they missed before
+- End with what the dungeon cost to earn this — honest and specific
+- Voice: precise, understated, earned. No triumphant tone. No light effects.`,
+                prompt: `Character: ${character.name}, ${character.char_class}, just reached level ${lu.newLevel ?? '?'}.
+HP gained: ${lu.hpGain ?? 0}. ${lu.classAnnouncement ?? ''}
+Scene: ${nextScene.name}.
+Narrate the moment the level break happens.`,
+                callback: (luResult) => {
+                  if (luResult?.trim() && !luResult.startsWith('[The DM pauses')) {
+                    run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                      [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', luResult.trim()]);
+                    io.to(`campaign:${campaignId}`).emit('game:narration', { content: luResult.trim(), actor: 'DM' });
+                  }
+                },
+              });
             }
           }
           // Push updated character stats to clients after XP award

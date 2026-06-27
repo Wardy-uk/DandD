@@ -31,6 +31,7 @@ import { surfaceRumours } from '../game/nightlyGrowth.js';
 import { getCampaignState, saveCampaignState } from '../game/campaignState.js';
 import { v4 as uuid } from 'uuid';
 import { buildCampaignMapIntel } from '../game/mapIntel.js';
+import { aiDirector } from '../ai/director.js';
 
 export function createTownRoutes(db: Database, io: SocketServer): Router {
   const router = Router();
@@ -404,6 +405,30 @@ export function createTownRoutes(db: Database, io: SocketServer): Router {
     io.to(`campaign:${campaignId}`).emit('game:state_update', {
       type: 'companions_update',
       payload: getPartyCompanions(db, campaignId),
+    });
+    // ── AI hire first impression: prospect speaks in their own voice ──────────
+    aiDirector.enqueue({
+      campaignId,
+      type: 'npc_dialogue',
+      priority: 3,
+      temperature: 0.90,
+      system: `You are roleplaying as ${prospect.name}, a ${prospect.race} ${prospect.charClass} who just agreed to join an adventuring party. Write exactly 2 sentences.
+Personality: ${prospect.personality}
+Voice: ${prospect.voiceNotes || 'direct and pragmatic'}
+Rules:
+- Speak in first person — this is their first real statement to the party after sealing the deal
+- Something specific: their attitude about the work, what they bring, what they expect
+- Match their personality fully — not a generic speech
+- Do NOT use quotation marks in your response`,
+      prompt: `${prospect.name} (level ${prospect.level} ${prospect.race} ${prospect.charClass}) has just been hired and taken their first week's advance (${weeklyAsk} GP). What do they say to the party?`,
+      callback: (hireAI) => {
+        if (hireAI?.trim() && !hireAI.startsWith('[The DM pauses')) {
+          const hireLine = hireAI.trim().replace(/^["'\`]|["'\`]$/g, '');
+          run(db, 'INSERT INTO game_log (id, campaign_id, type, actor, content) VALUES (?, ?, ?, ?, ?)',
+            [uuid(), campaignId, 'narration', prospect.name, hireLine]);
+          io.to(`campaign:${campaignId}`).emit('game:narration', { actor: prospect.name, content: hireLine });
+        }
+      },
     });
 
     const updatedChar = get(db, 'SELECT * FROM characters WHERE id = ?', [char.id]) as any;
