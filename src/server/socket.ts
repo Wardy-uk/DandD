@@ -226,6 +226,12 @@ Open the session with a brief atmospheric narration of what this new watch feels
             });
           }
         } catch {}
+      } else {
+        // Campaign not in DB — emit a visible error instead of silently doing nothing
+        socket.emit('game:state_update', { type: 'error', payload: `Campaign not found (${campaignId}). Please return to the campaign list.` });
+        socket.emit('game:narration', { actor: 'DM', content: 'Campaign not found — please return to the campaign list and try again.' });
+        console.log(`[Socket] Campaign ${campaignId} not found — join rejected for player ${playerId}`);
+        return;
       }
 
       console.log(`[Socket] ${player.display_name || player.username} joined campaign ${campaignId}`);
