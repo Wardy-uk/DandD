@@ -22,6 +22,7 @@ import {
   tickRivals,
 } from './game/rivals.js';
 import { popDawnSummary, popPendingWorldEvents, surfaceRumours } from './game/nightlyGrowth.js';
+import { assessCampaignReadiness, runNightlyGrowth as runContentGrowth } from './ai/nightlyGrowth.js';
 import { checkFactionSceneEntry, isParleyAction, resolveParley } from './game/factions.js';
 import {
   checkCompanionRefusals,
@@ -850,6 +851,10 @@ Narrate the parley exchange.`,
             actor: 'DM',
             content: `The way ${movementTarget.direction} leads nowhere usable yet.`,
           });
+          // Player hit the map edge — expand the world immediately
+          void runContentGrowth(db, campaignId).catch((err) => {
+            console.error('[Socket] Edge growth failed:', err);
+          });
           return;
         }
 
@@ -1010,6 +1015,13 @@ Narrate the moment of encounter.`,
           scene: { ...nextScene, connections },
           description,
         });
+
+        // Proactively expand the world if the unexplored scene buffer is running low
+        if (assessCampaignReadiness(db, campaignId).needsGrowth) {
+          void runContentGrowth(db, campaignId).catch((err) => {
+            console.error('[Socket] Proactive growth failed:', err);
+          });
+        }
 
         // ── B: Scene-specific contextual action chips ────────────────────────
         emitSceneActions(nextScene, npcsInScene, connections, 'movement');
