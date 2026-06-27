@@ -130,14 +130,16 @@ start().catch((err) => {
 
 function gracefulShutdown(signal: string) {
   console.log(`[QUEST] ${signal} received — shutting down gracefully...`);
+  // Save DB immediately — don't wait for HTTP drain.
+  // pm2's default kill_timeout is 1600ms; if WebSocket connections stall httpServer.close(),
+  // pm2 sends SIGKILL before the callback fires and in-memory data is lost.
+  closeDb();
   httpServer.close(() => {
-    closeDb();
     console.log('[QUEST] Server closed.');
     process.exit(0);
   });
   // Force exit after 5s if close stalls
   setTimeout(() => {
-    closeDb();
     process.exit(0);
   }, 5_000).unref();
 }
