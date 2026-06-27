@@ -358,8 +358,11 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
       setCurrentScene(data.scene);
       setEncounterActive(false);
       setDmThinking('');
-      addLogEntry('scene_enter', 'DM', data.description);
-      playSound('scene_enter');
+      // description is empty when server detected it's already in recent_logs (reconnect case)
+      if (data.description) {
+        addLogEntry('scene_enter', 'DM', data.description);
+        playSound('scene_enter');
+      }
     };
     const onPlayerAction = (data: { playerId: string; playerName: string; action: string }) => {
       addLogEntry('player_action', data.playerName, data.action);

@@ -156,17 +156,21 @@ export function setupSocketHandlers(
             const characters = all(db,
               'SELECT name, level, race, char_class FROM characters WHERE campaign_id = ? AND status = "active"',
               [campaignId]) as any[];
-            socket.emit('game:scene_enter', {
-              scene: {
-                ...scene,
-                connections: JSON.parse(scene.connections || '[]').filter((entry: any) => !entry.hidden),
-              },
-              description: describeScene({
-                scene,
-                npcs: npcsInScene,
-                party: characters,
-              }),
-            });
+            {
+              const joinDesc = describeScene({ scene, npcs: npcsInScene, party: characters });
+              // Only include description if it's not already the most recent scene entry in the log
+              // (prevents duplicate on reconnect — recent_logs already shows it)
+              const lastSceneLog = recentLogs.find(
+                (l: any) => l.type === 'scene_enter' && l.content === joinDesc
+              );
+              socket.emit('game:scene_enter', {
+                scene: {
+                  ...scene,
+                  connections: JSON.parse(scene.connections || '[]').filter((entry: any) => !entry.hidden),
+                },
+                description: lastSceneLog ? '' : joinDesc,
+              });
+            }
             socket.emit('game:state_update', {
               type: 'battlefield_update',
               payload: {
