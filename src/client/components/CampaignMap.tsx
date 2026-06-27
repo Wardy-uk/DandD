@@ -76,18 +76,20 @@ export default function CampaignMap({ mapData }: Props) {
     );
   }
 
-  const nodeWidth = 112;
-  const nodeHeight = 56;
-  const colGap = 150;
-  const rowGap = 100;
+  const nodeWidth = 136;
+  const nodeHeight = 60;
+  const colGap = 184;
+  const rowGap = 124;
+  // Normalise lanes so minimum is 0 (guards against negative lane values)
+  const minLane = Math.min(...mapData.nodes.map((n) => n.lane));
   const positioned = mapData.nodes.map((node) => ({
     ...node,
-    x: 24 + node.depth * colGap,
-    y: 28 + node.lane * rowGap,
+    x: 28 + node.depth * colGap,
+    y: 28 + (node.lane - minLane) * rowGap,
   }));
   const byId = new Map(positioned.map((node) => [node.id, node]));
-  const maxX = Math.max(...positioned.map((node) => node.x)) + nodeWidth + 36;
-  const maxY = Math.max(...positioned.map((node) => node.y)) + nodeHeight + 36;
+  const maxX = Math.max(...positioned.map((node) => node.x)) + nodeWidth + 44;
+  const maxY = Math.max(...positioned.map((node) => node.y)) + nodeHeight + 44;
   const focus = positioned.find((node) => node.current) || positioned[0];
 
   return (
@@ -109,21 +111,43 @@ export default function CampaignMap({ mapData }: Props) {
         </div>
       )}
 
-      <div className="overflow-x-auto overflow-y-hidden rounded-lg border border-leather/10 bg-parchment/70 [-webkit-overflow-scrolling:touch]">
+      <div className="overflow-x-auto overflow-y-auto rounded-lg border border-leather/10 bg-parchment/70 [-webkit-overflow-scrolling:touch]">
         <div style={{ width: maxX, height: maxY, position: 'relative' }}>
           <svg width={maxX} height={maxY} className="absolute inset-0">
             {mapData.edges.map((edge) => {
               const from = byId.get(edge.from);
               const to = byId.get(edge.to);
               if (!from || !to) return null;
-              const x1 = from.x + nodeWidth;
-              const y1 = from.y + nodeHeight / 2;
-              const x2 = to.x;
-              const y2 = to.y + nodeHeight / 2;
+              // Determine if this is a vertical/same-column edge (e.g. "down"/"up")
+              const sameDepth = from.depth === to.depth;
+              let pathD: string;
+              let labelX: number;
+              let labelY: number;
+              if (sameDepth || Math.abs((to.y + nodeHeight / 2) - (from.y + nodeHeight / 2)) > Math.abs(to.x - from.x)) {
+                // Vertical edge: connect bottom of FROM to top of TO (or reverse)
+                const goingDown = to.y > from.y;
+                const x1v = from.x + nodeWidth / 2;
+                const y1v = goingDown ? from.y + nodeHeight : from.y;
+                const x2v = to.x + nodeWidth / 2;
+                const y2v = goingDown ? to.y : to.y + nodeHeight;
+                const midY = (y1v + y2v) / 2;
+                pathD = `M ${x1v} ${y1v} C ${x1v} ${midY}, ${x2v} ${midY}, ${x2v} ${y2v}`;
+                labelX = (x1v + x2v) / 2;
+                labelY = midY - 6;
+              } else {
+                // Horizontal edge: connect right of FROM to left of TO
+                const x1h = from.x + nodeWidth;
+                const y1h = from.y + nodeHeight / 2;
+                const x2h = to.x;
+                const y2h = to.y + nodeHeight / 2;
+                pathD = `M ${x1h} ${y1h} C ${x1h + 40} ${y1h}, ${x2h - 40} ${y2h}, ${x2h} ${y2h}`;
+                labelX = (x1h + x2h) / 2;
+                labelY = (y1h + y2h) / 2 - 6;
+              }
               return (
                 <g key={`${edge.from}-${edge.to}-${edge.direction}`}>
                   <path
-                    d={`M ${x1} ${y1} C ${x1 + 36} ${y1}, ${x2 - 36} ${y2}, ${x2} ${y2}`}
+                    d={pathD}
                     fill="none"
                     stroke={edge.locked ? '#8b1a1a' : '#7c5b3c'}
                     strokeDasharray={edge.locked ? '5 4' : undefined}
@@ -131,8 +155,8 @@ export default function CampaignMap({ mapData }: Props) {
                     opacity="0.7"
                   />
                   <text
-                    x={(x1 + x2) / 2}
-                    y={(y1 + y2) / 2 - 6}
+                    x={labelX}
+                    y={labelY}
                     textAnchor="middle"
                     fontSize="10"
                     fill="#7b6a58"
@@ -154,7 +178,7 @@ export default function CampaignMap({ mapData }: Props) {
                     ? 'border-leather/20 bg-parchment-light'
                     : 'border-leather/10 bg-parchment-dark/40 border-dashed'
               }`}
-              style={{ left: node.x, top: node.y, width: nodeWidth, minHeight: nodeHeight }}
+              style={{ left: node.x, top: node.y, width: nodeWidth, minHeight: nodeHeight, boxSizing: "border-box" }}
             >
               <div className={`font-heading text-xs font-bold ${node.current ? 'text-leather-dark' : 'text-ink-light'}`}>
                 {node.name}
