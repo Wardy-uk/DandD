@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { Socket } from 'socket.io-client';
 import CharacterSheet from './CharacterSheet.js';
 import CampaignMap from './CampaignMap.js';
@@ -302,6 +302,9 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
   const [streamingMsg, setStreamingMsg] = useState<{ id: string; actor: string; text: string } | null>(null);
   const streamingMsgRef = useRef<{ id: string; actor: string; text: string } | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
+  const firstUnreadRef = useRef<HTMLDivElement>(null);
+  const [firstUnreadId, setFirstUnreadId] = useState<string | null>(null);
+  const isReplayScrollRef = useRef(false);
 
   const headers = { Authorization: `Bearer ${player.token}`, 'Content-Type': 'application/json' };
 
@@ -375,9 +378,34 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
     };
     const onStateUpdate = (data: { type: string; payload: any }) => {
       if (data.type === 'recent_logs') {
-        setGameLog(data.payload.map((l: any) => ({
+        const logs: any[] = data.payload;
+        const storageKey = `quest_lastseen_${campaignId}`;
+        const lastSeenId = localStorage.getItem(storageKey);
+
+        // Persist latest DB entry ID so next join knows where we left off
+        if (logs.length > 0) {
+          localStorage.setItem(storageKey, logs[logs.length - 1].id);
+        }
+
+        // Determine first unread entry
+        if (lastSeenId && logs.length > 0) {
+          const lastSeenIdx = logs.findIndex((l: any) => l.id === lastSeenId);
+          if (lastSeenIdx !== -1 && lastSeenIdx < logs.length - 1) {
+            setFirstUnreadId(logs[lastSeenIdx + 1].id);
+          } else if (lastSeenIdx === -1) {
+            // All entries are newer than our last seen — mark the first
+            setFirstUnreadId(logs[0].id);
+          } else {
+            setFirstUnreadId(null); // fully caught up
+          }
+        } else {
+          setFirstUnreadId(null); // first ever session — just scroll to bottom
+        }
+
+        setGameLog(logs.map((l: any) => ({
           id: l.id, type: l.type, actor: l.actor, content: l.content, timestamp: l.timestamp,
         })));
+        isReplayScrollRef.current = true;
       } else if (data.type === 'character_update') {
         setCharacter((prev: any) => {
           if (prev?.status !== 'dead' && data.payload?.status === 'dead') {
@@ -506,6 +534,14 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
   }, [socket, fetchContracts]);
 
   useEffect(() => {
+    if (isReplayScrollRef.current) {
+      isReplayScrollRef.current = false;
+      // Scroll to first unread marker if present; otherwise fall through to bottom
+      if (firstUnreadRef.current) {
+        firstUnreadRef.current.scrollIntoView({ behavior: 'smooth' });
+        return;
+      }
+    }
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [gameLog, dmThinking, streamingMsg]);
 
@@ -693,9 +729,18 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
           entry.actor !== 'System' &&
           companionNames.has(entry.actor);
 
+        const isFirstUnread = entry.id === firstUnreadId;
+
         return (
+        <React.Fragment key={entry.id}>
+          {isFirstUnread && (
+            <div ref={firstUnreadRef} className="flex items-center gap-2 my-2">
+              <div className="flex-1 h-px bg-leather/25" />
+              <span className="text-[10px] font-body text-ink-faint/50 tracking-widest uppercase">new</span>
+              <div className="flex-1 h-px bg-leather/25" />
+            </div>
+          )}
         <div
-          key={entry.id}
           className={`animate-fade-in ${
             isCompanionSpeech
               ? 'pl-5 ml-2 border-l-2 border-amber-400/30'
@@ -731,6 +776,7 @@ export default function GameView({ apiUrl, player, campaignId, characterId, sock
             {entry.content}
           </p>
         </div>
+        </React.Fragment>
         );
       })}
       {streamingMsg && (
