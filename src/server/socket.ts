@@ -377,6 +377,40 @@ Add 1-2 sentences of physical combat description.`,
           }
         }
 
+        // ── Near-death AI narration ────────────────────────────────────────
+        for (const uid of resolution.updatedCharacterIds) {
+          const fallenChar = get(db, 'SELECT * FROM characters WHERE id = ?', [uid]) as any;
+          if (fallenChar?.status === 'dying') {
+            const ndScene = campaign.current_scene_id
+              ? get(db, 'SELECT * FROM scenes WHERE id = ?', [campaign.current_scene_id]) as any
+              : null;
+            const ndBlueprint = ndScene ? buildSceneBlueprint(ndScene) : null;
+            aiDirector.enqueue({
+              campaignId,
+              type: 'combat_narration',
+              priority: 2,
+              temperature: 0.90,
+              system: `You are a masterful AD&D DM narrating the moment a hero falls in combat. Write exactly 3 sentences.
+Rules:
+- First: the physical reality of the fall — what hit them, how they land, what they can no longer do
+- Second: what they perceive from the ground — sounds, light, the stone floor, ally voices
+- Third: the fragile thread — not dead, not yet, but barely
+- Voice: quiet, precise, present tense. No melodrama. No reassurance.`,
+              prompt: `Scene: ${ndScene?.name || 'the dungeon'}. ${ndBlueprint?.roomAmbience || ''}
+${fallenChar.name} (${fallenChar.char_class} level ${fallenChar.level}) just dropped to ${fallenChar.hp} HP — dying.
+Narrate the moment they fall.`,
+              callback: (ndResult) => {
+                if (ndResult?.trim() && !ndResult.startsWith('[The DM pauses')) {
+                  run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                    [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', ndResult.trim()]);
+                  io.to(`campaign:${campaignId}`).emit('game:narration', { content: ndResult.trim(), actor: 'DM' });
+                }
+              },
+            });
+            break; // narrate once per round even if multiple go down
+          }
+        }
+
         if (resolution.encounterUpdate) {
           io.to(`campaign:${campaignId}`).emit('game:encounter_update', resolution.encounterUpdate);
         }
@@ -672,6 +706,34 @@ Rules:
             [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', note]);
           io.to(`campaign:${campaignId}`).emit('game:narration', { actor: 'DM', content: note });
         }
+        // ── AI faction parley narration ─────────────────────────────────
+        {
+          const parleyBlueprint = buildSceneBlueprint(scene);
+          const parleyOutcome = parleyResult.resolved ? 'resolved in their favour' : 'failed or worsened tensions';
+          aiDirector.enqueue({
+            campaignId,
+            type: 'scene',
+            priority: 3,
+            temperature: 0.88,
+            system: `You are a masterful AD&D DM narrating a diplomatic encounter with a dungeon faction. Write exactly 3 sentences.
+Rules:
+- Describe the physical reality: how the faction members respond — body language, what they do with their hands, how they look at the party
+- Capture what is unspoken — the power balance, what was gained or conceded
+- End on something concrete: a concession made, a warning issued, a charged silence
+- Voice: tense, grounded. No archness or fantasy cliché.`,
+            prompt: `Scene: ${scene.name}. ${parleyBlueprint.roomAmbience}
+Faction: ${parleyFactionKey}. Player action: "${action}". Outcome: ${parleyOutcome}.
+${parleyResult.notes.join(' ')}
+Narrate the parley exchange.`,
+            callback: (parleyNarration) => {
+              if (parleyNarration?.trim() && !parleyNarration.startsWith('[The DM pauses')) {
+                run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                  [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', parleyNarration.trim()]);
+                io.to(`campaign:${campaignId}`).emit('game:narration', { content: parleyNarration.trim(), actor: 'DM' });
+              }
+            },
+          });
+        }
         emitCampaignState(io, db, campaignId);
         return;
       }
@@ -778,6 +840,32 @@ Rules:
               leaderName: character.name,
             });
           }
+          // ── AI rival encounter narration ──────────────────────────────
+          const firstRival = rivalPresence.rivals[0];
+          const rivalSceneBlueprint = buildSceneBlueprint(nextScene);
+          aiDirector.enqueue({
+            campaignId,
+            type: 'scene',
+            priority: 3,
+            temperature: 0.90,
+            system: `You are a masterful AD&D DM narrating the moment two delving parties discover each other in a dungeon. Write exactly 3 sentences.
+Rules:
+- Describe the physical moment of recognition: torchlight catching faces, weapons half-raised, the pause before anyone speaks
+- Give the rival company a distinct presence: their gear, their bearing, what they have been through
+- Capture the specific weight of their relationship — unknown strangers, bitter rivals, wary contacts
+- Voice: immediate, specific, grounded. No fantasy cliché.`,
+            prompt: `Scene: ${nextScene.name}. ${rivalSceneBlueprint.roomAmbience}
+Rival party: ${firstRival.name} (${firstRival.size} members, relation: ${firstRival.relation}, strength: ${firstRival.strength})
+${character.name}'s party enters and finds them here.
+Narrate the moment of encounter.`,
+            callback: (rivalResult) => {
+              if (rivalResult?.trim() && !rivalResult.startsWith('[The DM pauses')) {
+                run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                  [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', rivalResult.trim()]);
+                io.to(`campaign:${campaignId}`).emit('game:narration', { content: rivalResult.trim(), actor: 'DM' });
+              }
+            },
+          });
         }
 
         // ── Faction patrol check on scene entry ─────────────────────────
@@ -1933,6 +2021,37 @@ Rules:
           rivalId,
           rivalName: result.rival?.name,
         });
+        // ── AI rival clash outcome narration ───────────────────────────
+        {
+          const resolveRow = get(db, 'SELECT current_scene_id FROM campaigns WHERE id = ?', [campaignId]) as any;
+          const resolveScene = resolveRow?.current_scene_id
+            ? get(db, 'SELECT * FROM scenes WHERE id = ?', [resolveRow.current_scene_id]) as any
+            : null;
+          const resolveBlueprint = resolveScene ? buildSceneBlueprint(resolveScene) : null;
+          aiDirector.enqueue({
+            campaignId,
+            type: 'scene',
+            priority: 3,
+            temperature: 0.90,
+            system: `You are a masterful AD&D DM narrating the aftermath of a confrontation between two delving parties. Write exactly 3 sentences.
+Rules:
+- Describe what the rival party does immediately after: how they move, what they say as they leave or settle, what their hands do
+- Capture the emotional residue — what it cost or gained on both sides
+- End with something concrete about what changed between the groups
+- Voice: tight, unsentimental, specific.`,
+            prompt: `Scene: ${resolveScene?.name || 'the dungeon'}. ${resolveBlueprint?.roomAmbience || ''}
+Rival: ${result.rival?.name || 'the rival party'}. Confrontation type: ${validChoice}.
+${result.notes.join(' ')}
+Narrate the immediate aftermath.`,
+            callback: (clashNarration) => {
+              if (clashNarration?.trim() && !clashNarration.startsWith('[The DM pauses')) {
+                run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                  [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', clashNarration.trim()]);
+                io.to(`campaign:${campaignId}`).emit('game:narration', { content: clashNarration.trim(), actor: 'DM' });
+              }
+            },
+          });
+        }
         emitCampaignState(io, db, campaignId);
       } catch (e) {
         console.error('[game:rival_resolve error]', e);
