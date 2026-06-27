@@ -88,7 +88,7 @@ export default function CampaignMap({ mapData }: Props) {
     y: 28 + (node.lane - minLane) * rowGap,
   }));
   const byId = new Map(positioned.map((node) => [node.id, node]));
-  const maxX = Math.max(...positioned.map((node) => node.x)) + nodeWidth + 44;
+  const maxX = Math.max(...positioned.map((node) => node.x)) + nodeWidth + 72;
   const maxY = Math.max(...positioned.map((node) => node.y)) + nodeHeight + 44;
   const focus = positioned.find((node) => node.current) || positioned[0];
 
@@ -118,29 +118,32 @@ export default function CampaignMap({ mapData }: Props) {
               const from = byId.get(edge.from);
               const to = byId.get(edge.to);
               if (!from || !to) return null;
-              // Determine if this is a vertical/same-column edge (e.g. "down"/"up")
-              const sameDepth = from.depth === to.depth;
               let pathD: string;
               let labelX: number;
               let labelY: number;
-              if (sameDepth || Math.abs((to.y + nodeHeight / 2) - (from.y + nodeHeight / 2)) > Math.abs(to.x - from.x)) {
-                // Vertical edge: connect bottom of FROM to top of TO (or reverse)
-                const goingDown = to.y > from.y;
-                const x1v = from.x + nodeWidth / 2;
-                const y1v = goingDown ? from.y + nodeHeight : from.y;
-                const x2v = to.x + nodeWidth / 2;
-                const y2v = goingDown ? to.y : to.y + nodeHeight;
-                const midY = (y1v + y2v) / 2;
-                pathD = `M ${x1v} ${y1v} C ${x1v} ${midY}, ${x2v} ${midY}, ${x2v} ${y2v}`;
-                labelX = (x1v + x2v) / 2;
-                labelY = midY - 6;
+              if (from.depth === to.depth) {
+                // Same-column edge — draw a bracket to the RIGHT of both nodes
+                // so it stays outside the node boxes and is clearly visible
+                const bx = Math.max(from.x, to.x) + nodeWidth + 20;
+                const r = 8; // corner radius
+                const fy = from.y + nodeHeight / 2;
+                const ty = to.y + nodeHeight / 2;
+                const fr = from.x + nodeWidth;
+                const tr = to.x + nodeWidth;
+                const goDown = ty > fy;
+                pathD = goDown
+                  ? `M ${fr} ${fy} L ${bx - r} ${fy} Q ${bx} ${fy} ${bx} ${fy + r} L ${bx} ${ty - r} Q ${bx} ${ty} ${bx - r} ${ty} L ${tr} ${ty}`
+                  : `M ${fr} ${fy} L ${bx - r} ${fy} Q ${bx} ${fy} ${bx} ${fy - r} L ${bx} ${ty + r} Q ${bx} ${ty} ${bx - r} ${ty} L ${tr} ${ty}`;
+                labelX = bx + 6;
+                labelY = (fy + ty) / 2 + 4;
               } else {
-                // Horizontal edge: connect right of FROM to left of TO
+                // Cross-column edge — bezier from right of FROM to left of TO
                 const x1h = from.x + nodeWidth;
                 const y1h = from.y + nodeHeight / 2;
                 const x2h = to.x;
                 const y2h = to.y + nodeHeight / 2;
-                pathD = `M ${x1h} ${y1h} C ${x1h + 40} ${y1h}, ${x2h - 40} ${y2h}, ${x2h} ${y2h}`;
+                const cp = Math.abs(x2h - x1h) * 0.45;
+                pathD = `M ${x1h} ${y1h} C ${x1h + cp} ${y1h}, ${x2h - cp} ${y2h}, ${x2h} ${y2h}`;
                 labelX = (x1h + x2h) / 2;
                 labelY = (y1h + y2h) / 2 - 6;
               }
@@ -157,7 +160,7 @@ export default function CampaignMap({ mapData }: Props) {
                   <text
                     x={labelX}
                     y={labelY}
-                    textAnchor="middle"
+                    textAnchor={from.depth === to.depth ? 'start' : 'middle'}
                     fontSize="10"
                     fill="#7b6a58"
                   >
