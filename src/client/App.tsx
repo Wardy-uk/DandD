@@ -6,8 +6,8 @@ import CharacterCreate from './components/CharacterCreate.js';
 import GameView from './components/GameView.js';
 import AdminPanel from './components/AdminPanel.js';
 import AdventurerRoster from './components/AdventurerRoster.js';
-import PwaPrompt from './components/PwaPrompt.js';
 import VolumeControl from './components/VolumeControl.js';
+import { fullRefreshQuestPwa } from './pwa.js';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'https://pi5.tailecb90f.ts.net';
@@ -28,6 +28,7 @@ export default function App() {
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [characterId, setCharacterId] = useState<string | null>(null);
   const [socket, setSocket] = useState<Socket | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Restore session from localStorage
   useEffect(() => {
@@ -138,6 +139,18 @@ export default function App() {
                   </button>
                 )}
                 <button
+                  onClick={async () => {
+                    setRefreshing(true);
+                    await fullRefreshQuestPwa();
+                    setRefreshing(false);
+                  }}
+                  disabled={refreshing}
+                  className="text-xs text-leather hover:text-leather-dark transition-colors font-body disabled:opacity-50"
+                  title="Full refresh — pulls latest client build"
+                >
+                  {refreshing ? 'Refreshing…' : 'Refresh'}
+                </button>
+                <button
                   onClick={handleLogout}
                   className="text-xs text-leather hover:text-blood transition-colors font-body"
                 >
@@ -151,7 +164,6 @@ export default function App() {
 
       {/* Main Content */}
       <main className={view === 'game' ? '' : 'mx-auto max-w-7xl px-3 py-3 sm:px-6 sm:py-6'}>
-        {view !== 'game' && <PwaPrompt />}
         {view === 'login' && (
           <Login apiUrl={API_URL} onLogin={handleLogin} />
         )}
