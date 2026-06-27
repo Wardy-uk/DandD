@@ -253,17 +253,32 @@ export function setupSocketHandlers(
       const campaign = get(db, 'SELECT * FROM campaigns WHERE id = ?', [campaignId]) as any;
 
       // ── D: emitSceneActions — regenerate contextual action chips ─────────
-      function emitSceneActions(targetScene: any, targetNpcs: any[], targetConnections: any[]) {
+      function emitSceneActions(
+        targetScene: any,
+        targetNpcs: any[],
+        targetConnections: any[],
+        context: 'post_combat' | 'post_loot' | 'movement' | 'default' = 'default',
+      ) {
         try {
           const sceneActBlueprint = buildSceneBlueprint(targetScene);
           const ctxActions: Array<{ label: string; action: string; hint: string }> = [];
+
+          // Context-specific priority chips
+          if (context === 'post_combat') {
+            ctxActions.push({ label: 'Search the bodies', action: 'I search the bodies', hint: 'Strip the fallen of anything useful' });
+            ctxActions.push({ label: 'Tend wounds', action: 'I tend to my wounds', hint: 'Bind injuries before moving on' });
+            ctxActions.push({ label: 'Listen for more', action: 'Listen carefully', hint: 'Is there anything else coming?' });
+          } else if (context === 'post_loot') {
+            ctxActions.push({ label: 'Examine the find', action: 'I examine what I found', hint: 'Look it over properly' });
+          }
+
           targetConnections.forEach((c: any) => {
             ctxActions.push({ label: `Go ${c.direction}`, action: `I go ${c.direction}`, hint: c.description || `Head ${c.direction}` });
           });
           targetNpcs.slice(0, 2).forEach((npc: any) => {
             ctxActions.push({ label: `Speak to ${npc.name}`, action: `I speak to ${npc.name}`, hint: String(npc.personality || 'Approach and talk').slice(0, 60) });
           });
-          if (sceneActBlueprint.roomSpecificFind) {
+          if (context !== 'post_loot' && sceneActBlueprint.roomSpecificFind) {
             ctxActions.push({ label: 'Examine the find', action: `I examine it: ${sceneActBlueprint.roomSpecificFind}`, hint: sceneActBlueprint.roomSpecificFind.slice(0, 60) });
           }
           if (sceneActBlueprint.tracks) {
@@ -281,8 +296,10 @@ export function setupSocketHandlers(
           if (sceneActBlueprint.lock.kind && sceneActBlueprint.lock.kind !== 'none' && sceneActBlueprint.lock.kind !== 'None') {
             ctxActions.push({ label: 'Pick the lock', action: `I attempt to pick ${sceneActBlueprint.lock.kind}`, hint: 'Delicate work' });
           }
-          ctxActions.push({ label: 'Look around', action: 'Look around', hint: 'Survey your surroundings' });
-          ctxActions.push({ label: 'Listen carefully', action: 'Listen carefully', hint: 'What moves in the dark?' });
+          if (context !== 'post_combat') {
+            ctxActions.push({ label: 'Look around', action: 'Look around', hint: 'Survey your surroundings' });
+            ctxActions.push({ label: 'Listen carefully', action: 'Listen carefully', hint: 'What moves in the dark?' });
+          }
           io.to(`campaign:${campaignId}`).emit('game:scene_actions', { actions: ctxActions.slice(0, 9) });
         } catch {}
       }
@@ -482,7 +499,7 @@ Rules:
             const postCombatNpcs = all(db,
               'SELECT name, personality FROM npcs WHERE campaign_id = ? AND location_scene_id = ? AND alive = 1',
               [campaignId, postCombatScene.id]) as any[];
-            emitSceneActions(postCombatScene, postCombatNpcs, JSON.parse(postCombatScene.connections || '[]').filter((c: any) => !c.hidden));
+            emitSceneActions(postCombatScene, postCombatNpcs, JSON.parse(postCombatScene.connections || '[]').filter((c: any) => !c.hidden), 'post_combat');
           }
         }
         if (resolution.turnPrompt) {
@@ -810,7 +827,7 @@ Rules:
         });
 
         // ── B: Scene-specific contextual action chips ────────────────────────
-        emitSceneActions(nextScene, npcsInScene, connections);
+        emitSceneActions(nextScene, npcsInScene, connections, 'movement');
 
         io.to(`campaign:${campaignId}`).emit('game:state_update', {
           type: 'battlefield_update',
@@ -1071,7 +1088,8 @@ Rules:
           if (matchedSpell) {
             const [matchedName, spellDef] = matchedSpell;
             actionLocks.add(campaignId);
-            io.to(`campaign:${campaignId}`).emit('game:narration', { content: '…', actor: 'DM', thinking: true });
+            const spellStreamId = crypto.randomUUID();
+            io.to(`campaign:${campaignId}`).emit('game:narration_stream', { id: spellStreamId, chunk: '', actor: 'DM' });
             try {
               let mechanicalNote = '';
               let hpRestored = 0;
@@ -1099,20 +1117,19 @@ Rules:
                 `Scene light: ${scene.light_level || 'normal'}`,
               ].join('. ');
 
-              const spellNarration = await Promise.race([
-                generate({
-                  system: `You are a masterful AD&D Dungeon Master narrating a spell being cast. 3-4 vivid sentences, present tense.
+              const spellNarration = await generateStream({
+                system: `You are a masterful AD&D Dungeon Master narrating a spell being cast. 3-4 vivid sentences, present tense.
 Rules:
 - Describe the casting: the words, gestures, what the magic looks and feels like in this specific room
 - Incorporate the mechanical result naturally — healing spells close wounds, light spells fill the room, utility spells change something tangible
 - Do not list game statistics; the effect should be felt, not stated
 - Voice: specific, atmospheric, the magic feels real and earned`,
-                  prompt: `${spellContext}.\nPlayer action: "${action}". Narrate the spell and its effect.`,
-                  maxTokens: 90,
-                  temperature: 0.85,
-                }),
-                new Promise<string>((_, reject) => setTimeout(() => reject(new Error('spell timeout')), 30_000)),
-              ]) as string;
+                prompt: `${spellContext}.\nPlayer action: "${action}". Narrate the spell and its effect.`,
+                maxTokens: 120,
+                temperature: 0.85,
+                timeoutMs: 45_000,
+                onChunk: (c) => io.to(`campaign:${campaignId}`).emit('game:narration_stream', { id: spellStreamId, chunk: c, actor: 'DM' }),
+              });
 
               if (spellNarration?.trim()) {
                 run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
@@ -1124,6 +1141,7 @@ Rules:
             } catch {
               io.to(`campaign:${campaignId}`).emit('game:narration', { content: `The words of ${spellName} take shape. Something in the air responds.`, actor: 'DM' });
             } finally {
+              io.to(`campaign:${campaignId}`).emit('game:narration_stream', { id: spellStreamId, chunk: '', actor: 'DM', done: true });
               actionLocks.delete(campaignId);
             }
             emitCampaignState(io, db, campaignId);
@@ -1371,7 +1389,7 @@ Rules:
           });
         }
         // ── D: Refresh action chips after loot found ─────────────────────
-        emitSceneActions(scene, npcsInScene, JSON.parse(scene.connections || '[]').filter((c: any) => !c.hidden));
+        emitSceneActions(scene, npcsInScene, JSON.parse(scene.connections || '[]').filter((c: any) => !c.hidden), 'post_loot');
       }
 
       const companionIds = getJoinedCompanionIdsInScene(db, campaignId, scene.id);
@@ -1393,6 +1411,56 @@ Rules:
         leaderName: character.name,
       });
 
+      // ── AI escalation for critical delve moments ─────────────────────────────
+      if (delveState.delve.lightLevel === 'dark' && torchCount === 0) {
+        // Torch just burned out with no spares — total darkness
+        const darkBlueprint = buildSceneBlueprint(scene);
+        aiDirector.enqueue({
+          campaignId,
+          type: 'scene',
+          priority: 3,
+          temperature: 0.92,
+          system: `You are a masterful AD&D Dungeon Master narrating the moment a dungeon party loses their last light. Write exactly 3 sentences.
+Rules:
+- Describe the exact moment: the flame guttering, what the last light reveals before it dies, the quality of the darkness that follows
+- The darkness is not just absence of light — it has weight, temperature, sound
+- End on immediate threat: the dungeon is still there, and now they can't see it
+- Voice: visceral, cold, no reassurance`,
+          prompt: `Scene: ${scene.name}. ${darkBlueprint.roomAmbience}
+The last torch just burned out. ${character.name} has no more torches.
+Narrate the moment darkness takes the dungeon.`,
+          callback: (result) => {
+            if (result?.trim() && !result.startsWith('[The DM pauses')) {
+              run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', result.trim()]);
+              io.to(`campaign:${campaignId}`).emit('game:narration', { content: result.trim(), actor: 'DM' });
+            }
+          },
+        });
+      } else if (delveState.delve.hungerTicks >= 4) {
+        // Critical hunger — becoming dangerous
+        aiDirector.enqueue({
+          campaignId,
+          type: 'scene',
+          priority: 4,
+          temperature: 0.88,
+          system: `You are a masterful AD&D Dungeon Master narrating the physical reality of starvation in a dungeon. Write exactly 2 sentences.
+Rules:
+- Describe what hunger does to a body: the shaking hands, the cold sweat, the way judgement starts to slip
+- Connect it to the dungeon — this is the worst place to be weak
+- Voice: clinical and frightening, not melodramatic`,
+          prompt: `${character.name} and their company have gone dangerously long without food. Hunger ticks: ${delveState.delve.hungerTicks}/4.
+Narrate the physical toll of starvation starting to bite.`,
+          callback: (result) => {
+            if (result?.trim() && !result.startsWith('[The DM pauses')) {
+              run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', result.trim()]);
+              io.to(`campaign:${campaignId}`).emit('game:narration', { content: result.trim(), actor: 'DM' });
+            }
+          },
+        });
+      }
+
       // Handle "light a torch" action
       if (/light a torch|light the torch/.test(action.toLowerCase())) {
         const torchNote = lightTorch(delveState, campTurn, torchCount);
@@ -1410,6 +1478,36 @@ Rules:
           leaderName: character.name,
         });
         delveNotes.push(...campNotes);
+
+        // ── AI camp narration — the moment of rest in a hostile dungeon ──────
+        {
+          const campBlueprint = buildSceneBlueprint(scene);
+          const isFortified = /secure|barricade|bar the|fortified/.test(action.toLowerCase());
+          const campQuality = delveState.delve.campQuality || 'adequate';
+          aiDirector.enqueue({
+            campaignId,
+            type: 'scene',
+            priority: 4,
+            temperature: 0.88,
+            system: `You are a masterful AD&D Dungeon Master narrating a moment of rest deep in a dungeon. Write exactly 3 sentences.
+Rules:
+- Describe the act of stopping: how the party settles, what they do with their hands, the quality of the silence
+- One sentence about what the dungeon does while they rest — a sound, a smell, what the dark holds
+- End on the fragility of the moment — rest is not safety, just a pause
+- Voice: quiet, weighted, like a fire that might not last the night`,
+            prompt: `Scene: ${scene.name}. ${campBlueprint.roomAmbience}
+Camp quality: ${campQuality}. ${isFortified ? 'Position fortified — door barred, perimeter set.' : 'Open camp — exposed to the corridor.'}
+Character: ${character.name} (${character.char_class}, ${character.hp}/${character.max_hp} HP). Fatigue ticks: ${delveState.delve.fatigueTicks || 0}.
+Narrate the party making camp in the dungeon.`,
+            callback: (result) => {
+              if (result?.trim() && !result.startsWith('[The DM pauses')) {
+                run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                  [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', result.trim()]);
+                io.to(`campaign:${campaignId}`).emit('game:narration', { content: result.trim(), actor: 'DM' });
+              }
+            },
+          });
+        }
 
         // HP recovery at camp — only in safe-camp scenes
         try {
