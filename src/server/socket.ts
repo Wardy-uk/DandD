@@ -198,6 +198,28 @@ export function setupSocketHandlers(
               'INSERT INTO game_log (id, campaign_id, type, actor, content) VALUES (?, ?, ?, ?, ?)',
               [crypto.randomUUID(), campaignId, 'narration', 'DM', dawnSummary]);
             socket.emit('game:narration', { actor: 'DM', content: dawnSummary });
+            // ── AI dawn narration: atmospheric version of the overnight briefing ──
+            aiDirector.enqueue({
+              campaignId,
+              type: 'scene',
+              priority: 3,
+              temperature: 0.88,
+              system: `You are a masterful AD&D DM opening a new session after overnight events. Write exactly 2-3 sentences.
+Rules:
+- Describe the specific quality of this new watch or morning in the dungeon — not generic dawn, but something sensory and specific to the underground
+- Weave in one concrete detail from the overnight events that the party would actually perceive
+- Let the world show rather than tell what changed — no direct exposition
+- Voice: atmospheric, quiet, specific. Like the first paragraph of a new chapter.`,
+              prompt: `Overnight events summary: ${dawnSummary}
+Open the session with a brief atmospheric narration of what this new watch feels like.`,
+              callback: (aiDawn) => {
+                if (aiDawn?.trim() && !aiDawn.startsWith('[The DM pauses')) {
+                  run(db, 'INSERT INTO game_log (id, campaign_id, type, actor, content) VALUES (?, ?, ?, ?, ?)',
+                    [crypto.randomUUID(), campaignId, 'narration', 'DM', aiDawn.trim()]);
+                  socket.emit('game:narration', { actor: 'DM', content: aiDawn.trim() });
+                }
+              },
+            });
           }
         } catch {}
       }
@@ -947,6 +969,39 @@ Narrate the moment of encounter.`,
           payload: getSceneNpcRoster(db, campaignId, nextScene.id),
         });
         emitCampaignState(io, db, campaignId);
+
+        // ── NPC proactive dialogue on scene entry ────────────────────────
+        if (npcsInScene.length > 0 && Math.random() < 0.4) {
+          const proactiveNpc = npcsInScene[Math.floor(Math.random() * npcsInScene.length)];
+          const proactiveBlueprint = buildSceneBlueprint(nextScene);
+          const proactiveLog = all(db,
+            "SELECT actor, content FROM game_log WHERE campaign_id = ? AND type IN ('narration','dm_response') ORDER BY created_at DESC LIMIT 3",
+            [campaignId]) as Array<{actor: string; content: string}>;
+          const proactiveCtx = proactiveLog.reverse().map(r => `${r.actor}: ${r.content.slice(0, 100)}`).join('\n');
+          aiDirector.enqueue({
+            campaignId,
+            type: 'npc_dialogue',
+            priority: 5,
+            temperature: 0.88,
+            system: `You are roleplaying as a specific NPC in an AD&D dungeon. The party just entered your location. Write exactly 1 short line of spontaneous dialogue — 8-18 words.
+Rules:
+- Speak unprompted — something they say as the party walks in
+- React to the location, the moment, or something specific about the arrivals
+- Match their personality fully — not a generic greeting
+- Do NOT use quotation marks in your response`,
+            prompt: `NPC: ${proactiveNpc.name}. Personality: ${proactiveNpc.personality || 'guarded and watchful'}.
+Scene: ${nextScene.name}. ${proactiveBlueprint.roomAmbience}
+${proactiveCtx ? `Recent events:\n${proactiveCtx}\n` : ''}${proactiveNpc.name} notices the party arrive. What do they say?`,
+            callback: (result) => {
+              if (result?.trim() && !result.startsWith('[The DM pauses')) {
+                const line = result.trim().replace(/^["'\`]|["'\`]$/g, '');
+                run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                  [crypto.randomUUID(), campaignId, 1, 'narration', proactiveNpc.name, line]);
+                io.to(`campaign:${campaignId}`).emit('game:narration', { content: line, actor: proactiveNpc.name });
+              }
+            },
+          });
+        }
 
         // ── Cinematic entry narration for first-time rooms (async, fire-and-forget) ──
         if (wasUnvisited) {
