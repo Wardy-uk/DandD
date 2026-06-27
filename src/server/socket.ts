@@ -832,6 +832,13 @@ Rules:
                 npcsInScene.length > 0 ? `Occupants: ${npcsInScene.map((n: any) => n.name).join(', ')}` : '',
                 `Party: ${character.name} (${character.char_class} level ${character.level})`,
               ].filter(Boolean);
+              const entryRecentLog = all(db,
+                "SELECT actor, content FROM game_log WHERE campaign_id = ? AND type IN ('narration','dm_response') ORDER BY created_at DESC LIMIT 3",
+                [campaignId]
+              ) as Array<{ actor: string; content: string }>;
+              const entryRecentHistory = entryRecentLog.reverse()
+                .map(r => `${r.actor}: ${r.content.slice(0, 150)}`)
+                .join('\n');
               io.to(`campaign:${campaignId}`).emit('game:narration_stream', { id: entryStreamId, chunk: '', actor: 'DM' });
               const entryNarration = await generateStream({
                 system: `You are a masterful AD&D Dungeon Master describing a room the party has never entered before. Write 4-6 immersive sentences. Think Witcher 3 — specific, atmospheric, alive with texture and unease.
@@ -843,7 +850,7 @@ Rules:
 - Plant one anomaly or detail that begs investigation: a shape in shadow, a sound that should not be, a surface worn wrong
 - Never open with "The chamber opens up" or "You find yourself"
 - Voice: baroque and strange, as if the dungeon itself has opinions`,
-                prompt: `${entryContext.join('. ')}.\nDescribe the party entering this room for the first time.`,
+                prompt: `${entryContext.join('. ')}.${entryRecentHistory ? `\nRecent session history:\n${entryRecentHistory}` : ''}\nDescribe the party entering this room for the first time.`,
                 maxTokens: 160,
                 temperature: 0.88,
                 timeoutMs: 45_000,
