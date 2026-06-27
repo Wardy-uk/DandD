@@ -114,7 +114,16 @@ export default function CampaignMap({ mapData }: Props) {
       <div className="overflow-x-auto overflow-y-auto rounded-lg border border-leather/10 bg-parchment/70 [-webkit-overflow-scrolling:touch]">
         <div style={{ width: maxX, height: maxY, position: 'relative' }}>
           <svg width={maxX} height={maxY} className="absolute inset-0">
-            {mapData.edges.map((edge) => {
+            {(() => {
+              // Deduplicate bidirectional edges — keep first occurrence of each node-pair
+              const seenPairs = new Set<string>();
+              const dedupedEdges = mapData.edges.filter((edge) => {
+                const key = [edge.from, edge.to].sort().join('|');
+                if (seenPairs.has(key)) return false;
+                seenPairs.add(key);
+                return true;
+              });
+              return dedupedEdges.map((edge) => {
               const from = byId.get(edge.from);
               const to = byId.get(edge.to);
               if (!from || !to) return null;
@@ -137,12 +146,15 @@ export default function CampaignMap({ mapData }: Props) {
                 labelX = bx + 6;
                 labelY = (fy + ty) / 2 + 4;
               } else {
-                // Cross-column edge — bezier from right of FROM to left of TO
-                const x1h = from.x + nodeWidth;
-                const y1h = from.y + nodeHeight / 2;
-                const x2h = to.x;
-                const y2h = to.y + nodeHeight / 2;
-                const cp = Math.abs(x2h - x1h) * 0.45;
+                // Cross-column edge — always draw left-to-right (shallower→deeper)
+                // so reverse edges (e.g. "south" back to start) don't sweep across nodes
+                const left = from.x <= to.x ? from : to;
+                const right = from.x <= to.x ? to : from;
+                const x1h = left.x + nodeWidth;
+                const y1h = left.y + nodeHeight / 2;
+                const x2h = right.x;
+                const y2h = right.y + nodeHeight / 2;
+                const cp = Math.max(Math.abs(x2h - x1h) * 0.45, 20);
                 pathD = `M ${x1h} ${y1h} C ${x1h + cp} ${y1h}, ${x2h - cp} ${y2h}, ${x2h} ${y2h}`;
                 labelX = (x1h + x2h) / 2;
                 labelY = (y1h + y2h) / 2 - 6;
@@ -168,7 +180,8 @@ export default function CampaignMap({ mapData }: Props) {
                   </text>
                 </g>
               );
-            })}
+              });
+            })()}
           </svg>
 
           {positioned.map((node) => (
