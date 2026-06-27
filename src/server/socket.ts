@@ -1016,6 +1016,12 @@ Narrate the moment of encounter.`,
           description,
         });
 
+        // Update the map for all clients so PARTY HERE moves to the new scene
+        io.to(`campaign:${campaignId}`).emit('game:state_update', {
+          type: 'map_update',
+          payload: buildCampaignMapIntel(db, campaignId),
+        });
+
         // Proactively expand the world if the unexplored scene buffer is running low
         if (assessCampaignReadiness(db, campaignId).needsGrowth) {
           void runContentGrowth(db, campaignId).catch((err) => {
