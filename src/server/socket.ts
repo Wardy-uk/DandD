@@ -606,7 +606,7 @@ Rules:
               : rtHpPct <= 0.75 ? 'shaken but moving'
               : 'relatively intact';
             const rtLog = all(db,
-              "SELECT actor, content FROM game_log WHERE campaign_id = ? AND type IN ('narration','dm_response') ORDER BY created_at DESC LIMIT 5",
+              "SELECT actor, content FROM game_log WHERE campaign_id = ? AND type IN ('narration','dm_response') ORDER BY timestamp DESC LIMIT 5",
               [campaignId]) as Array<{actor: string; content: string}>;
             const rtContext = rtLog.reverse().map(r => `${r.actor}: ${r.content.slice(0, 110)}`).join('\n');
             aiDirector.enqueue({
@@ -1062,7 +1062,7 @@ Narrate the moment of encounter.`,
           const proactiveNpc = npcsInScene[Math.floor(Math.random() * npcsInScene.length)];
           const proactiveBlueprint = buildSceneBlueprint(nextScene);
           const proactiveLog = all(db,
-            "SELECT actor, content FROM game_log WHERE campaign_id = ? AND type IN ('narration','dm_response') ORDER BY created_at DESC LIMIT 3",
+            "SELECT actor, content FROM game_log WHERE campaign_id = ? AND type IN ('narration','dm_response') ORDER BY timestamp DESC LIMIT 3",
             [campaignId]) as Array<{actor: string; content: string}>;
           const proactiveCtx = proactiveLog.reverse().map(r => `${r.actor}: ${r.content.slice(0, 100)}`).join('\n');
           aiDirector.enqueue({
@@ -1108,7 +1108,7 @@ ${proactiveCtx ? `Recent events:\n${proactiveCtx}\n` : ''}${proactiveNpc.name} n
                 `Party: ${character.name} (${character.char_class} level ${character.level})`,
               ].filter(Boolean);
               const entryRecentLog = all(db,
-                "SELECT actor, content FROM game_log WHERE campaign_id = ? AND type IN ('narration','dm_response') ORDER BY created_at DESC LIMIT 3",
+                "SELECT actor, content FROM game_log WHERE campaign_id = ? AND type IN ('narration','dm_response') ORDER BY timestamp DESC LIMIT 3",
                 [campaignId]
               ) as Array<{ actor: string; content: string }>;
               const entryRecentHistory = entryRecentLog.reverse()
@@ -1494,7 +1494,7 @@ Rules:
         let aiMsg = 'The moment passes without clear resolution — but it was not wasted.';
 
         // Pull last 5 narrations for narrative continuity
-        const recentLog = all(db, "SELECT actor, content FROM game_log WHERE campaign_id = ? AND type IN ('narration','dm_response') ORDER BY created_at DESC LIMIT 5", [campaignId]) as Array<{actor: string; content: string}>;
+        const recentLog = all(db, "SELECT actor, content FROM game_log WHERE campaign_id = ? AND type IN ('narration','dm_response') ORDER BY timestamp DESC LIMIT 5", [campaignId]) as Array<{actor: string; content: string}>;
         const recentHistory = recentLog.reverse().map(r => `${r.actor}: ${r.content.slice(0, 150)}`).join('\n');
 
         const mainStreamId = crypto.randomUUID();
