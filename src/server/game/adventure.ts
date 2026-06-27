@@ -1391,7 +1391,8 @@ export function resolveRichExploration(params: {
 
     noteCampaignEvent(campaignState, `${character.name} listened at a threshold in ${scene.name}.`);
     saveCampaignState(db, campaignId, campaignState);
-    return finalizeOutcome(db, campaignId, { content: result, explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action);
+    // allowEncounter=false: listening is quiet scouting, should never trigger an immediate encounter
+    return finalizeOutcome(db, campaignId, { content: result, explorationTurnAdvanced: turn.turn }, turn, campaignState, blueprint, action, false, false);
   }
 
   // -- STEAL / PICKPOCKET
@@ -1645,10 +1646,11 @@ function finalizeOutcome(
   blueprint: SceneBlueprint,
   action: string,
   noisy = false,
+  allowEncounter = true,
 ): AdventureActionOutcome {
   let outcome = withPulse(base, turn.pulse);
 
-  const canEncounter = turn.turn - campaignState.lastEncounterTurn >= 2;
+  const canEncounter = allowEncounter && turn.turn - campaignState.lastEncounterTurn >= 2;
   const heat = campaignState.factions[blueprint.faction]?.heat || 0;
   const factionReputation = campaignState.factions[blueprint.faction]?.reputation || 0;
   const factionObj = campaignState.factions[blueprint.faction];

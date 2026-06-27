@@ -126,9 +126,9 @@ export function setupSocketHandlers(
           socket.emit('game:state_update', { type: 'character_update', payload: joinedCharacter });
         }
 
-        // Send recent game log
+        // Send recent game log — use rowid for stable ordering (timestamp collides on rapid inserts)
         const recentLogs = all(db,
-          'SELECT * FROM game_log WHERE campaign_id = ? ORDER BY timestamp DESC LIMIT 50',
+          'SELECT * FROM game_log WHERE campaign_id = ? ORDER BY rowid DESC LIMIT 50',
           [campaignId]);
         socket.emit('game:state_update', { type: 'recent_logs', payload: recentLogs.reverse() });
         socket.emit('game:state_update', {
@@ -417,6 +417,10 @@ Add 1-2 sentences of physical combat description.`,
               ? get(db, 'SELECT * FROM scenes WHERE id = ?', [campaign.current_scene_id]) as any
               : null;
             const ndBlueprint = ndScene ? buildSceneBlueprint(ndScene) : null;
+            // Find who dealt the blow — pass to AI so it doesn't hallucinate attacker names
+            const killingResult = resolution.combatResults.find((r: any) =>
+              r.description?.includes(fallenChar.name) && !r.defenderKilled);
+            const attackerName = killingResult?.attacker || 'the enemy';
             aiDirector.enqueue({
               campaignId,
               type: 'combat_narration',
@@ -424,13 +428,13 @@ Add 1-2 sentences of physical combat description.`,
               temperature: 0.90,
               system: `You are a masterful AD&D DM narrating the moment a hero falls in combat. Write exactly 3 sentences.
 Rules:
-- First: the physical reality of the fall — what hit them, how they land, what they can no longer do
-- Second: what they perceive from the ground — sounds, light, the stone floor, ally voices
+- First: the consequence of the blow — how they land, what they can no longer do. The attacker has already been named; do NOT repeat their name or invent new names.
+- Second: what ${fallenChar.name} perceives from the ground — sounds, light, the stone floor, ally voices
 - Third: the fragile thread — not dead, not yet, but barely
 - Voice: quiet, precise, present tense. No melodrama. No reassurance.`,
               prompt: `Scene: ${ndScene?.name || 'the dungeon'}. ${ndBlueprint?.roomAmbience || ''}
-${fallenChar.name} (${fallenChar.char_class} level ${fallenChar.level}) just dropped to ${fallenChar.hp} HP — dying.
-Narrate the moment they fall.`,
+${attackerName} just brought down ${fallenChar.name} (${fallenChar.char_class} level ${fallenChar.level}) to ${fallenChar.hp} HP — dying.
+Narrate the moment they fall. Do not name the attacker again.`,
               callback: (ndResult) => {
                 if (ndResult?.trim() && !ndResult.startsWith('[The DM pauses')) {
                   run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
@@ -1120,7 +1124,7 @@ Rules:
                   [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', entryNarration.trim()]);
                 io.to(`campaign:${campaignId}`).emit('game:narration', { content: entryNarration.trim(), actor: 'DM' });
               }
-            } catch { io.to(`campaign:${campaignId}`).emit('game:narration', { content: '', actor: 'DM' }); }
+            } catch { /* entry narration failed — emit nothing rather than a blank DM line */ }
           })();
         }
 

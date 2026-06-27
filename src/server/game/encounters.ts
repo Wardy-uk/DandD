@@ -340,10 +340,10 @@ export function resolveEncounterAction(params: {
         : inferCompanionAction(enemyActor, battlefield);
       const enemyStrike = resolveAttackExchange(db, encounter.id, enemyActor, target, enemyAction, battlefield);
       combatResults.push(enemyStrike.result);
-      narration.push({
-        actor: 'DM',
-        content: `${describeRolePressure(enemyActor, true)} ${describeBattlefieldPressure(battlefield, enemyAction, true)} ${enemyStrike.result.description}`,
-      });
+      const specialPressure = describeBattlefieldPressure(battlefield, enemyAction, true);
+      const specialRoleLine = [describeRolePressure(enemyActor, true), specialPressure].filter(Boolean).join(' ');
+      if (specialRoleLine) narration.push({ actor: 'DM', content: specialRoleLine });
+      // Attack description goes only into combatResults (logged as 'combat' type) — not duplicated in narration
       if (target.character_id) updatedCharacterIds.add(target.character_id);
 
       if (enemyActor.side === 'enemy') {
@@ -412,10 +412,10 @@ export function resolveEncounterAction(params: {
       : inferCompanionAction(enemyActor, battlefield);
     const enemyStrike = resolveAttackExchange(db, encounter.id, enemyActor, target, enemyAction, battlefield);
     combatResults.push(enemyStrike.result);
-    narration.push({
-      actor: 'DM',
-      content: `${describeRolePressure(enemyActor, true)} ${describeBattlefieldPressure(battlefield, enemyAction, true)} ${enemyStrike.result.description}`,
-    });
+    const mainPressure = describeBattlefieldPressure(battlefield, enemyAction, true);
+    const mainRoleLine = [describeRolePressure(enemyActor, true), mainPressure].filter(Boolean).join(' ');
+    if (mainRoleLine) narration.push({ actor: 'DM', content: mainRoleLine });
+    // Attack description goes only into combatResults (logged as 'combat' type) — not duplicated in narration
     if (target.character_id) updatedCharacterIds.add(target.character_id);
 
     if (enemyActor.side === 'enemy') {
@@ -490,10 +490,10 @@ function autoResolveNonPlayerTurns(
     const action = active.side === 'enemy' ? inferEnemyAction(active, battlefield) : inferCompanionAction(active, battlefield);
     const strike = resolveAttackExchange(db, encounter.id, active, target, action, battlefield);
     combatResults.push(strike.result);
-    narration.push({
-      actor: 'DM',
-      content: `${describeRolePressure(active, true)} ${describeBattlefieldPressure(battlefield, action, true)} ${strike.result.description}`,
-    });
+    const autoPressure = describeBattlefieldPressure(battlefield, action, true);
+    const autoRoleLine = [describeRolePressure(active, true), autoPressure].filter(Boolean).join(' ');
+    if (autoRoleLine) narration.push({ actor: 'DM', content: autoRoleLine });
+    // Attack description goes only into combatResults — not duplicated in narration
     if (target.character_id) updatedCharacterIds.add(target.character_id);
 
     const state = active.side === 'enemy'
@@ -1157,10 +1157,6 @@ function evaluatePartyState(db: Database, encounter: any, defender: any, attacke
         saveCampaignState(db, campaignId, state);
       }
     }
-  } else if (livingParty.length <= Math.ceil(party.length / 2)) {
-    narration.push({ actor: 'DM', content: 'The party is bloodied now. Every exchanged blow is starting to cost campaign-level momentum.' });
-    const fracture = resolveCompanionFracture(db, campaignId, encounterScene?.scene_id, refreshed, companionMods, false);
-    narration.push(...fracture.narration);
   }
 
   return { ended: false, narration };
@@ -1557,7 +1553,8 @@ function describeBattlefieldPressure(battlefield: BattlefieldProfile, action: st
   if (battlefield.visibility !== 'clear') {
     return 'Poor sight and broken lines keep everyone half a step less certain.';
   }
-  return battlefield.pressure;
+  // battlefield.pressure was already shown in the encounter opening — don't repeat it every round
+  return '';
 }
 
 function parseTacticalIntent(action: string, battlefield: BattlefieldProfile): TacticalIntent {
