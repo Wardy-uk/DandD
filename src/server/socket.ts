@@ -1147,9 +1147,11 @@ Rules:
           })();
         }
 
+        console.log(`[movement] success: ${character.name} moved to ${nextScene.name} (${nextScene.id})`);
         return;
         } catch (moveErr) {
-          console.error('[movement handler error]', moveErr);
+          console.error('[movement handler error]', moveErr instanceof Error ? moveErr.message : String(moveErr));
+          if (moveErr instanceof Error && moveErr.stack) console.error(moveErr.stack);
           io.to(`campaign:${campaignId}`).emit('game:narration', {
             actor: 'DM',
             content: `The way ${movementTarget.direction} is passable — but something went wrong in the passage. Try again.`,

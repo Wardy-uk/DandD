@@ -135,7 +135,9 @@ export function buildCampaignMapIntel(db: Database, campaignId: string) {
 }
 
 function layoutNodes(nodes: Omit<MapNode, 'depth' | 'lane'>[], edges: MapEdge[], currentSceneId: string): MapNode[] {
-  const start = currentSceneId || nodes.find((node) => node.discovered)?.id || nodes[0]?.id || '';
+  // Use the first discovered node as the BFS root so the map layout is stable (dungeon entrance stays at left).
+  // currentSceneId is only a fallback so the player is NOT always at depth 0.
+  const start = nodes.find((node) => node.discovered)?.id || currentSceneId || nodes[0]?.id || '';
   const adjacency = new Map<string, string[]>();
   for (const edge of edges) {
     if (!adjacency.has(edge.from)) adjacency.set(edge.from, []);
