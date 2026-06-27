@@ -876,7 +876,7 @@ export function resolveRichExploration(params: {
     }, turn, campaignState, blueprint, action);
   }
 
-  if ((/talk|parley|hail|negotiate|bargain/.test(lowered) || npcs.length > 0) && npcs.length > 0) {
+  if (/\b(talk|speak|parley|hail|negotiate|bargain|approach|address|greet|ask|question|chat)\b/.test(lowered) && npcs.length > 0) {
     const turn = advanceExplorationTurn(db, campaignId, campaignState, inventory, character.id);
     const factionStanding = campaignState.factions[blueprint.faction];
     const reactionRoll = roll2d6().total
