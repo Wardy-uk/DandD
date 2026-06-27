@@ -58,6 +58,18 @@ const actionLocks = new Set<string>(); // prevent concurrent action processing p
 // NPC conversation memory: campaignId → npcName → last 3 exchanges
 const npcConversationMemory = new Map<string, Map<string, string[]>>();
 
+/** Pick the best companion to speak for a given trigger. Returns null if no companions joined. */
+function pickCompanionForTrigger(companions: any[], preferredRole?: string): any | null {
+  const joined = companions.filter((c: any) => c.joinedParty);
+  if (joined.length === 0) return null;
+  if (preferredRole) {
+    const match = joined.find((c: any) => c.companionRole === preferredRole);
+    if (match) return match;
+  }
+  return joined.reduce((best: any, c: any) =>
+    c.relationship?.morale > best.relationship?.morale ? c : best, joined[0]);
+}
+
 function emitCampaignState(io: SocketServer<ClientToServerEvents, ServerToClientEvents>, db: Database, campaignId: string) {
   io.to(`campaign:${campaignId}`).emit('game:state_update', {
     type: 'campaign_state',
@@ -316,6 +328,7 @@ export function setupSocketHandlers(
               campaignId,
               type: 'combat_narration',
               priority: 4,
+              temperature: 0.85,
               system: `You are a masterful AD&D DM narrating a single combat moment. Write exactly 1-2 sentences.
 Rules:
 - Describe the physical reality of the hit or miss — what the weapon felt like, the sound, the impact site, the attacker's expression
@@ -390,14 +403,29 @@ Add 1-2 sentences of physical combat description.`,
           // ── Companion reaction: combat resolved ──────────────────────────
           try {
             const killCompanions = getPartyCompanions(db, campaignId).filter((c) => c.joinedParty);
-            const killReaction = getCompanionReaction('combat_kill', killCompanions, character.name);
-            if (killReaction) {
-              run(db,
-                'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
-                [crypto.randomUUID(), campaignId, 1, 'narration', killReaction.companion.name, killReaction.line]);
-              io.to(`campaign:${campaignId}`).emit('game:narration', {
-                content: killReaction.line,
-                actor: killReaction.companion.name,
+            const killSpeaker = pickCompanionForTrigger(killCompanions, 'vanguard');
+            if (killSpeaker && Math.random() > 0.5) {
+              aiDirector.enqueue({
+                campaignId,
+                type: 'npc_dialogue',
+                priority: 4,
+                temperature: 0.88,
+                system: `You are roleplaying as ${killSpeaker.name}, a companion in an AD&D adventuring party. Write exactly 1 short line of spoken dialogue — 8-18 words.
+Personality: ${killSpeaker.personality}
+Rules:
+- Speak in first person, directly — no action beats or narration
+- React specifically to this moment (enemy just killed in combat)
+- Match their personality fully — sarcasm, steadiness, nerves, warmth
+- Do NOT use quotation marks in your response`,
+                prompt: `${killSpeaker.name} reacts after their party just killed an enemy in combat. What do they say?`,
+                callback: (result) => {
+                  if (result?.trim() && !result.startsWith('[The DM pauses')) {
+                    const line = result.trim().replace(/^["'`]|["'`]$/g, '');
+                    run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                      [crypto.randomUUID(), campaignId, 1, 'narration', killSpeaker.name, line]);
+                    io.to(`campaign:${campaignId}`).emit('game:narration', { content: line, actor: killSpeaker.name });
+                  }
+                },
               });
             }
           } catch {}
@@ -896,6 +924,7 @@ Rules:
             campaignId,
             type: 'scene',
             priority: 4,
+            temperature: 0.88,
             system: `You are a masterful AD&D DM adding one final atmospheric observation. Write exactly 2 sentences.
 Rules:
 - The party is pausing to take stock — describe one specific detail they notice on closer inspection
@@ -919,14 +948,29 @@ Add one final close-inspection detail the party notices.`,
         if ((scene.light_level || 'normal') === 'dark') {
           try {
             const darkCompanions = getPartyCompanions(db, campaignId).filter((c) => c.joinedParty);
-            const darkReaction = getCompanionReaction('darkness', darkCompanions, character.name);
-            if (darkReaction) {
-              run(db,
-                'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
-                [crypto.randomUUID(), campaignId, 1, 'narration', darkReaction.companion.name, darkReaction.line]);
-              io.to(`campaign:${campaignId}`).emit('game:narration', {
-                content: darkReaction.line,
-                actor: darkReaction.companion.name,
+            const darkSpeaker = pickCompanionForTrigger(darkCompanions);
+            if (darkSpeaker && Math.random() > 0.5) {
+              aiDirector.enqueue({
+                campaignId,
+                type: 'npc_dialogue',
+                priority: 4,
+                temperature: 0.88,
+                system: `You are roleplaying as ${darkSpeaker.name}, a companion in an AD&D adventuring party. Write exactly 1 short line of spoken dialogue — 8-18 words.
+Personality: ${darkSpeaker.personality}
+Rules:
+- Speak in first person, directly — no action beats or narration
+- React specifically to exploring in complete darkness
+- Match their personality — unease, dry humour, professional calm
+- Do NOT use quotation marks in your response`,
+                prompt: `${darkSpeaker.name} comments on the party exploring in total darkness. What do they say?`,
+                callback: (result) => {
+                  if (result?.trim() && !result.startsWith('[The DM pauses')) {
+                    const line = result.trim().replace(/^["'`]|["'`]$/g, '');
+                    run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                      [crypto.randomUUID(), campaignId, 1, 'narration', darkSpeaker.name, line]);
+                    io.to(`campaign:${campaignId}`).emit('game:narration', { content: line, actor: darkSpeaker.name });
+                  }
+                },
               });
             }
           } catch {}
@@ -1242,14 +1286,29 @@ Rules:
         // ── Companion reaction: strange/fallback action ───────────────────
         try {
           const strangeCompanions = getPartyCompanions(db, campaignId).filter((c) => c.joinedParty);
-          const strangeReaction = getCompanionReaction('strange_action', strangeCompanions, character.name);
-          if (strangeReaction) {
-            run(db,
-              'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
-              [crypto.randomUUID(), campaignId, 1, 'narration', strangeReaction.companion.name, strangeReaction.line]);
-            io.to(`campaign:${campaignId}`).emit('game:narration', {
-              content: strangeReaction.line,
-              actor: strangeReaction.companion.name,
+          const strangeSpeaker = pickCompanionForTrigger(strangeCompanions);
+          if (strangeSpeaker && Math.random() > 0.5) {
+            aiDirector.enqueue({
+              campaignId,
+              type: 'npc_dialogue',
+              priority: 4,
+              temperature: 0.9,
+              system: `You are roleplaying as ${strangeSpeaker.name}, a companion in an AD&D adventuring party. Write exactly 1 short line of spoken dialogue — 8-18 words.
+Personality: ${strangeSpeaker.personality}
+Rules:
+- Speak in first person, directly — no action beats or narration
+- React to a peculiar or unexpected action by the party leader
+- Match their personality — dry comment, cautious question, loyal support
+- Do NOT use quotation marks in your response`,
+              prompt: `${strangeSpeaker.name} reacts after ${character.name} just tried: "${action}". What do they say?`,
+              callback: (result) => {
+                if (result?.trim() && !result.startsWith('[The DM pauses')) {
+                  const line = result.trim().replace(/^["'`]|["'`]$/g, '');
+                  run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                    [crypto.randomUUID(), campaignId, 1, 'narration', strangeSpeaker.name, line]);
+                  io.to(`campaign:${campaignId}`).emit('game:narration', { content: line, actor: strangeSpeaker.name });
+                }
+              },
             });
           }
         } catch {}
@@ -1294,6 +1353,7 @@ Rules:
             campaignId,
             type: 'scene',
             priority: 4,
+            temperature: 0.9,
             system: `You are a masterful AD&D Dungeon Master giving a found object its moment. Exactly 2 sentences.
 Rules:
 - Describe physical details: material, weight, condition, marks, smell, temperature
@@ -1511,6 +1571,7 @@ Rules:
           campaignId,
           type: 'scene',
           priority: 4,
+          temperature: 0.88,
           system: `You are a masterful AD&D Dungeon Master adding atmospheric depth to a moment. Write exactly 2-3 sentences.
 Rules:
 - Do NOT repeat what was just narrated — add what follows in the senses
@@ -1548,14 +1609,45 @@ Add 2-3 sentences of sensory depth and consequence. Do not repeat the above — 
           scene.light_level || 'normal',
         );
         if (trigger) {
-          const explReaction = getCompanionReaction(trigger, explCompanions, character.name);
-          if (explReaction) {
-            run(db,
-              'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
-              [crypto.randomUUID(), campaignId, 1, 'narration', explReaction.companion.name, explReaction.line]);
-            io.to(`campaign:${campaignId}`).emit('game:narration', {
-              content: explReaction.line,
-              actor: explReaction.companion.name,
+          const TRIGGER_ROLE: Partial<Record<string, string>> = {
+            trap_found: 'scout', trap_triggered: 'scout', search: 'scout', low_health: 'warden',
+          };
+          const TRIGGER_CONTEXT: Record<string, string> = {
+            search: 'the party is searching the area',
+            trap_found: 'a trap was just spotted before it triggered',
+            trap_triggered: 'a trap just went off and hurt someone',
+            low_health: `${character.name} is badly wounded`,
+            loot_found: 'the party just found treasure',
+            rest: 'the party is making camp to rest',
+            strange_action: `${character.name} just did something unexpected`,
+            darkness: 'the party is exploring in total darkness',
+            combat_start: 'combat just broke out',
+            combat_kill: 'an enemy was just killed in combat',
+          };
+          const explSpeaker = pickCompanionForTrigger(explCompanions, TRIGGER_ROLE[trigger]);
+          if (explSpeaker && Math.random() > 0.5) {
+            aiDirector.enqueue({
+              campaignId,
+              type: 'npc_dialogue',
+              priority: 4,
+              temperature: 0.88,
+              system: `You are roleplaying as ${explSpeaker.name}, a companion in an AD&D adventuring party. Write exactly 1 short line of spoken dialogue — 8-18 words.
+Personality: ${explSpeaker.personality}
+Rules:
+- Speak in first person, directly — no action beats or narration
+- React specifically to the current situation
+- Match their personality — they are not a generic adventurer
+- Do NOT use quotation marks in your response`,
+              prompt: `Context: ${TRIGGER_CONTEXT[trigger] || trigger}
+${explSpeaker.name} reacts. What do they say?`,
+              callback: (result) => {
+                if (result?.trim() && !result.startsWith('[The DM pauses')) {
+                  const line = result.trim().replace(/^["'`]|["'`]$/g, '');
+                  run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                    [crypto.randomUUID(), campaignId, 1, 'narration', explSpeaker.name, line]);
+                  io.to(`campaign:${campaignId}`).emit('game:narration', { content: line, actor: explSpeaker.name });
+                }
+              },
             });
           }
         }
@@ -1591,6 +1683,7 @@ Add 2-3 sentences of sensory depth and consequence. Do not repeat the above — 
           campaignId,
           type: 'world_gen',
           priority: 5,
+          temperature: 0.92,
           system: `You are a masterful AD&D DM adding an unprompted ambient observation. Write exactly 2 sentences.
 Rules:
 - Something in the environment shifts — a sound, a smell, a light change, movement in shadow
@@ -1619,6 +1712,7 @@ Describe one unprompted environmental detail or ambient change the party notices
             enemies: outcome.encounter.enemies,
             initiativeType: outcome.encounter.initiativeType,
           });
+          // Emit deterministic fallback immediately so UI isn't blank
           run(db,
             'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
             [crypto.randomUUID(), campaignId, 1, 'narration', 'DM',
@@ -1628,17 +1722,67 @@ Describe one unprompted environmental detail or ambient change the party notices
             content: `${outcome.encounter.description} ${started.surpriseSummary}`,
           });
           emitEncounterStart(io, campaignId, started);
+          // ── Streaming encounter-start narration ──────────────────────────
+          (async () => {
+            try {
+              const combatStreamId = crypto.randomUUID();
+              const combatBlueprint = buildSceneBlueprint(scene);
+              const enemyList = (outcome.encounter?.enemies ?? [])
+                .map((e: any) => e.name || e.type || 'unknown creature').join(', ');
+              const hpPct2 = character.max_hp > 0 ? character.hp / character.max_hp : 1;
+              const charCond = hpPct2 <= 0.25 ? 'badly wounded' : hpPct2 <= 0.5 ? 'injured' : hpPct2 <= 0.75 ? 'lightly wounded' : 'healthy';
+              io.to(`campaign:${campaignId}`).emit('game:narration_stream', { id: combatStreamId, chunk: '', actor: 'DM' });
+              const combatNarration = await generateStream({
+                system: `You are a masterful AD&D Dungeon Master narrating the moment combat erupts. Write 3-4 sentences.
+Rules:
+- Describe the instant before violence — the body going cold, the sound that triggers it, what the eyes catch first
+- Name the enemies specifically; give each one a physical detail that makes them distinct
+- Capture the sensory chaos: movement, sound, the air changing, weapon drawn
+- End on immediate threat — not what might happen, what IS happening right now
+- Voice: visceral, urgent, present tense. No dramatic pauses. No "suddenly".`,
+                prompt: `Scene: ${scene.name}. ${combatBlueprint.roomAmbience}
+Enemies: ${enemyList}
+${started.surpriseSummary}
+Character: ${character.name} (${character.char_class} level ${character.level}), ${charCond}
+Narrate the moment combat begins.`,
+                maxTokens: 130,
+                temperature: 0.88,
+                timeoutMs: 40_000,
+                onChunk: (c) => io.to(`campaign:${campaignId}`).emit('game:narration_stream', { id: combatStreamId, chunk: c, actor: 'DM' }),
+              });
+              io.to(`campaign:${campaignId}`).emit('game:narration_stream', { id: combatStreamId, chunk: '', actor: 'DM', done: true });
+              if (combatNarration?.trim()) {
+                run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                  [crypto.randomUUID(), campaignId, 1, 'narration', 'DM', combatNarration.trim()]);
+              }
+            } catch {}
+          })();
           // ── Companion reaction: combat starting ──────────────────────────
           try {
             const startCompanions = getPartyCompanions(db, campaignId).filter((c) => c.joinedParty);
-            const startReaction = getCompanionReaction('combat_start', startCompanions, character.name);
-            if (startReaction) {
-              run(db,
-                'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
-                [crypto.randomUUID(), campaignId, 1, 'narration', startReaction.companion.name, startReaction.line]);
-              io.to(`campaign:${campaignId}`).emit('game:narration', {
-                content: startReaction.line,
-                actor: startReaction.companion.name,
+            const startSpeaker = pickCompanionForTrigger(startCompanions, 'vanguard');
+            if (startSpeaker && Math.random() > 0.5) {
+              aiDirector.enqueue({
+                campaignId,
+                type: 'npc_dialogue',
+                priority: 3,
+                temperature: 0.88,
+                system: `You are roleplaying as ${startSpeaker.name}, a companion in an AD&D adventuring party. Write exactly 1 short line of spoken dialogue — 8-18 words.
+Personality: ${startSpeaker.personality}
+Rules:
+- Speak in first person, directly — no action beats or narration
+- React to combat erupting — weapons out, enemies closing in
+- Match their personality — battle cry, cold focus, panicked warning, grim readiness
+- Do NOT use quotation marks in your response`,
+                prompt: `${startSpeaker.name} reacts as combat suddenly breaks out. Enemies: ${(outcome.encounter?.enemies ?? []).map((e: any) => e.name || e.type).join(', ')}. What do they say?`,
+                callback: (result) => {
+                  if (result?.trim() && !result.startsWith('[The DM pauses')) {
+                    const line = result.trim().replace(/^["'`]|["'`]$/g, '');
+                    run(db, 'INSERT INTO game_log (id, campaign_id, session_number, type, actor, content) VALUES (?, ?, ?, ?, ?, ?)',
+                      [crypto.randomUUID(), campaignId, 1, 'narration', startSpeaker.name, line]);
+                    io.to(`campaign:${campaignId}`).emit('game:narration', { content: line, actor: startSpeaker.name });
+                  }
+                },
               });
             }
           } catch {}

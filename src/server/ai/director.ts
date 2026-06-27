@@ -19,6 +19,7 @@ export interface AIJob {
   system?: string;
   format?: 'json';
   model?: string;
+  temperature?: number;
   status: 'queued' | 'generating' | 'complete' | 'failed';
   result?: string;
   createdAt: string;
@@ -40,6 +41,7 @@ class AIDirector {
     system?: string;
     format?: 'json';
     model?: string;
+    temperature?: number;
     callback?: (result: string) => void;
   }): string {
     const job: AIJob = {
@@ -51,6 +53,7 @@ class AIDirector {
       system: params.system,
       format: params.format,
       model: params.model,
+      temperature: params.temperature,
       status: 'queued',
       createdAt: new Date().toISOString(),
       callback: params.callback,
@@ -104,6 +107,7 @@ class AIDirector {
       const system = job.system || DM_SYSTEM_PROMPT;
 
       let result: string;
+      const temp = job.temperature ?? 0.82;
       if (job.format === 'json') {
         // Use generate mode for structured output
         result = await generate({
@@ -129,6 +133,7 @@ class AIDirector {
             ...history,
           ],
           model: job.model,
+          temperature: temp,
         });
 
         history.push({ role: 'assistant', content: result });
@@ -138,6 +143,7 @@ class AIDirector {
           prompt: job.prompt,
           system,
           model: job.model,
+          temperature: temp,
         });
 
         // Start conversation history for this campaign
